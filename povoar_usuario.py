@@ -27,9 +27,11 @@ def inserir_usuario():
     #Informa se houve algum erro ao inserir as informações no banco
     except sqlite3.Error as e:
         print(f"Erro nas informações fornecidas ao banco de dados:{e}")
+
     #Informa se houve algum erro no codigo
     except Exception as e:
         print(f"Erro no codigo:{e}")
+
     #Fecha a conexão houvendo erro ou não
     finally:
         conexao.close()
@@ -39,13 +41,16 @@ def conferindo_dados():
     #Fazendo conexao ao banco de dados
     conexao = sqlite3.connect('dembase.db')
     cursor = conexao.cursor()
+
     #Pegando informaçãon da tabela usuarios do banco de dados
     cursor.execute("SELECT * FROM usuarios")
     usuarios = cursor.fetchall()
+
     #Mostrando as informação no terminal
     print("\n --- Dados no Banco ---")
     for usuario in usuarios:
         print(usuario)
+        
     #Fechando conexão
     conexao.close()
 
