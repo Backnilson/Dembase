@@ -276,8 +276,15 @@ def main(page: ft.Page):
             ir_para(tela_inicial)
             mostrar_mensagem("Lançamento cadastrado com sucesso!", ft.Colors.GREEN_700)
 
-        atualizar_subtipo()
+        subtipo.value = [ft.dropdown.Option("Receita"),
+                        ft.dropdown.Option("Despesa")]
 
+        subtipo.value = "Receita"
+
+        forma.options = [ft.dropdown.Option(f) for f in FORMAS_RECEBIMENTO]
+
+        forma.value = "Debito"
+        
         return ft.Column(
             [
                 ft.Row(
