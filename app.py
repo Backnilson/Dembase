@@ -1,315 +1,321 @@
+import flet as ft
 from datetime import datetime
 
-# =========================
-# LISTA PRINCIPAL DE LANÇAMENTOS
-# ============================================
-
+# Lista em memória — os dados somem ao fechar o app (banco virá depois)
 lancamentos = []
 
+# Opções dos menus (mesmas do protótipo no terminal)
+FORMAS_PAGAMENTO = ["Credito", "Debito", "Pix", "Dinheiro"]
+FORMAS_RECEBIMENTO = ["Debito", "Pix", "Dinheiro"]
+CONTAS = ["Santander", "Itaú", "Inter", "Dinheiro"]
+CATEGORIAS = [
+    "Alimentação", "Transporte", "Moradia", "Lazer", "Saúde",
+    "Educação", "DJ", "Investimento", "Outros",
+]
+DESTINOS = ["Eu", "Casa", "Moto", "Carro", "DJ", "Família", "Outros"]
+STATUS_OPCOES = ["Pago", "Pendente"]
+REGRAS = ["Essencial", "Estilo de Vida", "Investimento"]
 
-# ============================================
-# FUNÇÕES AUXILIARES
-# ============================================
 
-def escolher_opcao(titulo, opcoes):
-    print(f"\n{titulo}")
+def main(page: ft.Page):
+    page.title = "DemBase"
+    page.theme_mode = ft.ThemeMode.LIGHT
+    page.padding = 24
+    page.scroll = ft.ScrollMode.AUTO
 
-    for i, opcao in enumerate(opcoes, start=1):
-        print(f"{i} - {opcao}")
+    area_conteudo = ft.Column(spacing=16, expand=True)
+    mensagem = ft.Text(color=ft.Colors.RED)
 
-    while True:
-        escolha = input("Escolha uma opção: ")
+    def mostrar_mensagem(texto, cor=ft.Colors.RED):
+        mensagem.value = texto
+        mensagem.color = cor
+        mensagem.update()
 
-        if escolha.isdigit():
-            escolha = int(escolha)
+    def limpar_mensagem():
+        mensagem.value = ""
+        mensagem.update()
 
-            if 1 <= escolha <= len(opcoes):
-                return opcoes[escolha - 1]
+    def ir_para(tela):
+        limpar_mensagem()
+        area_conteudo.controls.clear()
+        area_conteudo.controls.append(tela())
+        page.update()
 
-        print("Opção inválida. Tente novamente.")
+    def card_lancamento(item):
+        valor_formatado = f"R$ {item['valor']:.2f}"
+        sinal = "+" if item["tipo"] == "Receita" else "-"
+        cor_valor = ft.Colors.GREEN_700 if item["tipo"] == "Receita" else ft.Colors.RED_700
 
-def escolher_forma_pagamento():
-    return escolher_opcao(
-        "Escolha a forma de pagamento:",
-        ["Credito", "Debito", "Pix", "Dinheiro"]
-    )
-def escolher_forma_de_recebimento():
-    return escolher_opcao(
-        "Escolha a forma de recebimento:",
-        ["Debito", "Pix", "Dinheiro"]
-    )
+        detalhes = [
+            f"Tipo: {item['tipo']} / {item['subtipo']}",
+            f"Forma: {item['forma_movimentacao']}",
+            f"Data: {item['data']} às {item['hora']}h",
+            f"Conta: {item['conta']}",
+            f"Categoria: {item['categoria']} | Destino: {item['destino']}",
+            f"Status: {item['status']} | Regra: {item['regra']}",
+        ]
 
-def escolher_tipo():
-    tipo = escolher_opcao(
-        "Escolha o tipo do lançamento:",
-        ["Receita", "Despesa"] #Transferencia,investimento
-    )
+        if item["forma_movimentacao"] == "Credito":
+            detalhes.append(
+                f"Parcela: {item['parcela_atual']}/{item['total_parcelas']} | Fatura: {item['fatura']}"
+            )
 
-    if tipo == "Receita":
-        subtipo = escolher_opcao(
-            "Escolha o subtipo da receita:",
-            ["Receita", "Entrada"]
+        return ft.Card(
+            content=ft.Container(
+                padding=16,
+                content=ft.Column(
+                    [
+                        ft.Row(
+                            [
+                                ft.Text(f"#{item['id']}", weight=ft.FontWeight.BOLD),
+                                ft.Text(item["descricao"], expand=True),
+                                ft.Text(f"{sinal} {valor_formatado}", color=cor_valor, weight=ft.FontWeight.BOLD),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        *[ft.Text(linha, size=13, color=ft.Colors.GREY_700) for linha in detalhes],
+                    ],
+                    spacing=4,
+                ),
+            ),
         )
 
-        forma_movimentacao= escolher_forma_de_recebimento()
+    def tela_inicial():
+        total_receitas = sum(l["valor"] for l in lancamentos if l["tipo"] == "Receita")
+        total_despesas = sum(l["valor"] for l in lancamentos if l["tipo"] == "Despesa")
+        saldo = total_receitas - total_despesas
 
-        return tipo, subtipo, forma_movimentacao
-
-    elif tipo == "Despesa":
-        subtipo = escolher_opcao(
-            "Escolha o subtipo da despesa:",
-            ["Despesa", "Saída", "Dívida", "Empréstimo"]
+        return ft.Column(
+            [
+                ft.Text("DemBase", size=32, weight=ft.FontWeight.BOLD),
+                ft.Text("Controle financeiro pessoal", color=ft.Colors.GREY_700),
+                ft.Divider(),
+                ft.Row(
+                    [
+                        ft.Container(
+                            content=ft.Column(
+                                [ft.Text("Receitas"), ft.Text(f"R$ {total_receitas:.2f}", size=20, color=ft.Colors.GREEN_700)],
+                            ),
+                            padding=16,
+                            bgcolor=ft.Colors.GREEN_50,
+                            border_radius=8,
+                            expand=True,
+                        ),
+                        ft.Container(
+                            content=ft.Column(
+                                [ft.Text("Despesas"), ft.Text(f"R$ {total_despesas:.2f}", size=20, color=ft.Colors.RED_700)],
+                            ),
+                            padding=16,
+                            bgcolor=ft.Colors.RED_50,
+                            border_radius=8,
+                            expand=True,
+                        ),
+                        ft.Container(
+                            content=ft.Column(
+                                [ft.Text("Saldo"), ft.Text(f"R$ {saldo:.2f}", size=20, weight=ft.FontWeight.BOLD)],
+                            ),
+                            padding=16,
+                            bgcolor=ft.Colors.BLUE_50,
+                            border_radius=8,
+                            expand=True,
+                        ),
+                    ],
+                    spacing=12,
+                ),
+                ft.ElevatedButton("Novo lançamento", icon=ft.Icons.ADD, on_click=lambda _: ir_para(tela_novo_lancamento)),
+                ft.OutlinedButton("Ver lançamentos", icon=ft.Icons.LIST, on_click=lambda _: ir_para(tela_listar)),
+            ],
+            spacing=16,
         )
 
-        forma_movimentacao = escolher_forma_pagamento()
+    def tela_listar():
+        if not lancamentos:
+            lista = ft.Text("Nenhum lançamento cadastrado ainda.", color=ft.Colors.GREY_700)
+        else:
+            lista = ft.Column([card_lancamento(item) for item in lancamentos], spacing=8)
 
-        return tipo, subtipo, forma_movimentacao
+        return ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda _: ir_para(tela_inicial)),
+                        ft.Text("Lançamentos", size=24, weight=ft.FontWeight.BOLD),
+                    ],
+                ),
+                lista,
+            ],
+            spacing=12,
+        )
 
+    def tela_novo_lancamento():
+        tipo = ft.Dropdown(label="Tipo", options=[ft.dropdown.Option("Receita"), ft.dropdown.Option("Despesa")], width=200)
+        subtipo = ft.Dropdown(label="Subtipo", width=200)
+        forma = ft.Dropdown(label="Forma de movimentação", width=250)
+        valor = ft.TextField(label="Valor (R$)", hint_text="Ex: 150,50", keyboard_type=ft.KeyboardType.NUMBER)
+        data = ft.TextField(label="Data", hint_text="DD/MM/AAAA", value=datetime.now().strftime("%d/%m/%Y"))
+        hora = ft.TextField(label="Hora (0-23)", hint_text="Ex: 11", value=str(datetime.now().hour), width=120)
+        conta = ft.Dropdown(label="Conta / banco", options=[ft.dropdown.Option(c) for c in CONTAS], width=200)
+        descricao = ft.TextField(label="Descrição", expand=True)
+        categoria = ft.Dropdown(label="Categoria", options=[ft.dropdown.Option(c) for c in CATEGORIAS], width=200)
+        destino = ft.Dropdown(label="Destino", options=[ft.dropdown.Option(d) for d in DESTINOS], width=200)
+        status = ft.Dropdown(label="Status", options=[ft.dropdown.Option(s) for s in STATUS_OPCOES], value="Pago", width=200)
+        regra = ft.Dropdown(label="Regra financeira", options=[ft.dropdown.Option(r) for r in REGRAS], width=220)
 
-def criar_lancamento():
+        parcela_atual = ft.TextField(label="Parcela atual", visible=False, width=150, keyboard_type=ft.KeyboardType.NUMBER)
+        total_parcelas = ft.TextField(label="Total de parcelas", visible=False, width=150, keyboard_type=ft.KeyboardType.NUMBER)
+        fatura = ft.TextField(label="Fatura", visible=False, hint_text="Ex: Agosto/2026", width=200)
+        campos_credito = ft.Row([parcela_atual, total_parcelas, fatura], visible=False, spacing=12)
 
-    print("\n==============================")
-    print("      NOVO LANÇAMENTO")
-    print("==============================")
+        def atualizar_subtipo(e=None):
+            if tipo.value == "Receita":
+                subtipo.options = [ft.dropdown.Option("Receita"), ft.dropdown.Option("Entrada")]
+                forma.options = [ft.dropdown.Option(f) for f in FORMAS_RECEBIMENTO]
+            elif tipo.value == "Despesa":
+                subtipo.options = [
+                    ft.dropdown.Option("Despesa"),
+                    ft.dropdown.Option("Saída"),
+                    ft.dropdown.Option("Dívida"),
+                    ft.dropdown.Option("Empréstimo"),
+                ]
+                forma.options = [ft.dropdown.Option(f) for f in FORMAS_PAGAMENTO]
+            else:
+                subtipo.options = []
+                forma.options = []
 
-    # Tipo e subtipo
-    tipo, subtipo, forma_movimentacao = escolher_tipo()
+            subtipo.value = subtipo.options[0].key if subtipo.options else None
+            forma.value = forma.options[0].key if forma.options else None
+            atualizar_credito()
+            subtipo.update()
+            forma.update()
 
-    # Valor
-    while True:
-        try:
-            valor = float(input("\nDigite o valor: R$ ").replace(",", "."))
-            break
-        except ValueError:
-            print("Digite um valor válido.")
+        def atualizar_credito(e=None):
+            eh_credito = forma.value == "Credito"
+            parcela_atual.visible = eh_credito
+            total_parcelas.visible = eh_credito
+            fatura.visible = eh_credito
+            campos_credito.visible = eh_credito
+            page.update()
 
-    # Data
-    while True:
-        data = input("Digite a data (DD/MM/AAAA): ")
+        tipo.on_change = atualizar_subtipo
+        forma.on_change = atualizar_credito
 
-        try:
-            data_formatada = datetime.strptime(
-                data,
-                "%d/%m/%Y"
-            ).strftime("%Y-%m-%d")
+        def salvar(e):
+            limpar_mensagem()
 
-            break
+            if not all([tipo.value, subtipo.value, forma.value, conta.value, categoria.value, destino.value, status.value, regra.value]):
+                mostrar_mensagem("Preencha todos os campos obrigatórios.")
+                return
 
-        except ValueError:
-            print("Data inválida. Exemplo: 22/07/2026")
+            if not descricao.value or not descricao.value.strip():
+                mostrar_mensagem("Informe uma descrição.")
+                return
 
-    # Hora arredondada
-    while True:
-        hora = input("Digite a hora (exemplo: 11): ")
-
-        if hora.isdigit() and 0 <= int(hora) <= 23:
-            hora = int(hora)
-            break
-
-        print("Digite uma hora válida entre 0 e 23.")
-
-    # Conta
-    conta = escolher_opcao(
-        "Escolha a conta/banco:",
-        [
-            "Santander",
-            "Itaú",
-            "Inter",
-            "Dinheiro"
-        ]
-    )
-
-    # Descrição
-    descricao = input("\nDigite a descrição: ")
-
-    # Categoria
-    categoria = escolher_opcao(
-        "Escolha a categoria:",
-        [
-            "Alimentação",
-            "Transporte",
-            "Moradia",
-            "Lazer",
-            "Saúde",
-            "Educação",
-            "DJ",
-            "Investimento",
-            "Outros"
-        ]
-    )
-
-    # Destino
-    destino = escolher_opcao(
-        "Escolha o destino:",
-        [
-            "Eu",
-            "Casa",
-            "Moto",
-            "Carro",
-            "DJ",
-            "Família",
-            "Outros"
-        ]
-    )
-
-    # Valores padrão
-    parcela_atual = None
-    total_parcelas = None
-    fatura = None
-
-    # Só aparece se for crédito
-    if forma_movimentacao == "Credito":
-
-        while True:
             try:
-                parcela_atual = int(
-                    input("\nParcela atual: ")
-                )
+                valor_num = float(valor.value.replace(",", "."))
+                if valor_num <= 0:
+                    raise ValueError
+            except (ValueError, AttributeError):
+                mostrar_mensagem("Digite um valor válido maior que zero.")
+                return
 
-                total_parcelas = int(
-                    input("Total de parcelas: ")
-                )
-
-                if parcela_atual > 0 and total_parcelas > 0:
-                    break
-
-                print("As parcelas devem ser maiores que zero.")
-
+            try:
+                data_formatada = datetime.strptime(data.value.strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
             except ValueError:
-                print("Digite números válidos.")
+                mostrar_mensagem("Data inválida. Use o formato DD/MM/AAAA.")
+                return
 
-        fatura = input("Fatura (exemplo: Agosto/2026): ")
+            try:
+                hora_num = int(hora.value)
+                if not 0 <= hora_num <= 23:
+                    raise ValueError
+            except ValueError:
+                mostrar_mensagem("Hora inválida. Use um número de 0 a 23.")
+                return
 
-    # Status
-    status = escolher_opcao(
-        "Escolha o status:",
-        [
-            "Pago",
-            "Pendente"
-        ]
-    )
+            par_atual = None
+            par_total = None
+            fatura_val = None
 
-    # Regra 50/40/10
-    regra = escolher_opcao(
-        "Escolha a regra financeira:",
-        [
-            "Essencial",
-            "Estilo de Vida",
-            "Investimento"
-        ]
-    )
+            if forma.value == "Credito":
+                try:
+                    par_atual = int(parcela_atual.value)
+                    par_total = int(total_parcelas.value)
+                    if par_atual <= 0 or par_total <= 0:
+                        raise ValueError
+                except (ValueError, TypeError):
+                    mostrar_mensagem("Informe parcelas válidas (números maiores que zero).")
+                    return
 
-    # Criando o lançamento
-    novo_lancamento = {
+                if not fatura.value or not fatura.value.strip():
+                    mostrar_mensagem("Informe a fatura do cartão.")
+                    return
 
-        "id": len(lancamentos) + 1,
+                fatura_val = fatura.value.strip()
 
-        "tipo": tipo,
+            lancamentos.append(
+                {
+                    "id": len(lancamentos) + 1,
+                    "tipo": tipo.value,
+                    "subtipo": subtipo.value,
+                    "forma_movimentacao": forma.value,
+                    "valor": valor_num,
+                    "data": data_formatada,
+                    "hora": hora_num,
+                    "conta": conta.value,
+                    "descricao": descricao.value.strip(),
+                    "categoria": categoria.value,
+                    "destino": destino.value,
+                    "parcela_atual": par_atual,
+                    "total_parcelas": par_total,
+                    "fatura": fatura_val,
+                    "status": status.value,
+                    "regra": regra.value,
+                }
+            )
 
-        "subtipo": subtipo,
+            ir_para(tela_inicial)
+            mostrar_mensagem("Lançamento cadastrado com sucesso!", ft.Colors.GREEN_700)
 
-        "forma_movimentacao": forma_movimentacao,
+        atualizar_subtipo()
 
-        "valor": valor,
+        return ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda _: ir_para(tela_inicial)),
+                        ft.Text("Novo lançamento", size=24, weight=ft.FontWeight.BOLD),
+                    ],
+                ),
+                ft.ResponsiveRow(
+                    [
+                        ft.Column([tipo, subtipo, forma], spacing=12, col={"xs": 12, "md": 4}),
+                        ft.Column([valor, data, hora], spacing=12, col={"xs": 12, "md": 4}),
+                        ft.Column([conta, status, regra], spacing=12, col={"xs": 12, "md": 4}),
+                    ],
+                    spacing=12,
+                ),
+                descricao,
+                ft.ResponsiveRow(
+                    [
+                        ft.Column([categoria], col={"xs": 12, "md": 6}),
+                        ft.Column([destino], col={"xs": 12, "md": 6}),
+                    ],
+                ),
+                campos_credito,
+                ft.Row(
+                    [
+                        ft.ElevatedButton("Salvar", icon=ft.Icons.SAVE, on_click=salvar),
+                        ft.OutlinedButton("Cancelar", on_click=lambda _: ir_para(tela_inicial)),
+                    ],
+                    spacing=12,
+                ),
+            ],
+            spacing=16,
+        )
 
-        "data": data_formatada,
-
-        "hora": hora,
-
-        "conta": conta,
-
-        "descricao": descricao,
-
-        "categoria": categoria,
-
-        "destino": destino,
-
-        "parcela_atual": parcela_atual,
-
-        "total_parcelas": total_parcelas,
-
-        "fatura": fatura,
-
-        "status": status,
-
-        "regra": regra
-    }
-
-    lancamentos.append(novo_lancamento)
-
-    print("\nLançamento cadastrado com sucesso!")
-
-    return novo_lancamento
-
-
-# ============================================
-# EXIBIR LANÇAMENTOS
-# ============================================
-
-def listar_lancamentos():
-
-    print("\n==============================")
-    print("       LANÇAMENTOS")
-    print("==============================")
-
-    if not lancamentos:
-        print("Nenhum lançamento cadastrado.")
-        return
-
-    for lancamento in lancamentos:
-
-        print("\n------------------------------")
-
-        print(f"ID: {lancamento['id']}")
-        print(f"Tipo: {lancamento['tipo']}")
-        print(f"Subtipo: {lancamento['subtipo']}")
-        print(f"Forma de movimentação: {lancamento['forma_movimentacao']}")
-        print(f"Valor: R$ {lancamento['valor']:.2f}")
-        print(f"Data: {lancamento['data']}")
-        print(f"Hora: {lancamento['hora']}h")
-        print(f"Conta: {lancamento['conta']}")
-        print(f"Descrição: {lancamento['descricao']}")
-        print(f"Categoria: {lancamento['categoria']}")
-        print(f"Destino: {lancamento['destino']}")
-        print(f"Parcela: {lancamento['parcela_atual']}")
-        print(f"Total de parcelas: {lancamento['total_parcelas']}")
-        print(f"Fatura: {lancamento['fatura']}")
-        print(f"Status: {lancamento['status']}")
-        print(f"Regra: {lancamento['regra']}")
+    page.add(area_conteudo, mensagem)
+    ir_para(tela_inicial)
 
 
-# ============================================
-# MENU PRINCIPAL
-# ============================================
-
-while True:
-
-    print("\n==============================")
-    print("          DEMBASE")
-    print("==============================")
-
-    print("1 - Novo lançamento")
-    print("2 - Ver lançamentos")
-    print("3 - Sair")
-
-    opcao = input("\nEscolha uma opção: ")
-
-    if opcao == "1":
-
-        criar_lancamento()
-
-    elif opcao == "2":
-
-        listar_lancamentos()
-
-    elif opcao == "3":
-
-        print("Saindo do DemBase...")
-        break
-
-    else:
-
-        print("Opção inválida.")
-
-
-
+if __name__ == "__main__":
+    ft.app(main)
