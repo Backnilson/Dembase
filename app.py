@@ -148,7 +148,7 @@ def main(page: ft.Page):
         )
 
     def tela_novo_lancamento():
-        tipo = ft.Dropdown(label="Tipo", options=[ft.dropdown.Option("Receita"), ft.dropdown.Option("Despesa")], width=200)
+        tipo = ft.Dropdown(label="Tipo", options=[ft.dropdown.Option("Receita"), ft.dropdown.Option("Despesa")], value="Receita", width=200)
         subtipo = ft.Dropdown(label="Subtipo", width=200)
         forma = ft.Dropdown(label="Forma de movimentação", width=250)
         valor = ft.TextField(label="Valor (R$)", hint_text="Ex: 150,50", keyboard_type=ft.KeyboardType.NUMBER)
@@ -159,7 +159,7 @@ def main(page: ft.Page):
         categoria = ft.Dropdown(label="Categoria", options=[ft.dropdown.Option(c) for c in CATEGORIAS], width=200)
         destino = ft.Dropdown(label="Destino", options=[ft.dropdown.Option(d) for d in DESTINOS], width=200)
         status = ft.Dropdown(label="Status", options=[ft.dropdown.Option(s) for s in STATUS_OPCOES], value="Pago", width=200)
-        regra = ft.Dropdown(label="Regra financeira", options=[ft.dropdown.Option(r) for r in REGRAS], width=220)
+        regra = ft.Dropdown(label="Regra financeira", options=[ft.dropdown.Option(r) for r in REGRAS], visible=False, width=220)
 
         parcela_atual = ft.TextField(label="Parcela atual", visible=False, width=150, keyboard_type=ft.KeyboardType.NUMBER)
         total_parcelas = ft.TextField(label="Total de parcelas", visible=False, width=150, keyboard_type=ft.KeyboardType.NUMBER)
@@ -170,6 +170,7 @@ def main(page: ft.Page):
             if tipo.value == "Receita":
                 subtipo.options = [ft.dropdown.Option("Receita"), ft.dropdown.Option("Entrada")]
                 forma.options = [ft.dropdown.Option(f) for f in FORMAS_RECEBIMENTO]
+                regra.visible = False
             elif tipo.value == "Despesa":
                 subtipo.options = [
                     ft.dropdown.Option("Despesa"),
@@ -178,6 +179,7 @@ def main(page: ft.Page):
                     ft.dropdown.Option("Empréstimo"),
                 ]
                 forma.options = [ft.dropdown.Option(f) for f in FORMAS_PAGAMENTO]
+                regra.visible = True
             else:
                 subtipo.options = []
                 forma.options = []
@@ -187,6 +189,8 @@ def main(page: ft.Page):
             atualizar_credito()
             subtipo.update()
             forma.update()
+            regra.update()
+            page.update()
 
         def atualizar_credito(e=None):
             eh_credito = forma.value == "Credito"
@@ -202,7 +206,11 @@ def main(page: ft.Page):
         def salvar(e):
             limpar_mensagem()
 
-            if not all([tipo.value, subtipo.value, forma.value, conta.value, categoria.value, destino.value, status.value, regra.value]):
+            campos_obrigatorios = [tipo.value, subtipo.value, forma.value, conta.value, categoria.value, destino.value, status.value]
+            if tipo.value == "Despesa":
+                campos_obrigatorios.append(regra.value)
+
+            if not all(campos_obrigatorios):
                 mostrar_mensagem("Preencha todos os campos obrigatórios.")
                 return
 
@@ -269,7 +277,7 @@ def main(page: ft.Page):
                     "total_parcelas": par_total,
                     "fatura": fatura_val,
                     "status": status.value,
-                    "regra": regra.value,
+                    "regra": regra.value if tipo.value == "Despesa" else None,
                 }
             )
 
