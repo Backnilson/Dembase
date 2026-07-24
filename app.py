@@ -25,6 +25,7 @@ def main(page: ft.Page):
 
     area_conteudo = ft.Column(spacing=16, expand=True)
     mensagem = ft.Text(color=ft.Colors.RED)
+    proximo_id = 1
 
     def mostrar_mensagem(texto, cor=ft.Colors.RED):
         mensagem.value = texto
