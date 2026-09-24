@@ -1,2 +1,26 @@
+# Ambientes virtuais
 venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Configurações e Segredos (CRÍTICO: nunca versionar no Git)
+.env
+.env.*
+!.env.example
+secrets/
+config/secrets/
+
+# Bancos locais e logs
 *.db
+*.sqlite3
+*.log
+
+# Build e empacotamento
+dist/
+build/
+*.spec
