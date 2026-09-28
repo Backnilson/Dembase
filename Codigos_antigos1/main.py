@@ -59,7 +59,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         text_size=13,
         label_style=ft.TextStyle(color=COLOR_TEXT_MUTED, size=13),
         hint_style=ft.TextStyle(color=COLOR_TEXT_MUTED, size=11),
-        content_padding=ft.padding.symmetric(horizontal=12, vertical=10),
+        content_padding=ft.Padding.symmetric(horizontal=12, vertical=10),
         visible=False,
     )
 
@@ -76,7 +76,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         text_size=13,
         label_style=ft.TextStyle(color=COLOR_TEXT_MUTED, size=13),
         hint_style=ft.TextStyle(color=COLOR_TEXT_MUTED, size=11),
-        content_padding=ft.padding.symmetric(horizontal=12, vertical=10),
+        content_padding=ft.Padding.symmetric(horizontal=12, vertical=10),
         keyboard_type=ft.KeyboardType.EMAIL,
     )
 
@@ -95,7 +95,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         text_size=13,
         label_style=ft.TextStyle(color=COLOR_TEXT_MUTED, size=13),
         hint_style=ft.TextStyle(color=COLOR_TEXT_MUTED, size=11),
-        content_padding=ft.padding.symmetric(horizontal=12, vertical=10),
+        content_padding=ft.Padding.symmetric(horizontal=12, vertical=10),
     )
 
     txt_confirmar_senha = ft.TextField(
@@ -113,7 +113,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         text_size=13,
         label_style=ft.TextStyle(color=COLOR_TEXT_MUTED, size=13),
         hint_style=ft.TextStyle(color=COLOR_TEXT_MUTED, size=11),
-        content_padding=ft.padding.symmetric(horizontal=12, vertical=10),
+        content_padding=ft.Padding.symmetric(horizontal=12, vertical=10),
         visible=False,
     )
 
@@ -143,7 +143,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         bgcolor=COLOR_PRIMARY,
         border_radius=10,
         height=44,
-        alignment=ft.alignment.center,
+        alignment=ft.alignment.Alignment.CENTER,
         animate=ft.Animation(180, ft.AnimationCurve.EASE_OUT),
         ink=True,
     )
@@ -168,19 +168,19 @@ def criar_view_auth(page: ft.Page) -> ft.View:
     # --- Abas Superiores (Pills) ---
     btn_tab_login = ft.Container(
         content=ft.Text("Entrar", size=12, weight=ft.FontWeight.BOLD, color=COLOR_TEXT_PRIMARY),
-        padding=ft.padding.symmetric(vertical=6, horizontal=18),
+        padding=ft.Padding.symmetric(vertical=6, horizontal=18),
         border_radius=8,
         bgcolor=COLOR_PRIMARY,
-        alignment=ft.alignment.center,
+        alignment=ft.alignment.Alignment.CENTER,
         animate=ft.Animation(180, ft.AnimationCurve.EASE_IN_OUT),
     )
 
     btn_tab_cadastro = ft.Container(
         content=ft.Text("Cadastrar", size=12, weight=ft.FontWeight.W_500, color=COLOR_TEXT_MUTED),
-        padding=ft.padding.symmetric(vertical=6, horizontal=18),
+        padding=ft.Padding.symmetric(vertical=6, horizontal=18),
         border_radius=8,
         bgcolor=ft.Colors.TRANSPARENT,
-        alignment=ft.alignment.center,
+        alignment=ft.alignment.Alignment.CENTER,
         animate=ft.Animation(180, ft.AnimationCurve.EASE_IN_OUT),
     )
 
@@ -346,8 +346,8 @@ def criar_view_auth(page: ft.Page) -> ft.View:
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         spacing=4,
                     ),
-                    alignment=ft.alignment.center,
-                    margin=ft.margin.only(bottom=10),
+                    alignment=ft.alignment.Alignment.CENTER,
+                    margin=ft.Margin.only(bottom=10),
                 ),
 
                 # Seletor de Abas (Entrar / Cadastrar)
@@ -360,7 +360,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
                     bgcolor=COLOR_SURFACE_ALT,
                     border_radius=10,
                     padding=3,
-                    margin=ft.margin.only(bottom=12),
+                    margin=ft.Margin.only(bottom=12),
                 ),
 
                 # Campos
@@ -377,8 +377,8 @@ def criar_view_auth(page: ft.Page) -> ft.View:
                 ft.Container(
                     content=lbl_alternar,
                     on_click=alternar_modo_toggle,
-                    alignment=ft.alignment.center,
-                    margin=ft.margin.only(top=8),
+                    alignment=ft.alignment.Alignment.CENTER,
+                    margin=ft.Margin.only(top=8),
                 ),
             ],
             spacing=10,
@@ -387,9 +387,9 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         ),
         width=350,
         bgcolor=COLOR_SURFACE,
-        border=ft.border.all(1, COLOR_BORDER),
+        border=ft.Border.all(1, COLOR_BORDER),
         border_radius=16,
-        padding=ft.padding.symmetric(horizontal=24, vertical=20),
+        padding=ft.Padding.symmetric(horizontal=24, vertical=20),
         shadow=ft.BoxShadow(
             spread_radius=0,
             blur_radius=25,
@@ -402,11 +402,11 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         controls=[
             ft.Container(
                 content=card_auth,
-                alignment=ft.alignment.center,
+                alignment=ft.alignment.Alignment.CENTER,
                 expand=True,
                 gradient=ft.LinearGradient(
-                    begin=ft.alignment.top_center,
-                    end=ft.alignment.bottom_center,
+                    begin=ft.alignment.Alignment.TOP_CENTER,
+                    end=ft.alignment.Alignment.BOTTOM_CENTER,
                     colors=["#0B0F19", "#111827"],
                 ),
             )
@@ -494,9 +494,9 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                                 spacing=6,
                             ),
                             bgcolor=COLOR_SURFACE_ALT,
-                            border=ft.border.all(1, COLOR_BORDER),
+                            border=ft.Border.all(1, COLOR_BORDER),
                             border_radius=20,
-                            padding=ft.padding.symmetric(horizontal=12, vertical=6),
+                            padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                         ),
                         ft.IconButton(
                             icon=ft.Icons.LOGOUT_ROUNDED,
@@ -511,8 +511,8 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         ),
         bgcolor=COLOR_SURFACE,
-        border=ft.border.only(bottom=ft.BorderSide(1, COLOR_BORDER)),
-        padding=ft.padding.symmetric(horizontal=24, vertical=14),
+        border=ft.Border.only(bottom=ft.BorderSide(1, COLOR_BORDER)),
+        padding=ft.Padding.symmetric(horizontal=24, vertical=14),
     )
 
     # =========================================================================
@@ -561,13 +561,13 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                             ),
                             bgcolor="#064E3B",
                             border_radius=8,
-                            padding=ft.padding.symmetric(horizontal=12, vertical=8),
+                            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
                         )
                     ],
                     alignment=ft.MainAxisAlignment.END,
                 ),
                 col={"xs": 12, "md": 4},
-                alignment=ft.alignment.center_right,
+                alignment=ft.alignment.Alignment.CENTER_RIGHT,
             ),
         ],
         columns=12,
@@ -608,7 +608,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                 spacing=8,
             ),
             bgcolor=COLOR_SURFACE,
-            border=ft.border.all(1, COLOR_BORDER),
+            border=ft.Border.all(1, COLOR_BORDER),
             border_radius=14,
             padding=20,
             col={"xs": 12, "sm": 6, "md": 4},  # No desktop ocupa 1/3; no mobile ocupa 12
@@ -657,7 +657,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                             content=ft.Text("Diferencial DemBase", size=10, color=COLOR_PRIMARY_LIGHT, weight=ft.FontWeight.BOLD),
                             bgcolor="#064E3B",
                             border_radius=6,
-                            padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                            padding=ft.Padding.symmetric(horizontal=8, vertical=3),
                         ),
                     ],
                     spacing=8,
@@ -669,24 +669,24 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                 ),
                 ft.Row(
                     controls=[
-                        ft.ElevatedButton(
-                            text="Mês Atual",
+                        ft.FilledButton(
+                            content=ft.Text("Mês Atual"),
                             style=ft.ButtonStyle(
                                 bgcolor=COLOR_SURFACE_ALT,
                                 color=COLOR_TEXT_PRIMARY,
                                 shape=ft.RoundedRectangleBorder(radius=8),
                             ),
                         ),
-                        ft.ElevatedButton(
-                            text="Do dia 01 ao dia 23",
+                        ft.FilledButton(
+                            content=ft.Text("Do dia 01 ao dia 23"),
                             style=ft.ButtonStyle(
                                 bgcolor=COLOR_PRIMARY,
                                 color=COLOR_TEXT_PRIMARY,
                                 shape=ft.RoundedRectangleBorder(radius=8),
                             ),
                         ),
-                        ft.ElevatedButton(
-                            text="Personalizar Datas...",
+                        ft.FilledButton(
+                            content=ft.Text("Personalizar Datas..."),
                             style=ft.ButtonStyle(
                                 bgcolor=COLOR_SURFACE_ALT,
                                 color=COLOR_TEXT_MUTED,
@@ -701,7 +701,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
             spacing=10,
         ),
         bgcolor=COLOR_SURFACE,
-        border=ft.border.all(1, COLOR_BORDER),
+        border=ft.Border.all(1, COLOR_BORDER),
         border_radius=14,
         padding=20,
         col={"xs": 12, "lg": 8},
@@ -711,8 +711,8 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
         content=ft.Column(
             controls=[
                 ft.Text("Ações Rápidas", size=15, weight=ft.FontWeight.BOLD, color=COLOR_TEXT_PRIMARY),
-                ft.ElevatedButton(
-                    text="+ Novo Lançamento",
+                ft.FilledButton(
+                    content=ft.Text("+ Novo Lançamento"),
                     icon=ft.Icons.ADD_ROUNDED,
                     style=ft.ButtonStyle(
                         bgcolor=COLOR_PRIMARY,
@@ -726,7 +726,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                 ft.Row(
                     controls=[
                         ft.OutlinedButton(
-                            text="Contas",
+                            content=ft.Text("Contas"),
                             icon=ft.Icons.CREDIT_CARD_ROUNDED,
                             style=ft.ButtonStyle(
                                 shape=ft.RoundedRectangleBorder(radius=8),
@@ -735,7 +735,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                             on_click=lambda e: mostrar_feedback(page, "Gerenciador de Contas (Etapa 4)", "info"),
                         ),
                         ft.OutlinedButton(
-                            text="Categorias",
+                            content=ft.Text("Categorias"),
                             icon=ft.Icons.CATEGORY_ROUNDED,
                             style=ft.ButtonStyle(
                                 shape=ft.RoundedRectangleBorder(radius=8),
@@ -750,7 +750,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
             spacing=12,
         ),
         bgcolor=COLOR_SURFACE,
-        border=ft.border.all(1, COLOR_BORDER),
+        border=ft.Border.all(1, COLOR_BORDER),
         border_radius=14,
         padding=20,
         col={"xs": 12, "lg": 4},
@@ -790,16 +790,16 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                         spacing=8,
                     ),
                     height=200,
-                    alignment=ft.alignment.center,
+                    alignment=ft.alignment.Alignment.CENTER,
                     bgcolor=COLOR_SURFACE_ALT,
                     border_radius=12,
-                    border=ft.border.all(1, ft.Colors.with_opacity(0.4, COLOR_BORDER)),
+                    border=ft.Border.all(1, ft.Colors.with_opacity(0.4, COLOR_BORDER)),
                 ),
             ],
             spacing=14,
         ),
         bgcolor=COLOR_SURFACE,
-        border=ft.border.all(1, COLOR_BORDER),
+        border=ft.Border.all(1, COLOR_BORDER),
         border_radius=14,
         padding=20,
         col={"xs": 12, "lg": 8},
@@ -846,7 +846,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
             spacing=14,
         ),
         bgcolor=COLOR_SURFACE,
-        border=ft.border.all(1, COLOR_BORDER),
+        border=ft.Border.all(1, COLOR_BORDER),
         border_radius=14,
         padding=20,
         col={"xs": 12, "lg": 4},
@@ -876,7 +876,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         ),
-        padding=ft.padding.symmetric(horizontal=28, vertical=20),
+        padding=ft.Padding.symmetric(horizontal=28, vertical=20),
         expand=True,
     )
 

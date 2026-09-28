@@ -7,29 +7,24 @@ from backend import (
     listar_destinos,
 )
 from ui_utils import (
-    COLOR_BG, COLOR_SURFACE, COLOR_SURFACE_ALT, COLOR_BORDER,
-    COLOR_PRIMARY, COLOR_PRIMARY_LIGHT, COLOR_TEXT_PRIMARY,
-    COLOR_TEXT_MUTED, mostrar_feedback
+    COLOR_BG,
+    COLOR_SURFACE,
+    COLOR_SURFACE_ALT,
+    COLOR_BORDER,
+    COLOR_PRIMARY,
+    COLOR_PRIMARY_LIGHT,
+    COLOR_TEXT_PRIMARY,
+    COLOR_TEXT_MUTED,
+    mostrar_feedback,
+    estilo_campo,
 )
+
 
 def criar_view_lancamentos(page: ft.Page) -> ft.View:
     """
     Cria a View do formulário de Cadastro de Lançamentos.
     Possui lógica dinâmica para exibir campos de parcela quando for Crédito.
     """
-    # --- Estilização padrão para campos ---
-    estilo_campo = {
-        "border_color": COLOR_BORDER,
-        "focused_border_color": COLOR_PRIMARY,
-        "border_radius": 10,
-        "filled": True,
-        "fill_color": COLOR_SURFACE_ALT,
-        "cursor_color": COLOR_PRIMARY,
-        "text_size": 13,
-        "label_style": ft.TextStyle(color=COLOR_TEXT_MUTED, size=13),
-        "content_padding": ft.padding.symmetric(horizontal=12, vertical=10),
-    }
-
     # --- Elementos do Formulário ---
     # 1. Tipo
     dd_tipo = ft.Dropdown(
@@ -58,16 +53,6 @@ def criar_view_lancamentos(page: ft.Page) -> ft.View:
     )
 
     # 3. Forma de Movimentação
-    def on_forma_change(e):
-        # Mostra ou oculta os campos de parcela com base na seleção
-        if dd_forma_mov.value == "Credito":
-            row_parcelas.visible = True
-        else:
-            row_parcelas.visible = False
-            txt_parcela_atual.value = ""
-            txt_total_parcelas.value = ""
-        page.update()
-
     dd_forma_mov = ft.Dropdown(
         label="Forma de Mov.",
         options=[
@@ -77,7 +62,6 @@ def criar_view_lancamentos(page: ft.Page) -> ft.View:
             ft.dropdown.Option("Dinheiro"),
         ],
         value="Pix",
-        on_change=on_forma_change,
         **estilo_campo
     )
 
@@ -105,12 +89,25 @@ def criar_view_lancamentos(page: ft.Page) -> ft.View:
         run_spacing=10,
     )
 
+    def on_forma_change(e):
+        # Mostra ou oculta os campos de parcela com base na seleção
+        if dd_forma_mov.value == "Credito":
+            row_parcelas.visible = True
+        else:
+            row_parcelas.visible = False
+            txt_parcela_atual.value = ""
+            txt_total_parcelas.value = ""
+        page.update()
+
+    # Liga o evento de forma segura (compatível com Flet >= 1.0 e < 1.0)
+    dd_forma_mov.on_change = on_forma_change
+
     # 4. Valor, Data, Hora
     txt_valor = ft.TextField(
         label="Valor (R$)",
         hint_text="0.00",
         keyboard_type=ft.KeyboardType.NUMBER,
-        prefix_text="R$ ",
+        prefix="R$ ",
         **estilo_campo
     )
 
@@ -182,7 +179,7 @@ def criar_view_lancamentos(page: ft.Page) -> ft.View:
         bgcolor=COLOR_PRIMARY,
         border_radius=10,
         height=48,
-        alignment=ft.alignment.center,
+        alignment=ft.alignment.Alignment.CENTER,
         ink=True,
     )
 
@@ -257,8 +254,8 @@ def criar_view_lancamentos(page: ft.Page) -> ft.View:
             alignment=ft.MainAxisAlignment.START,
         ),
         bgcolor=COLOR_SURFACE,
-        border=ft.border.only(bottom=ft.BorderSide(1, COLOR_BORDER)),
-        padding=ft.padding.symmetric(horizontal=16, vertical=14),
+        border=ft.Border.only(bottom=ft.BorderSide(1, COLOR_BORDER)),
+        padding=ft.Padding.symmetric(horizontal=16, vertical=14),
     )
 
     # --- Montagem do Formulário (Responsive) ---
@@ -293,7 +290,7 @@ def criar_view_lancamentos(page: ft.Page) -> ft.View:
             ]
         ),
         bgcolor=COLOR_SURFACE,
-        border=ft.border.all(1, COLOR_BORDER),
+        border=ft.Border.all(1, COLOR_BORDER),
         border_radius=14,
         padding=24,
     )

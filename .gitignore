@@ -1,26 +1,47 @@
-# Ambientes virtuais
-venv/
-.venv/
-env/
-
-# Python cache
+# Python / Flet
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.log
 
-# Configurações e Segredos (CRÍTICO: nunca versionar no Git)
+# Segredos e Configurações Locais
 .env
 .env.*
 !.env.example
-secrets/
-config/secrets/
 
-# Bancos locais e logs
-*.db
-*.sqlite3
-*.log
+# Supabase CLI cache
+**/.temp/
+supabase/.temp/
 
-# Build e empacotamento
-dist/
-build/
-*.spec
+# Flutter / Dart
+dembase_app/.dart_tool/
+dembase_app/.packages
+dembase_app/build/
+dembase_app/.flutter-plugins
+dembase_app/.flutter-plugins-dependencies
+dembase_app/.metadata
+dembase_app/.env
+dembase_app/android/.gradle/
+dembase_app/android/local.properties
+dembase_app/ios/Pods/
+dembase_app/ios/.symlinks/
+dembase_app/windows/flutter/ephemeral/
+dembase_app/linux/flutter/ephemeral/
+dembase_app/macos/Flutter/ephemeral/
+dembase_app/web/flutter_service_worker.js
+*.g.dart
+*.freezed.dart
+
+# IDEs e Editores
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo

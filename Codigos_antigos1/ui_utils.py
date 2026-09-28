@@ -19,6 +19,25 @@ COLOR_ERROR = "#EF4444"
 COLOR_WARNING = "#F59E0B"
 COLOR_INFO = "#3B82F6"
 
+# =============================================================================
+# ESTILOS DE COMPONENTES REUTILIZÁVEIS
+# =============================================================================
+estilo_campo = {
+    "border_color": COLOR_BORDER,
+    "focused_border_color": COLOR_PRIMARY,
+    "border_radius": 10,
+    "filled": True,
+    "fill_color": COLOR_SURFACE_ALT,
+    "text_size": 13,
+    "label_style": ft.TextStyle(color=COLOR_TEXT_MUTED, size=13),
+    "content_padding": (
+        ft.Padding.symmetric(horizontal=12, vertical=10)
+        if hasattr(ft, "Padding") and hasattr(ft.Padding, "symmetric")
+        else getattr(ft.padding, "symmetric", lambda horizontal, vertical: 10)(horizontal=12, vertical=10)
+    ),
+}
+
+
 
 # =============================================================================
 # SISTEMA DE FEEDBACK VISUAL
