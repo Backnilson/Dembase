@@ -15,6 +15,7 @@ from datetime import date
 from core import theme as T
 from core.theme import pad, borda, borda_bottom
 from core.router import navegar, ROTA_AUTH
+from core.window_manager import ajustar_janela_login
 import services.supabase_client as db
 
 # ── Rotas disponíveis na Sidebar ──────────────────────────────────────────────
@@ -174,10 +175,7 @@ def criar_shell(
     async def _on_logout(_=None):
         try:
             db.fazer_logout()
-            page.window.width  = 480
-            page.window.height = 680
-            page.update()
-            await page.window.center()
+            await ajustar_janela_login(page)
         finally:
             navegar(page, ROTA_AUTH)
 

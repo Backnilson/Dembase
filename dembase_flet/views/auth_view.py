@@ -8,6 +8,7 @@ import flet as ft
 from core import theme as T
 from core.theme import mostrar_feedback, traduzir_erro_auth, pad, borda, centro
 from core.router import ROTA_DASHBOARD, navegar
+from core.window_manager import ajustar_janela_principal
 import services.supabase_client as db
 
 
@@ -110,16 +111,13 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         page.update()
         return ok
 
-    def on_submit(_):
+    async def on_submit(_):
         if not validar(): return
         set_loading(True)
         try:
             if modo_login[0]:
                 db.fazer_login(txt_email.value.strip(), txt_senha.value)
-                page.window.width = 1280
-                page.window.height = 800
-                page.update()
-                page.run_task(page.window.center)
+                await ajustar_janela_principal(page)
                 navegar(page, ROTA_DASHBOARD)
             else:
                 db.cadastrar_usuario(txt_email.value.strip(), txt_senha.value, txt_nome.value.strip())

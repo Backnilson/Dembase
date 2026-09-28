@@ -5,7 +5,8 @@ DemBase v3 — main.py  (Flet 1.0 — async)
 """
 import flet as ft
 from core import theme as T
-from core.router import configurar_rotas, ROTA_AUTH, ROTA_DASHBOARD
+from core.router import configurar_rotas, navegar, ROTA_AUTH, ROTA_DASHBOARD
+from core.window_manager import ajustar_janela_login, ajustar_janela_principal
 import services.supabase_client as db
 
 
@@ -16,11 +17,6 @@ async def main(page: ft.Page):
     page.padding    = 0
     page.theme      = ft.Theme(font_family="Inter")
 
-    page.window.width  = 480
-    page.window.height = 680
-    page.update()
-    await page.window.center()
-
     configurar_rotas(page)
 
     try:
@@ -30,13 +26,11 @@ async def main(page: ft.Page):
         logado = False
 
     if logado:
-        page.window.width  = 1280
-        page.window.height = 800
-        page.update()
-        await page.window.center()
-        await page.push_route(ROTA_DASHBOARD)
+        await ajustar_janela_principal(page)
+        navegar(page, ROTA_DASHBOARD)
     else:
-        await page.push_route(ROTA_AUTH)
+        await ajustar_janela_login(page)
+        navegar(page, ROTA_AUTH)
 
 
 if __name__ == "__main__":
