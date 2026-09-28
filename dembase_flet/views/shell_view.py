@@ -43,6 +43,10 @@ _MESES_PT = [
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ]
 
+# Estado compartilhado da Sidebar (persiste durante a navegação entre rotas)
+# Padrão: False (modo minificado / 68px de largura)
+_sidebar_expandida: bool = False
+
 
 # =============================================================================
 # CONSTRUTOR DO SHELL
@@ -55,14 +59,15 @@ def criar_shell(
 ) -> ft.View:
     """
     Retorna um ft.View completo com:
-      - Sidebar colapsável à esquerda
-      - Header superior com seletor de mês/ano
+      - Sidebar colapsável à esquerda (modo minificado padrão com ícones e tooltips)
+      - Header superior com botão hambúrguer e seletor de mês/ano
       - Área de conteúdo scrollável à direita
     """
+    global _sidebar_expandida
+
     hoje = date.today()
-    mes_sel  = [hoje.month]
-    ano_sel  = [hoje.year]
-    expanded = [True]
+    mes_sel = [hoje.month]
+    ano_sel = [hoje.year]
 
     # ── Perfil ──────────────────────────────────────────────────────────────
     try:
@@ -73,11 +78,12 @@ def criar_shell(
         nome_curto = nome_completo = "Usuário"
 
     # ── Dimensões da sidebar ────────────────────────────────────────────────
-    W_EXPANDED  = 220
-    W_COLLAPSED = 64
+    W_EXPANDED  = 230
+    W_COLLAPSED = 68
 
-    # Lista para rastrear textos que devem sumir quando colapsar
+    # Rastrear controles que devem sumir quando colapsar
     textos_colapsaveis: list[ft.Control] = []
+    nav_containers: list[tuple[ft.Container, str]] = []
 
     # =========================================================================
     # ITEM DE NAVEGAÇÃO
@@ -96,25 +102,38 @@ def criar_shell(
             color=cor_texto,
             size=13,
             weight=ft.FontWeight.W_600 if ativo else ft.FontWeight.W_400,
-            visible=expanded[0],
+            visible=_sidebar_expandida,
+            no_wrap=True,
         )
         textos_colapsaveis.append(txt_item)
 
-        return ft.Container(
+        icon_box = ft.Container(
+            content=ft.Icon(icone, color=cor_icone, size=20),
+            width=38,
+            height=38,
+            alignment=ft.Alignment(0, 0),
+        )
+
+        item = ft.Container(
             content=ft.Row(
-                spacing=12,
+                spacing=8,
+                alignment=ft.MainAxisAlignment.START,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
-                    ft.Icon(icone, color=cor_icone, size=20),
+                    icon_box,
                     txt_item,
                 ],
             ),
             bgcolor=cor_bg,
             border_radius=10,
-            padding=pad(h=14, v=11),
+            padding=pad(h=5, v=3),
             on_click=_on_click,
-            animate=ft.Animation(duration=150, curve=ft.AnimationCurve.EASE_OUT),
+            tooltip=label if not _sidebar_expandida else None,
             border=borda(1, f"{T.PRIMARY}40") if ativo else None,
+            animate=ft.Animation(duration=150, curve=ft.AnimationCurve.EASE_OUT),
         )
+        nav_containers.append((item, label))
+        return item
 
     # =========================================================================
     # SIDEBAR
@@ -125,53 +144,40 @@ def criar_shell(
     )
 
     # Logo
-    txt_logo = ft.Text("DemBase", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD, visible=True)
+    txt_logo = ft.Text(
+        "DemBase",
+        color=T.TEXT_PRIMARY,
+        size=17,
+        weight=ft.FontWeight.BOLD,
+        visible=_sidebar_expandida,
+        no_wrap=True,
+    )
     textos_colapsaveis.append(txt_logo)
+
+    logo_icon = ft.Container(
+        content=ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=T.PRIMARY, size=22),
+        bgcolor=f"{T.PRIMARY}22",
+        border_radius=10,
+        width=38,
+        height=38,
+        alignment=ft.Alignment(0, 0),
+    )
 
     sidebar_logo = ft.Container(
         content=ft.Row(
             spacing=10,
+            alignment=ft.MainAxisAlignment.START,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Container(
-                    content=ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=T.PRIMARY, size=22),
-                    bgcolor=f"{T.PRIMARY}22",
-                    border_radius=10,
-                    padding=pad(all_=8),
-                ),
+                logo_icon,
                 txt_logo,
             ],
         ),
-        padding=pad(h=14, v=16),
+        padding=pad(h=14, v=14),
         border=borda_bottom(color=T.BORDER),
     )
 
-    # Avatar e perfil no rodapé
-    _avatar = ft.Container(
-        content=ft.Text(
-            nome_curto[0].upper() if nome_curto else "U",
-            color=ft.Colors.WHITE,
-            size=16,
-            weight=ft.FontWeight.BOLD,
-        ),
-        bgcolor=T.PRIMARY,
-        border_radius=20,
-        width=36,
-        height=36,
-        alignment=ft.Alignment(0, 0),
-    )
-
-    col_perfil_info = ft.Column(
-        spacing=0,
-        expand=True,
-        visible=True,
-        controls=[
-            ft.Text(nome_curto, color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_600),
-            ft.Text("Conta pessoal", color=T.TEXT_MUTED, size=11),
-        ],
-    )
-    textos_colapsaveis.append(col_perfil_info)
-
-    # Logout
+    # ── Avatar e Perfil no rodapé (com Logout ao clicar no Avatar) ─────────────
     async def _on_logout(_=None):
         try:
             db.fazer_logout()
@@ -179,26 +185,94 @@ def criar_shell(
         finally:
             navegar(page, ROTA_AUTH)
 
-    btn_logout = ft.IconButton(
+    _avatar_circle = ft.Container(
+        content=ft.Text(
+            nome_curto[0].upper() if nome_curto else "U",
+            color=ft.Colors.WHITE,
+            size=15,
+            weight=ft.FontWeight.BOLD,
+        ),
+        bgcolor=T.PRIMARY,
+        border_radius=18,
+        width=36,
+        height=36,
+        alignment=ft.Alignment(0, 0),
+    )
+
+    menu_avatar = ft.PopupMenuButton(
+        content=_avatar_circle,
+        tooltip=f"{nome_completo}\nClique para opções de conta",
+        items=[
+            ft.PopupMenuItem(
+                content=ft.Row(
+                    spacing=8,
+                    controls=[
+                        ft.Icon(ft.Icons.ACCOUNT_CIRCLE_ROUNDED, size=18, color=T.PRIMARY),
+                        ft.Column(
+                            spacing=1,
+                            controls=[
+                                ft.Text(nome_completo, size=13, weight=ft.FontWeight.W_600, color=T.TEXT_PRIMARY),
+                                ft.Text("Conta ativa", size=10, color=T.TEXT_MUTED),
+                            ],
+                        ),
+                    ],
+                ),
+                disabled=True,
+            ),
+            ft.PopupMenuItem(),
+            ft.PopupMenuItem(
+                content=ft.Row(
+                    spacing=8,
+                    controls=[
+                        ft.Icon(ft.Icons.LOGOUT_ROUNDED, size=18, color=T.DESPESA),
+                        ft.Text("Sair da conta", size=13, color=T.DESPESA, weight=ft.FontWeight.W_600),
+                    ],
+                ),
+                on_click=_on_logout,
+            ),
+        ],
+    )
+
+    col_perfil_info = ft.Column(
+        spacing=0,
+        expand=True,
+        visible=_sidebar_expandida,
+        controls=[
+            ft.Text(nome_curto, color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_600, no_wrap=True),
+            ft.Text("Conta pessoal", color=T.TEXT_MUTED, size=11, no_wrap=True),
+        ],
+    )
+    textos_colapsaveis.append(col_perfil_info)
+
+    btn_logout_rapido = ft.IconButton(
         icon=ft.Icons.LOGOUT_ROUNDED,
         icon_color=T.DESPESA,
         icon_size=18,
         tooltip="Sair",
         on_click=_on_logout,
-        visible=True,
+        visible=_sidebar_expandida,
     )
-    textos_colapsaveis.append(btn_logout)
+    textos_colapsaveis.append(btn_logout_rapido)
+
+    avatar_slot = ft.Container(
+        content=menu_avatar,
+        width=38,
+        height=38,
+        alignment=ft.Alignment(0, 0),
+    )
 
     sidebar_footer = ft.Container(
         content=ft.Row(
-            spacing=10,
+            spacing=8,
+            alignment=ft.MainAxisAlignment.START,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
-                _avatar,
+                avatar_slot,
                 col_perfil_info,
-                btn_logout,
+                btn_logout_rapido,
             ],
         ),
-        padding=pad(h=12, v=10),
+        padding=pad(h=15, v=12),
         border=borda_bottom(color=T.BORDER),
     )
 
@@ -217,29 +291,38 @@ def criar_shell(
         ],
     )
 
-    # Container animado (Flet 1.0.1: Container com animate=ft.Animation(...))
     sidebar = ft.Container(
-        width=W_EXPANDED,
+        width=W_EXPANDED if _sidebar_expandida else W_COLLAPSED,
         bgcolor=T.SURFACE,
         border=borda(1, T.BORDER),
-        animate=ft.Animation(duration=200, curve=ft.AnimationCurve.EASE_IN_OUT),
+        animate=ft.Animation(duration=250, curve=ft.AnimationCurve.FAST_OUT_SLOWIN),
         content=sidebar_col,
     )
 
-    # Toggle da sidebar
+    # ── Toggle da Sidebar (Gatilho do Botão Hambúrguer) ───────────────────────
     def _toggle_sidebar(_=None):
-        expanded[0] = not expanded[0]
-        sidebar.width = W_EXPANDED if expanded[0] else W_COLLAPSED
+        global _sidebar_expandida
+        _sidebar_expandida = not _sidebar_expandida
+
+        sidebar.width = W_EXPANDED if _sidebar_expandida else W_COLLAPSED
+
         for ctrl in textos_colapsaveis:
-            ctrl.visible = expanded[0]
+            ctrl.visible = _sidebar_expandida
+
+        for container, label in nav_containers:
+            container.tooltip = label if not _sidebar_expandida else None
+
+        btn_toggle.icon = ft.Icons.MENU_OPEN_ROUNDED if _sidebar_expandida else ft.Icons.MENU_ROUNDED
+        btn_toggle.icon_color = T.PRIMARY if _sidebar_expandida else T.TEXT_MUTED
+        btn_toggle.tooltip = "Recolher menu" if _sidebar_expandida else "Expandir menu"
+
         page.update()
 
-    # Botão de colapso no header
     btn_toggle = ft.IconButton(
-        icon=ft.Icons.MENU_ROUNDED,
-        icon_color=T.TEXT_MUTED,
+        icon=ft.Icons.MENU_OPEN_ROUNDED if _sidebar_expandida else ft.Icons.MENU_ROUNDED,
+        icon_color=T.PRIMARY if _sidebar_expandida else T.TEXT_MUTED,
         icon_size=20,
-        tooltip="Expandir/Colapsar",
+        tooltip="Recolher menu" if _sidebar_expandida else "Expandir menu",
         on_click=_toggle_sidebar,
     )
 
