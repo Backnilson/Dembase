@@ -127,14 +127,18 @@ def configurar_rotas(page: ft.Page):
 
         # ── Configurações ─────────────────────────────────────────────────────
         if rota == ROTA_CONFIG:
-            return criar_shell(
-                page, rota_ativa=rota,
-                conteudo=placeholder_view(
-                    "Configurações",
-                    "Perfil, preferências e importação de dados.",
-                    ft.Icons.SETTINGS_ROUNDED,
-                ),
-            )
+            try:
+                from views.config_view import criar_view_config
+                return criar_view_config(page)
+            except ImportError:
+                return criar_shell(
+                    page, rota_ativa=rota,
+                    conteudo=placeholder_view(
+                        "Configurações",
+                        "Perfil, preferências e importação de dados.",
+                        ft.Icons.SETTINGS_ROUNDED,
+                    ),
+                )
 
         # ── Fallback ──────────────────────────────────────────────────────────
         return criar_view_dashboard(page) if _logado() else criar_view_auth(page)

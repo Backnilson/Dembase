@@ -6,7 +6,20 @@ Encapsula: Auth, CRUD de todas as tabelas e chamadas RPC.
 =============================================================================
 """
 import os
+import ssl
+import httpx
+import httpx._config
+import httpx._transports.default
 from dotenv import load_dotenv
+
+# Garante compatibilidade SSL nativa do Windows para httpx e Supabase
+def _criar_ssl_context_nativo(*args, **kwargs):
+    return ssl.create_default_context()
+
+httpx.create_ssl_context = _criar_ssl_context_nativo
+httpx._config.create_ssl_context = _criar_ssl_context_nativo
+httpx._transports.default.create_ssl_context = _criar_ssl_context_nativo
+
 from supabase import create_client, Client
 
 load_dotenv()
