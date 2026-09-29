@@ -1,14 +1,14 @@
 # Projeto: DemBase v2.0 - Controle Financeiro Pessoal Premium
 
 ## 1. Visão Geral
-O objetivo é criar um aplicativo de controle financeiro pessoal multiplataforma (Android, Web, Desktop) com frontend em **flet** e banco de dados em nuvem usando **Supabase**. O design deve ser premium, minimalista e intuitivo, focado em usabilidade máxima e experiência de alto nível.
+O objetivo é criar um aplicativo de controle financeiro pessoal multiplataforma (Android, Web, Desktop) com frontend em **Python (Flet 1.0.1)** e banco de dados em nuvem usando **Supabase**. O design deve ser premium, minimalista e intuitivo, focado em usabilidade máxima e experiência de alto nível.
 
 ### Diferenciais do Sistema:
 1. **Sistema de Filtros Flexíveis de Data** — Períodos personalizados (ex: do dia 01 ao dia 23), abandonando a limitação de meses fechados.
 2. **Regra 50/30/20** — Cada despesa é classificada em uma das três categorias orçamentárias, com acompanhamento visual em tempo real no Dashboard.
-3. **Performance Ultra-leve** — Toda lógica de cálculo ocorre no Supabase (PostgreSQL), o flet apenas consome e exibe.
+3. **Performance Ultra-leve** — Toda lógica de cálculo e agregação ocorre no Supabase (PostgreSQL), o Flet apenas consome e exibe.
 
-*Nota de Referência:* As pastas `Codigos_antigos/` e `Codigos_antigos1/` contêm protótipos originais em Python/Flet. Servem apenas como referência para lógica de negócio. O novo código é escrito do zero em Dart.
+*Nota de Referência:* O projeto ativo e oficial está na pasta `dembase_flet/`. As pastas `Codigos_antigos/` e `Codigos_antigos1/` contêm protótipos e versões anteriores arquivadas apenas para consulta de regras de negócio.
 
 ## 2. Escopo do MVP (Minimum Viable Product)
 - **Dashboard (Tela Inicial):** Visão geral de receitas, despesas e saldo, com KPIs, gráficos dinâmicos, barras de progresso da Regra 50/30/20 e espaço para frase motivacional diária.
@@ -30,7 +30,7 @@ Quando a forma de movimentação for "Credito":
    - Data **hoje ou no passado** → Status = "Pago"
    - O campo `status` permanece visível e editável para controle manual.
 
-### 3.2 Regra 50/30/20 (NOVO)
+### 3.2 Regra 50/30/20
 Ao registrar uma **despesa**, o usuário DEVE classificá-la em uma das categorias:
 - **Essencial (50%)** — Moradia, alimentação, transporte, contas fixas
 - **Estilo de Vida (30%)** — Lazer, restaurantes, compras, entretenimento
@@ -44,7 +44,7 @@ A tabela principal `lancamentos` possui:
 - `tipo` (Receita, Despesa), `subtipo`, `forma_movimentacao`
 - `conta_id`, `categoria_id`, `destino_id` (foreign keys)
 - `valor`, `data`, `hora`, `descricao`, `status`
-- **`regra`** (Essencial, Estilo de Vida, Investimento) — NOVO, obrigatório para despesas
+- **`regra`** (Essencial, Estilo de Vida, Investimento) — obrigatório para despesas
 - Exclusivos para crédito: `parcela_atual`, `total_parcelas`, `fatura`
 - Auditoria: `criado_em`, `atualizado_em`
 
@@ -52,35 +52,49 @@ A tabela principal `lancamentos` possui:
 - `get_financial_totals(p_data_inicio, p_data_fim)` — Retorna receitas, despesas e saldo
 - `get_regra_50_30_20_summary(p_data_inicio, p_data_fim)` — Retorna o resumo da regra por categoria
 
-## 5. Arquitetura Flutter
+## 5. Arquitetura do Projeto Ativo (`dembase_flet/`)
 ```
-dembase_app/
-├── lib/
-│   ├── main.dart              → Inicialização (Supabase, dotenv, Riverpod)
-│   ├── app.dart               → MaterialApp.router com GoRouter
-│   ├── core/
-│   │   ├── theme/app_theme.dart    → Design tokens premium
-│   │   ├── constants/app_constants.dart → Constantes de negócio
-│   │   └── routes/app_router.dart  → Roteamento com guards de auth
-│   ├── data/
-│   │   ├── services/supabase_service.dart → Wrapper do Supabase
-│   │   └── repositories/auth_repository.dart
-│   ├── models/
-│   │   └── lancamento_model.dart
-│   └── presentation/
-│       ├── screens/
-│       │   ├── auth/login_screen.dart
-│       │   └── dashboard/dashboard_screen.dart
-│       └── widgets/
-│           ├── kpi_card.dart
-│           └── date_filter_bar.dart
-├── database/
-│   └── schema_v2.sql          → Schema completo com regra 50/30/20
-└── pubspec.yaml
+dembase_flet/
+├── main.py                    → Ponto de entrada (Flet 1.0.1 async com ft.run(main))
+├── core/
+│   ├── constants.py           → Constantes de negócio, paleta e rotas
+│   ├── router.py              → Roteamento assíncrono Flet
+│   ├── theme.py               → Design tokens premium (cores, estilos, bordas)
+│   └── window_manager.py      → Responsividade e dimensionamento adaptativo de janelas
+├── services/
+│   └── supabase_client.py     → ÚNICO ponto de contato com o banco (Auth, CRUD, RPCs)
+├── views/
+│   ├── auth_view.py           → Autenticação (Login e Cadastro com validação)
+│   ├── dashboard_view.py      → Dashboard com KPIs, gráficos e regra 50/30/20
+│   ├── lancamento_view.py     → Cadastro de lançamentos financeiros
+│   ├── shell_view.py          → Layout shell persistente com sidebar responsiva retrátil
+│   └── widgets/               → KPI cards, Date filter, Regra 50/30
+├── migrations/                → Scripts SQL de schema, tabelas e RPCs
+└── requirements.txt           → Dependências (flet>=1.0.0, supabase, python-dotenv)
 ```
 
-## 6. Diretrizes de Execução
-- Desenvolvimento **orquestrado manualmente pelo usuário**.
-- A lógica de interface (flet) **nunca** se mistura com a lógica de banco (Supabase) no mesmo arquivo.
-- O Flutter deve ser leve: apenas consome dados do Supabase. Cálculos pesados ficam no PostgreSQL via RPCs.
-- Retorne sempre em **português do Brasil**.
+## 6. Diretrizes de Execução & Regras Obrigatórias
+
+1. **Atenção à Versão Flet 1.0.1 (Python):**
+   - O projeto utiliza a versão **Flet 1.0.1**.
+   - Esta versão trouxe **mudanças profundas de sintaxe e de nomenclatura** em relação às versões legadas (0.x), incluindo:
+     - Execução assíncrona nativa (`async def main(page: ft.Page)`, `ft.run(main)`).
+     - Novas APIs de eventos e animações (`animate=ft.Animation(...)`).
+     - Novo tratamento de rotas e navegação.
+     - Novos controles e nomes de atributos atualizados.
+   - **Sempre consultar e verificar a sintaxe oficial do Flet 1.0.1** antes de implementar ou modificar código. NUNCA utilizar sintaxe obsoleta das versões legadas.
+
+2. **Testar SEMPRE antes de Entregar (Regra Crítica):**
+   - **É estritamente obrigatório testar todo o código no terminal antes de entregar qualquer resultado ao usuário.**
+   - O agente deve rodar validações de imports, sintaxe, dependências e funcionamento real para assegurar que nada foi quebrado e que a aplicação está pronta para uso.
+
+3. **Separação Rigorosa de Responsabilidades:**
+   - A lógica de interface (Flet) **NUNCA** deve se misturar com a lógica de banco de dados (Supabase) no mesmo arquivo.
+   - Toda comunicação com o banco ocorre exclusivamente via [`services/supabase_client.py`](file:///c:/Users/Denilson/Documents/GitHub/Dembase/dembase_flet/services/supabase_client.py).
+   - Cálculos e agregações pesadas devem ser feitos no PostgreSQL através de RPCs, mantendo o front leve e rápido.
+
+4. **Desenvolvimento Orquestrado:**
+   - O desenvolvimento é conduzido de forma modular e orquestrado cirurgicamente pelo usuário.
+
+5. **Idioma:**
+   - Toda comunicação, explicações e comentários devem ser em **Português do Brasil**.

@@ -46,6 +46,12 @@ async def ajustar_janela_login(page: ft.Page) -> None:
     Tamanho compacto, centralizado e com redimensionamento travado (resizable = False).
     Garante top >= 20 para manter a barra de título sempre visível.
     """
+    if getattr(page, "web", False) or getattr(page, "platform", None) in (
+        ft.PagePlatform.ANDROID,
+        ft.PagePlatform.IOS,
+    ):
+        return
+
     work_w, work_h, off_left, off_top = obter_area_de_trabalho()
 
     largura = min(460, int(work_w * 0.90))
@@ -72,6 +78,11 @@ async def ajustar_janela_principal(page: ft.Page) -> None:
     - Define limites mínimos (min_width, min_height) para manter o layout legível.
     - Libera o redimensionamento do usuário (resizable = True).
     """
+    if getattr(page, "web", False) or getattr(page, "platform", None) in (
+        ft.PagePlatform.ANDROID,
+        ft.PagePlatform.IOS,
+    ):
+        return
     work_w, work_h, off_left, off_top = obter_area_de_trabalho()
 
     largura = min(1360, max(960, int(work_w * 0.92)))
