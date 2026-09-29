@@ -177,6 +177,20 @@ def criar_subcategoria(categoria_id: str, nome: str, cor: str = "#94A3B8"):
     return supabase.table("subcategorias").insert(dados).execute()
 
 
+def obter_ou_criar_subcategoria(categoria_id: str, nome: str) -> dict:
+    """Busca subcategoria pelo nome (case insensitive) na categoria. Se não existir, cria e retorna."""
+    if not nome or not nome.strip():
+        return None
+    nome = nome.strip()
+    # Tenta buscar
+    resp = supabase.table("subcategorias").select("*").eq("categoria_id", categoria_id).ilike("nome", nome).eq("ativo", True).execute()
+    if resp.data:
+        return resp.data[0]
+    # Se não existe, cria
+    c_resp = criar_subcategoria(categoria_id, nome)
+    return c_resp.data[0] if c_resp.data else None
+
+
 def deletar_subcategoria(subcategoria_id: str):
     return supabase.table("subcategorias").update({"ativo": False}).eq("id", subcategoria_id).execute()
 

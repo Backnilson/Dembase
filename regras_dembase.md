@@ -16,8 +16,10 @@ O objetivo é criar um aplicativo de controle financeiro pessoal multiplataforma
 - **Cadastros Base (CRUDs Simples):** Telas para gerenciar:
     - **Perfil:** Controle do nome do usuário.
     - **Contas:** (Santander, Itaú, Inter, Dinheiro).
-    - **Categorias:** (Alimentação, Transporte, Moradia, Lazer, Saúde, Educação, DJ, Investimento, Outros).
-    - **Destinos:** (Eu, Casa, Moto, Carro, DJ, Família, Outros).
+- **Categorias Universais:** Não há mais divisão ou restrição entre "Receita" e "Despesa". A mesma categoria pode ser usada para ambas (ex: "Investimento" ou "DJ" pode receber entradas e saídas).
+    - As categorias padrão são: Alimentação, Transporte, Moradia, Lazer, Saúde, Educação, DJ, Investimento, Outros.
+    - **Subcategorias:** Detalham o item (ex: Tipo = Despesa | Categoria = Investimento | Subcategoria = Notebook). Servem para facilitar filtros cruzados.
+- **Destinos:** (Eu, Casa, Moto, Carro, DJ, Família, Outros).
 - **Histórico:** Lista de lançamentos ordenados por data com filtros flexíveis.
 
 ## 3. Lógica de Negócio
@@ -42,7 +44,7 @@ O Dashboard exibe barras de progresso comparando o gasto real vs. o orçamento i
 A tabela principal `lancamentos` possui:
 - `id`, `perfil_id`
 - `tipo` (Receita, Despesa), `subtipo`, `forma_movimentacao`
-- `conta_id`, `categoria_id`, `destino_id` (foreign keys)
+- `conta_id`, `categoria_id`, `subcategoria_id`, `destino_id` (foreign keys)
 - `valor`, `data`, `hora`, `descricao`, `status`
 - **`regra`** (Essencial, Estilo de Vida, Investimento) — obrigatório para despesas
 - Exclusivos para crédito: `parcela_atual`, `total_parcelas`, `fatura`

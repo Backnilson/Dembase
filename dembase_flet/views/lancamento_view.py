@@ -39,6 +39,7 @@ def criar_view_lancamento(page: ft.Page) -> ft.View:
                               options=[ft.dropdown.Option(f) for f in FORMAS_DESPESA], **T.dropdown_estilo())
     dd_conta    = _dd("Conta", _opts(contas))
     dd_categoria= _dd("Categoria", _opts(categorias))
+    txt_subcategoria = _campo("Subcategoria", "Ex: Notebook")
     dd_destino  = _dd("Destino", _opts(destinos))
     dd_status   = ft.Dropdown(label="Status", value="Pago",
                               options=[ft.dropdown.Option(s) for s in STATUS_OPCOES], **T.dropdown_estilo())
@@ -99,11 +100,18 @@ def criar_view_lancamento(page: ft.Page) -> ft.View:
 
         spinner_s.visible = True; page.update()
         try:
+            subcat_id = None
+            if dd_categoria.value and txt_subcategoria.value:
+                subcat = db.obter_ou_criar_subcategoria(dd_categoria.value, txt_subcategoria.value)
+                if subcat:
+                    subcat_id = subcat.get("id")
+
             dados = {
                 "tipo": dd_tipo.value, "subtipo": dd_subtipo.value,
                 "forma_movimentacao": dd_forma.value,
                 "conta_id": dd_conta.value or None,
                 "categoria_id": dd_categoria.value or None,
+                "subcategoria_id": subcat_id,
                 "destino_id": dd_destino.value or None,
                 "valor": v, "data": txt_data.value,
                 "hora": int(txt_hora.value or 0),
@@ -179,9 +187,10 @@ def criar_view_lancamento(page: ft.Page) -> ft.View:
 
                     ft.Text("Classificação Financeira", color=T.TEXT_MUTED, size=12, weight=ft.FontWeight.W_600),
                     ft.ResponsiveRow(spacing=10, run_spacing=10, controls=[
-                        ft.Container(content=dd_conta,     col={"xs": 12, "sm": 4}),
-                        ft.Container(content=dd_categoria, col={"xs": 12, "sm": 4}),
-                        ft.Container(content=dd_destino,   col={"xs": 12, "sm": 4}),
+                        ft.Container(content=dd_conta,         col={"xs": 12, "sm": 3}),
+                        ft.Container(content=dd_categoria,     col={"xs": 12, "sm": 3}),
+                        ft.Container(content=txt_subcategoria, col={"xs": 12, "sm": 3}),
+                        ft.Container(content=dd_destino,       col={"xs": 12, "sm": 3}),
                     ]),
                     txt_desc,
                     ft.Divider(color=T.BORDER, height=24),

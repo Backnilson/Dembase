@@ -13,16 +13,16 @@ from views.shell_view import criar_shell
 import services.supabase_client as db
 
 CATEGORIAS_PADRAO = [
-    {"nome": "Alimentação",  "tipo": "despesa", "cor": "#EF4444", "icone": "restaurant"},
-    {"nome": "Transporte",   "tipo": "despesa", "cor": "#3B82F6", "icone": "directions_car"},
-    {"nome": "Moradia",      "tipo": "despesa", "cor": "#8B5CF6", "icone": "home"},
-    {"nome": "Lazer",        "tipo": "despesa", "cor": "#F59E0B", "icone": "celebration"},
-    {"nome": "Saúde",        "tipo": "despesa", "cor": "#10B981", "icone": "medical_services"},
-    {"nome": "Educação",     "tipo": "despesa", "cor": "#06B6D4", "icone": "school"},
-    {"nome": "DJ & Eventos", "tipo": "ambos",   "cor": "#EC4899", "icone": "headphones"},
-    {"nome": "Investimento", "tipo": "despesa", "cor": "#10B981", "icone": "trending_up"},
-    {"nome": "Salário",      "tipo": "receita", "cor": "#10B981", "icone": "payments"},
-    {"nome": "Outros",       "tipo": "ambos",   "cor": "#64748B", "icone": "more_horiz"},
+    {"nome": "Alimentação",  "tipo": "ambos", "cor": "#EF4444", "icone": "restaurant"},
+    {"nome": "Transporte",   "tipo": "ambos", "cor": "#3B82F6", "icone": "directions_car"},
+    {"nome": "Moradia",      "tipo": "ambos", "cor": "#8B5CF6", "icone": "home"},
+    {"nome": "Lazer",        "tipo": "ambos", "cor": "#F59E0B", "icone": "celebration"},
+    {"nome": "Saúde",        "tipo": "ambos", "cor": "#10B981", "icone": "medical_services"},
+    {"nome": "Educação",     "tipo": "ambos", "cor": "#06B6D4", "icone": "school"},
+    {"nome": "DJ & Eventos", "tipo": "ambos", "cor": "#EC4899", "icone": "headphones"},
+    {"nome": "Investimento", "tipo": "ambos", "cor": "#10B981", "icone": "trending_up"},
+    {"nome": "Salário",      "tipo": "ambos", "cor": "#10B981", "icone": "payments"},
+    {"nome": "Outros",       "tipo": "ambos", "cor": "#64748B", "icone": "more_horiz"},
 ]
 
 DESTINOS_PADRAO = ["Eu", "Casa", "Moto", "Carro", "DJ", "Família", "Outros"]
@@ -227,7 +227,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
             dd_tipo_cat = ft.Dropdown(
                 label="Tipo *",
                 options=[ft.dropdown.Option("despesa", "Despesa"), ft.dropdown.Option("receita", "Receita"), ft.dropdown.Option("ambos", "Ambos")],
-                value="despesa",
+                value="ambos",
                 **T.dropdown_estilo(),
             )
 
