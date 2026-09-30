@@ -4,13 +4,18 @@ MOBILE_BREAKPOINT = 768
 
 def is_mobile(page: ft.Page) -> bool:
     """
-    Retorna True se a tela atual for considerada 'Mobile' (abaixo do breakpoint).
+    Retorna True se a tela atual for considerada 'Mobile' (abaixo do breakpoint ou plataforma mobile).
     Usado para alternar entre BottomAppBar (Mobile) e Sidebar (Desktop).
     """
     if not page:
         return False
-        
-    return page.width < MOBILE_BREAKPOINT
+    if getattr(page, "platform", None) in (ft.PagePlatform.ANDROID, ft.PagePlatform.IOS):
+        if getattr(page, "width", None) and page.width >= MOBILE_BREAKPOINT:
+            return False
+        return True
+    if getattr(page, "width", None) is not None:
+        return page.width < MOBILE_BREAKPOINT
+    return False
 
 def setup_responsive_resize(page: ft.Page):
     """

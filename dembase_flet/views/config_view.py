@@ -130,162 +130,31 @@ def criar_view_config(page: ft.Page) -> ft.View:
             ),
         )
 
-    # ── 2. ABA CATEGORIAS ────────────────────────────────────────────────────
+    # ── 2. ABA CATEGORIAS (MIGRADA PARA O MENU LATERAL) ──────────────────────
     def _montar_aba_categorias():
-        col_itens = ft.Column(spacing=8, controls=[])
-
-        def carregar_itens():
-            col_itens.controls.clear()
-            try:
-                categorias = db.listar_categorias()
-                if not categorias:
-                    col_itens.controls.append(
-                        ft.Container(
-                            padding=pad(all_=30),
-                            alignment=ft.Alignment(0, 0),
-                            content=ft.Column(
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                spacing=10,
-                                controls=[
-                                    ft.Icon(ft.Icons.CATEGORY_OUTLINED, size=48, color=T.TEXT_MUTED),
-                                    ft.Text("Nenhuma categoria encontrada", color=T.TEXT_PRIMARY, size=15, weight=ft.FontWeight.BOLD),
-                                    ft.Text("Clique abaixo para carregar as categorias padrão do DemBase.", color=T.TEXT_MUTED, size=12),
-                                    ft.FilledButton(
-                                        content=ft.Text("⚡ Carregar Categorias Padrão"),
-                                        style=ft.ButtonStyle(bgcolor=T.PRIMARY),
-                                        on_click=carregar_padrao,
-                                    ),
-                                ],
-                            ),
-                        )
-                    )
-                else:
-                    for cat in categorias:
-                        cor_cat = cat.get("cor") or T.PRIMARY
-                        tipo_str = cat.get("tipo", "ambos").capitalize()
-
-                        def _excluir(c_id=cat["id"]):
-                            try:
-                                db.deletar_categoria(c_id)
-                                mostrar_feedback(page, "Categoria inativada!", "sucesso")
-                                carregar_itens()
-                            except Exception as ex:
-                                mostrar_feedback(page, f"Erro: {ex}", "erro")
-
-                        item_row = ft.Container(
-                            padding=pad(h=14, v=10),
-                            bgcolor=T.SURFACE_ALT,
-                            border_radius=10,
-                            border=borda(),
-                            content=ft.Row(
-                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                                controls=[
-                                    ft.Row(
-                                        spacing=10,
-                                        controls=[
-                                            ft.Container(width=12, height=12, bgcolor=cor_cat, border_radius=6),
-                                            ft.Text(cat.get("nome", ""), color=T.TEXT_PRIMARY, size=14, weight=ft.FontWeight.W_500),
-                                            ft.Container(
-                                                content=ft.Text(tipo_str, size=10, color=T.TEXT_MUTED),
-                                                bgcolor=T.SURFACE,
-                                                padding=pad(h=8, v=2),
-                                                border_radius=6,
-                                            ),
-                                        ],
-                                    ),
-                                    ft.IconButton(
-                                        icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
-                                        icon_color=T.TEXT_MUTED,
-                                        icon_size=18,
-                                        tooltip="Inativar",
-                                        on_click=lambda _, cid=cat["id"]: _excluir(cid),
-                                    ),
-                                ],
-                            ),
-                        )
-                        col_itens.controls.append(item_row)
-                page.update()
-            except Exception as ex:
-                mostrar_feedback(page, f"Erro ao listar categorias: {ex}", "erro")
-
-        def carregar_padrao(_):
-            spinner.visible = True
-            page.update()
-            inseridos = 0
-            for c in CATEGORIAS_PADRAO:
-                try:
-                    db.criar_categoria(c)
-                    inseridos += 1
-                except Exception:
-                    pass
-            spinner.visible = False
-            mostrar_feedback(page, f"{inseridos} categorias padrão carregadas com sucesso!", "sucesso")
-            carregar_itens()
-
-        def abrir_modal_nova_categoria(_):
-            txt_nome_cat = ft.TextField(label="Nome da Categoria *", hint_text="Ex: Alimentação, Academia", **T.campo_estilo())
-            dd_tipo_cat = ft.Dropdown(
-                label="Tipo *",
-                options=[ft.dropdown.Option("despesa", "Despesa"), ft.dropdown.Option("receita", "Receita"), ft.dropdown.Option("ambos", "Ambos")],
-                value="ambos",
-                **T.dropdown_estilo(),
-            )
-
-            def salvar_cat(_):
-                nome = txt_nome_cat.value.strip()
-                if not nome:
-                    mostrar_feedback(page, "Informe o nome.", "alerta")
-                    return
-                try:
-                    db.criar_categoria({"nome": nome, "tipo": dd_tipo_cat.value, "cor": T.PRIMARY, "icone": "category"})
-                    modal_cat.open = False
-                    page.update()
-                    mostrar_feedback(page, "Categoria criada com sucesso!", "sucesso")
-                    carregar_itens()
-                except Exception as ex:
-                    mostrar_feedback(page, f"Erro ao criar categoria: {ex}", "erro")
-
-            modal_cat = ft.AlertDialog(
-                title=ft.Text("Nova Categoria", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
-                content=ft.Column(spacing=12, tight=True, controls=[txt_nome_cat, dd_tipo_cat]),
-                actions=[
-                    ft.TextButton(content=ft.Text("Cancelar", color=T.TEXT_MUTED), on_click=lambda _: (setattr(modal_cat, "open", False), page.update())),
-                    ft.FilledButton(content=ft.Text("Salvar"), style=ft.ButtonStyle(bgcolor=T.PRIMARY), on_click=salvar_cat),
-                ],
-            )
-            page.overlay.append(modal_cat)
-            modal_cat.open = True
-            page.update()
-
-        carregar_itens()
-
         return ft.Container(
-            padding=pad(all_=20),
+            padding=pad(all_=30),
             bgcolor=T.SURFACE,
             border_radius=16,
             border=borda(),
             content=ft.Column(
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=14,
                 controls=[
-                    ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        controls=[
-                            ft.Text("Categorias Cadastradas", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
-                            ft.Row(
-                                spacing=8,
-                                controls=[
-                                    ft.OutlinedButton(content=ft.Text("Carregar Padrão"), on_click=carregar_padrao),
-                                    ft.FilledButton(
-                                        content=ft.Row([ft.Icon(ft.Icons.ADD_ROUNDED, size=16), ft.Text("Nova Categoria")]),
-                                        style=ft.ButtonStyle(bgcolor=T.PRIMARY),
-                                        on_click=abrir_modal_nova_categoria,
-                                    ),
-                                ],
-                            ),
-                        ],
+                    ft.Icon(ft.Icons.CATEGORY_ROUNDED, size=52, color=T.PRIMARY),
+                    ft.Text("Gerenciador de Categorias & Subcategorias", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
+                    ft.Text(
+                        "O gerenciamento de categorias e subcategorias agora possui uma tela exclusiva acessível diretamente pelo Menu Lateral (Sidebar)!",
+                        color=T.TEXT_MUTED,
+                        size=13,
+                        text_align=ft.TextAlign.CENTER,
                     ),
-                    ft.Divider(color=T.BORDER, height=1),
-                    col_itens,
+                    ft.Container(height=10),
+                    ft.FilledButton(
+                        content=ft.Row([ft.Icon(ft.Icons.OPEN_IN_NEW_ROUNDED, size=16), ft.Text("Abrir Gerenciador de Categorias")]),
+                        style=ft.ButtonStyle(bgcolor=T.PRIMARY),
+                        on_click=lambda _: navegar(page, "/categorias"),
+                    ),
                 ],
             ),
         )

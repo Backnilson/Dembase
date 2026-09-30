@@ -20,18 +20,20 @@ import services.supabase_client as db
 ROTA_DASHBOARD   = "/dashboard"
 ROTA_CONTAS      = "/contas"
 ROTA_CARTOES     = "/cartoes"
+ROTA_CATEGORIAS  = "/categorias"
 ROTA_LANCAMENTO  = "/lancamento"
 ROTA_CALENDARIO  = "/calendario"
 ROTA_RELATORIOS  = "/relatorios"
 ROTA_CONFIG      = "/configuracoes"
 
 _NAV_ITEMS = [
-    {"rota": ROTA_DASHBOARD,  "icone": ft.Icons.DASHBOARD_ROUNDED,          "label": "Dashboard"},
-    {"rota": ROTA_CONTAS,     "icone": ft.Icons.ACCOUNT_BALANCE_ROUNDED,     "label": "Contas"},
-    {"rota": ROTA_CARTOES,    "icone": ft.Icons.CREDIT_CARD_ROUNDED,         "label": "Cartões"},
-    {"rota": ROTA_LANCAMENTO, "icone": ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED,  "label": "Lançamento"},
-    {"rota": ROTA_CALENDARIO, "icone": ft.Icons.CALENDAR_MONTH_ROUNDED,      "label": "Calendário"},
-    {"rota": ROTA_RELATORIOS, "icone": ft.Icons.BAR_CHART_ROUNDED,           "label": "Relatórios"},
+    {"rota": ROTA_DASHBOARD,   "icone": ft.Icons.DASHBOARD_ROUNDED,          "label": "Dashboard"},
+    {"rota": ROTA_CONTAS,      "icone": ft.Icons.ACCOUNT_BALANCE_ROUNDED,     "label": "Contas"},
+    {"rota": ROTA_CARTOES,     "icone": ft.Icons.CREDIT_CARD_ROUNDED,         "label": "Cartões"},
+    {"rota": ROTA_CATEGORIAS,  "icone": ft.Icons.CATEGORY_ROUNDED,            "label": "Categorias"},
+    {"rota": ROTA_LANCAMENTO,  "icone": ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED,  "label": "Lançamento"},
+    {"rota": ROTA_CALENDARIO,  "icone": ft.Icons.CALENDAR_MONTH_ROUNDED,      "label": "Calendário"},
+    {"rota": ROTA_RELATORIOS,  "icone": ft.Icons.BAR_CHART_ROUNDED,           "label": "Relatórios"},
 ]
 
 _MESES_PT = [
@@ -153,7 +155,7 @@ def criar_shell(
         # 2. Drawer (Hamburguer)
         drawer = ft.NavigationDrawer(
             bgcolor=T.SURFACE,
-            on_change=lambda e: navegar(page, [ROTA_DASHBOARD, ROTA_CONFIG, ROTA_AUTH][e.control.selected_index]),
+            on_change=lambda e: navegar(page, [ROTA_DASHBOARD, ROTA_CATEGORIAS, ROTA_CONFIG, ROTA_AUTH][e.control.selected_index]),
             controls=[
                 ft.Container(
                     padding=pad(h=20, v=20),
@@ -171,6 +173,10 @@ def criar_shell(
                 ft.NavigationDrawerDestination(
                     icon=ft.Icons.DASHBOARD_ROUNDED,
                     label="Dashboard"
+                ),
+                ft.NavigationDrawerDestination(
+                    icon=ft.Icons.CATEGORY_ROUNDED,
+                    label="Categorias"
                 ),
                 ft.NavigationDrawerDestination(
                     icon=ft.Icons.SETTINGS_ROUNDED,

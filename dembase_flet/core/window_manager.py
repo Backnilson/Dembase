@@ -43,8 +43,8 @@ def obter_area_de_trabalho() -> tuple[int, int, int, int]:
 async def ajustar_janela_login(page: ft.Page) -> None:
     """
     Configura a janela para a tela de autenticação (/auth).
-    Tamanho compacto, centralizado e com redimensionamento travado (resizable = False).
-    Garante top >= 20 para manter a barra de título sempre visível.
+    Tamanho agradável, elegante e ergonômico (480x720), perfeitamente centralizado na tela.
+    Mantém barra de título e botões nativos do SO visíveis.
     """
     if getattr(page, "web", False) or getattr(page, "platform", None) in (
         ft.PagePlatform.ANDROID,
@@ -52,51 +52,39 @@ async def ajustar_janela_login(page: ft.Page) -> None:
     ):
         return
 
-    work_w, work_h, off_left, off_top = obter_area_de_trabalho()
-
-    largura = min(460, int(work_w * 0.90))
-    altura = min(660, int(work_h * 0.88))
-
-    top = max(20, off_top + (work_h - altura) // 2)
-    left = max(20, off_left + (work_w - largura) // 2)
-
     page.window.maximized = False
-    page.window.resizable = False
-    page.window.width = largura
-    page.window.height = altura
-    page.window.top = top
-    page.window.left = left
+    page.window.resizable = True
+    page.window.title_bar_hidden = False
+    page.window.frameless = False
+    page.window.min_width = 440
+    page.window.min_height = 660
+    page.window.width = 480
+    page.window.height = 720
+
+    try:
+        await page.window.center()
+    except Exception:
+        pass
+
     page.update()
 
 
 async def ajustar_janela_principal(page: ft.Page) -> None:
     """
-    Configura a janela para a tela principal (Dashboard e demais módulos).
-    Redimensionamento dinâmico (Opção A) respeitando a resolução da tela:
-    - Ocupa aproximadamente 92% da largura útil e 88% da altura útil.
-    - Garante top >= 20 para que a barra de título do Windows fique SEMPRE visível.
-    - Define limites mínimos (min_width, min_height) para manter o layout legível.
-    - Libera o redimensionamento do usuário (resizable = True).
+    Configura a janela para a tela principal pós-login (Dashboard e demais módulos).
+    Maximiza a janela na tela do usuário, mantendo obrigatoriamente
+    a barra de título e os botões nativos do SO (minimizar, maximizar, fechar) visíveis.
     """
     if getattr(page, "web", False) or getattr(page, "platform", None) in (
         ft.PagePlatform.ANDROID,
         ft.PagePlatform.IOS,
     ):
         return
-    work_w, work_h, off_left, off_top = obter_area_de_trabalho()
-
-    largura = min(1360, max(960, int(work_w * 0.92)))
-    altura = min(840, max(580, int(work_h * 0.88)))
-
-    top = max(20, off_top + (work_h - altura) // 2)
-    left = max(20, off_left + (work_w - largura) // 2)
 
     page.window.min_width = 960
     page.window.min_height = 580
-    page.window.maximized = False
     page.window.resizable = True
-    page.window.width = largura
-    page.window.height = altura
-    page.window.top = top
-    page.window.left = left
+    page.window.title_bar_hidden = False
+    page.window.frameless = False
+    page.window.maximized = True
     page.update()

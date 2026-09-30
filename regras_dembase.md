@@ -16,18 +16,22 @@ O objetivo é criar um aplicativo de controle financeiro pessoal multiplataforma
 - **Cadastros Base (CRUDs Simples):** Telas para gerenciar:
     - **Perfil:** Controle do nome do usuário.
     - **Contas:** (Santander, Itaú, Inter, Dinheiro).
-- **Categorias Universais:** Não há mais divisão ou restrição entre "Receita" e "Despesa". A mesma categoria pode ser usada para ambas (ex: "Investimento" ou "DJ" pode receber entradas e saídas).
+- **Categorias Universais & Subcategorias (Menu Lateral):**
+    - Não há mais divisão ou restrição entre "Receita" e "Despesa". A mesma categoria pode ser usada para ambas (ex: "Investimento" ou "DJ" pode receber entradas e saídas).
     - As categorias padrão são: Alimentação, Transporte, Moradia, Lazer, Saúde, Educação, DJ, Investimento, Outros.
-    - **Subcategorias:** Detalham o item (ex: Tipo = Despesa | Categoria = Investimento | Subcategoria = Notebook). Servem para facilitar filtros cruzados.
-- **Destinos:** (Eu, Casa, Moto, Carro, DJ, Família, Outros).
+    - **Subcategorias:** Detalham o item (ex: Tipo = Despesa | Categoria = Investimento | Subcategoria = Notebook). Criadas e vinculadas obrigatoriamente a uma Categoria pai.
+    - Possui tela própria de gestão no Menu Lateral principal (Sidebar).
+    - No formulário de lançamentos, possui botões de criação inline (+) para criar categorias e subcategorias sem sair da tela.
+- **Destinos:** Campo descontinuado e eliminado do formulário de lançamentos para simplificar a jornada do usuário.
 - **Histórico:** Lista de lançamentos ordenados por data com filtros flexíveis.
 
 ## 3. Lógica de Negócio
 
-### 3.1 Cartão de Crédito (Status Automático)
-Quando a forma de movimentação for "Credito":
-1. O sistema exibirá campos para `parcela_atual` e `total_parcelas`.
-2. **Status Automático (Trigger no Supabase):**
+### 3.1 Cartão de Crédito e Parcelamento Inteligente
+Quando a forma de movimentação for "Crédito":
+1. O formulário exibe opções de compra parcelada com cálculo dinâmico e bidirecional de parcelas (Total = Parcelas × Valor da Parcela).
+2. Campos para `parcela_atual`, `total_parcelas` e `fatura`.
+3. **Status Automático (Trigger no Supabase):**
    - Data **futura** → Status = "Pendente"
    - Data **hoje ou no passado** → Status = "Pago"
    - O campo `status` permanece visível e editável para controle manual.
@@ -38,13 +42,13 @@ Ao registrar uma **despesa**, o usuário DEVE classificá-la em uma das categori
 - **Estilo de Vida (30%)** — Lazer, restaurantes, compras, entretenimento
 - **Investimento (20%)** — Poupança, investimentos, cursos, DJ (equipamentos)
 
-O Dashboard exibe barras de progresso comparando o gasto real vs. o orçamento ideal (calculado com base na receita total do período). Para Receitas, o campo `regra` fica NULL.
+O Dashboard exibe barras de progresso comparando o gasto real vs. o orçamento ideal (calculado com base na receita total do período). Para Receitas, o campo `regra` fica NULL e não é exibido.
 
 ## 4. Estrutura de Dados (Supabase - PostgreSQL)
 A tabela principal `lancamentos` possui:
-- `id`, `perfil_id`
+- `id`, `perfil_id`, `user_id`
 - `tipo` (Receita, Despesa), `subtipo`, `forma_movimentacao`
-- `conta_id`, `categoria_id`, `subcategoria_id`, `destino_id` (foreign keys)
+- `conta_id`, `categoria_id`, `subcategoria_id` (foreign keys)
 - `valor`, `data`, `hora`, `descricao`, `status`
 - **`regra`** (Essencial, Estilo de Vida, Investimento) — obrigatório para despesas
 - Exclusivos para crédito: `parcela_atual`, `total_parcelas`, `fatura`

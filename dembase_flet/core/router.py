@@ -14,6 +14,7 @@ ROTA_DASHBOARD   = "/dashboard"
 ROTA_LANCAMENTO  = "/lancamento"
 ROTA_CONTAS      = "/contas"
 ROTA_CARTOES     = "/cartoes"
+ROTA_CATEGORIAS  = "/categorias"
 ROTA_CALENDARIO  = "/calendario"
 ROTA_RELATORIOS  = "/relatorios"
 ROTA_CONFIG      = "/configuracoes"
@@ -94,6 +95,11 @@ def configurar_rotas(page: ft.Page):
                         ft.Icons.CREDIT_CARD_ROUNDED,
                     ),
                 )
+
+        # ── Categorias & Subcategorias (Menu Lateral) ────────────────────────
+        if rota == ROTA_CATEGORIAS:
+            from views.categorias_view import criar_view_categorias
+            return criar_view_categorias(page)
 
         # ── Calendário ────────────────────────────────────────────────────────
         if rota == ROTA_CALENDARIO:

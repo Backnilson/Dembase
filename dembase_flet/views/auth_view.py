@@ -16,10 +16,11 @@ def criar_view_auth(page: ft.Page) -> ft.View:
     modo_login = [True]
 
     # ---- Campos ----
-    def _campo(label, hint, icone, password=False, visible=True, keyboard=ft.KeyboardType.TEXT):
+    def _campo(label, hint, icone, password=False, visible=True, keyboard=ft.KeyboardType.TEXT, valor=""):
         return ft.TextField(
             label=label, hint_text=hint,
             prefix_icon=icone,
+            value=valor,
             password=password,
             can_reveal_password=password,
             visible=visible,
@@ -27,10 +28,25 @@ def criar_view_auth(page: ft.Page) -> ft.View:
             **T.campo_estilo(),
         )
 
+    # ---- Checkbox Lembre de mim (client_storage) ----
+    email_salvo = ""
+    try:
+        email_salvo = page.client_storage.get("lembrar_email") or ""
+    except Exception:
+        email_salvo = ""
+
     txt_nome     = _campo("Nome Completo", "Seu nome", ft.Icons.PERSON_OUTLINE_ROUNDED, visible=False)
-    txt_email    = _campo("E-mail", "exemplo@email.com", ft.Icons.ALTERNATE_EMAIL_ROUNDED, keyboard=ft.KeyboardType.EMAIL)
+    txt_email    = _campo("E-mail", "exemplo@email.com", ft.Icons.ALTERNATE_EMAIL_ROUNDED, keyboard=ft.KeyboardType.EMAIL, valor=email_salvo)
     txt_senha    = _campo("Senha", "Mínimo 6 caracteres", ft.Icons.LOCK_OUTLINE_ROUNDED, password=True)
     txt_confirma = _campo("Confirmar Senha", "Repita a senha", ft.Icons.LOCK_RESET_ROUNDED, password=True, visible=False)
+
+    chk_lembrar = ft.Checkbox(
+        label="Lembrar meu acesso",
+        value=bool(email_salvo),
+        check_color=ft.Colors.WHITE,
+        active_color=T.PRIMARY,
+        label_style=ft.TextStyle(color=T.TEXT_MUTED, size=13),
+    )
 
     # ---- Botão ----
     spinner  = ft.ProgressRing(color=ft.Colors.WHITE, width=18, height=18, stroke_width=2, visible=False)
@@ -71,6 +87,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
 
         txt_nome.visible     = not login
         txt_confirma.visible = not login
+        chk_lembrar.visible  = login
         txt_titulo.value     = "Bem-vindo de volta" if login else "Criar Conta"
         txt_subtitulo.value  = "Acesse sua conta DemBase" if login else "Preencha seus dados"
         txt_btn.value        = "Entrar" if login else "Cadastrar"
@@ -117,6 +134,15 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         try:
             if modo_login[0]:
                 db.fazer_login(txt_email.value.strip(), txt_senha.value)
+                try:
+                    if chk_lembrar.value:
+                        page.client_storage.set("lembrar_email", txt_email.value.strip())
+                        page.client_storage.set("lembrar_ativo", True)
+                    else:
+                        page.client_storage.remove("lembrar_email")
+                        page.client_storage.remove("lembrar_ativo")
+                except Exception:
+                    pass
                 await ajustar_janela_principal(page)
                 navegar(page, ROTA_DASHBOARD)
             else:
@@ -135,7 +161,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
     # ---- Card central ----
     card = ft.Container(
         width=420,
-        padding=pad(all_=36),
+        padding=pad(all_=32),
         bgcolor=T.SURFACE,
         border_radius=20,
         border=borda(),
@@ -147,30 +173,31 @@ def criar_view_auth(page: ft.Page) -> ft.View:
                 # Logo
                 ft.Row(spacing=14, controls=[
                     ft.Container(
-                        content=ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=T.PRIMARY, size=30),
-                        bgcolor=f"{T.PRIMARY}22", border_radius=12, padding=pad(all_=12),
+                        content=ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=T.PRIMARY, size=28),
+                        bgcolor=f"{T.PRIMARY}22", border_radius=12, padding=pad(all_=10),
                     ),
                     ft.Column(spacing=2, controls=[
-                        ft.Text("DemBase", color=T.TEXT_PRIMARY, size=22, weight=ft.FontWeight.BOLD),
+                        ft.Text("DemBase", color=T.TEXT_PRIMARY, size=20, weight=ft.FontWeight.BOLD),
                         ft.Text("Controle Financeiro Premium", color=T.TEXT_MUTED, size=11),
                     ]),
                 ]),
-                ft.Container(height=16),
+                ft.Container(height=10),
                 # Chips
                 ft.Container(
                     content=ft.Row([chip_entrar, chip_cadastrar], spacing=0),
                     bgcolor=T.SURFACE_ALT, border_radius=10,
                     padding=pad(all_=4), border=borda(),
                 ),
-                ft.Container(height=12),
+                ft.Container(height=8),
                 txt_titulo,
                 txt_subtitulo,
-                ft.Container(height=12),
+                ft.Container(height=8),
                 txt_nome,
                 txt_email,
                 txt_senha,
                 txt_confirma,
-                ft.Container(height=8),
+                chk_lembrar,
+                ft.Container(height=4),
                 btn_acao,
                 ft.Container(height=4),
                 ft.Container(

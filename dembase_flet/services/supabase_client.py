@@ -110,6 +110,7 @@ def criar_conta(dados: dict):
     user = usuario_atual()
     if user:
         dados["user_id"] = user.id
+        dados["perfil_id"] = user.id
     return supabase.table("contas").insert(dados).execute()
 
 
@@ -147,6 +148,7 @@ def criar_categoria(dados: dict):
     user = usuario_atual()
     if user:
         dados["user_id"] = user.id
+        dados["perfil_id"] = user.id
     return supabase.table("categorias").insert(dados).execute()
 
 
@@ -175,6 +177,10 @@ def criar_subcategoria(categoria_id: str, nome: str, cor: str = "#94A3B8"):
     if user:
         dados["user_id"] = user.id
     return supabase.table("subcategorias").insert(dados).execute()
+
+
+def atualizar_subcategoria(subcategoria_id: str, dados: dict):
+    return supabase.table("subcategorias").update(dados).eq("id", subcategoria_id).execute()
 
 
 def obter_ou_criar_subcategoria(categoria_id: str, nome: str) -> dict:
@@ -318,6 +324,7 @@ def criar_lancamento(dados: dict):
     user = usuario_atual()
     if user:
         dados.setdefault("user_id", user.id)
+        dados.setdefault("perfil_id", user.id)
     dados.setdefault("fonte_importacao", "manual")
     return supabase.table("lancamentos").insert(dados).execute()
 
