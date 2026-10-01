@@ -53,7 +53,21 @@ def fazer_login(email: str, password: str):
 
 
 def fazer_logout():
-    supabase.auth.sign_out()
+    try:
+        supabase.auth.sign_out()
+    except Exception:
+        pass
+
+
+def restaurar_sessao(access_token: str, refresh_token: str) -> bool:
+    """Restaura sessão ativa a partir de tokens salvos."""
+    try:
+        if not access_token or not refresh_token:
+            return False
+        resp = supabase.auth.set_session(access_token, refresh_token)
+        return bool(resp and resp.user)
+    except Exception:
+        return False
 
 
 def sessao_atual():
@@ -166,14 +180,38 @@ def deletar_categoria(categoria_id: str):
 def listar_subcategorias(categoria_id: str = None) -> list:
     query = supabase.table("subcategorias").select("*, categorias(nome)").eq("ativo", True)
     if categoria_id:
-        query = query.eq("categoria_id", categoria_id)
+        cat_id_str = str(categoria_id).strip()
+        is_uuid = False
+        try:
+            import uuid
+            uuid.UUID(cat_id_str)
+            is_uuid = True
+        except (ValueError, TypeError, AttributeError):
+            is_uuid = False
+
+        if is_uuid:
+            query = query.eq("categoria_id", cat_id_str)
+        else:
+            cat_resp = supabase.table("categorias").select("id").ilike("nome", cat_id_str).eq("ativo", True).execute()
+            if cat_resp.data:
+                query = query.eq("categoria_id", cat_resp.data[0]["id"])
+            else:
+                return []
     resp = query.order("nome").execute()
     return resp.data or []
 
 
 def criar_subcategoria(categoria_id: str, nome: str, cor: str = "#94A3B8"):
     user = usuario_atual()
-    dados = {"categoria_id": categoria_id, "nome": nome, "cor": cor}
+    cat_id_str = str(categoria_id).strip()
+    try:
+        import uuid
+        uuid.UUID(cat_id_str)
+    except Exception:
+        c = supabase.table("categorias").select("id").ilike("nome", cat_id_str).eq("ativo", True).execute()
+        if c.data:
+            cat_id_str = c.data[0]["id"]
+    dados = {"categoria_id": cat_id_str, "nome": nome, "cor": cor}
     if user:
         dados["user_id"] = user.id
     return supabase.table("subcategorias").insert(dados).execute()
@@ -188,12 +226,20 @@ def obter_ou_criar_subcategoria(categoria_id: str, nome: str) -> dict:
     if not nome or not nome.strip():
         return None
     nome = nome.strip()
+    cat_id_str = str(categoria_id).strip()
+    try:
+        import uuid
+        uuid.UUID(cat_id_str)
+    except Exception:
+        c = supabase.table("categorias").select("id").ilike("nome", cat_id_str).eq("ativo", True).execute()
+        if c.data:
+            cat_id_str = c.data[0]["id"]
     # Tenta buscar
-    resp = supabase.table("subcategorias").select("*").eq("categoria_id", categoria_id).ilike("nome", nome).eq("ativo", True).execute()
+    resp = supabase.table("subcategorias").select("*").eq("categoria_id", cat_id_str).ilike("nome", nome).eq("ativo", True).execute()
     if resp.data:
         return resp.data[0]
     # Se não existe, cria
-    c_resp = criar_subcategoria(categoria_id, nome)
+    c_resp = criar_subcategoria(cat_id_str, nome)
     return c_resp.data[0] if c_resp.data else None
 
 
@@ -352,6 +398,21 @@ def listar_lancamentos(
             query = query.eq(chave, valor)
     resp = query.order("data", desc=True).order("hora", desc=True).execute()
     return resp.data or []
+
+
+def obter_lancamento(lancamento_id: str) -> dict | None:
+    resp = (
+        supabase.table("lancamentos")
+        .select(
+            "*, contas(nome,cor,icone), categorias(nome,cor,icone), "
+            "destinos(nome), cartoes(nome,bandeira,cor), "
+            "subcategorias(nome), faturas(mes,ano,status)"
+        )
+        .eq("id", lancamento_id)
+        .single()
+        .execute()
+    )
+    return resp.data
 
 
 def atualizar_lancamento(lancamento_id: str, dados: dict):

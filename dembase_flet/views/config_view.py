@@ -74,11 +74,13 @@ def criar_view_config(page: ft.Page) -> ft.View:
             except Exception as ex:
                 mostrar_feedback(page, f"Erro ao atualizar perfil: {ex}", "erro")
 
-        def sair_app(_):
+        async def sair_app(_):
             try:
                 db.fazer_logout()
             except Exception:
                 pass
+            from core.window_manager import ajustar_janela_login
+            await ajustar_janela_login(page)
             navegar(page, ROTA_AUTH)
 
         return ft.Container(

@@ -58,7 +58,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
 
             # Regra 50/30/20 (legado — mantém compatibilidade)
             dados_5030 = db.obter_resumo_5030()
-            area_5030.controls = [secao_regra_5030(dados_5030)]
+            area_5030.controls = [secao_regra_5030(dados_5030, lambda regra: navegar(page, f"/relatorios?regra={regra}"))]
         except Exception as ex:
             if not inicial:
                 mostrar_feedback(page, f"Erro ao carregar dados: {ex}", "erro")
@@ -76,13 +76,15 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
     # =========================================================================
     # KPI CARDS — linha superior
     # =========================================================================
-    def _kpi(titulo, ref_txt, cor, icone, sub):
+    def _kpi(titulo, ref_txt, cor, icone, sub, on_click=None):
         return ft.Container(
             col={"xs": 12, "sm": 6, "md": 3},
             padding=pad(all_=18),
             bgcolor=T.SURFACE,
             border_radius=14,
             border=borda(),
+            on_click=on_click,
+            ink=True if on_click else False,
             content=ft.Column(spacing=0, controls=[
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -101,10 +103,10 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
         )
 
     kpis = ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[
-        _kpi("Saldo em Conta",   txt_saldo_contas, T.PRIMARY, ft.Icons.ACCOUNT_BALANCE_ROUNDED,    "Total nas contas"),
-        _kpi("Receitas",         txt_receitas,     T.RECEITA, ft.Icons.ARROW_UPWARD_ROUNDED,        "No mês"),
-        _kpi("Despesas",         txt_despesas,     T.DESPESA, ft.Icons.ARROW_DOWNWARD_ROUNDED,      "No mês"),
-        _kpi("Faturas Abertas",  txt_faturas,      T.WARNING, ft.Icons.CREDIT_CARD_ROUNDED,         "Cartões de crédito"),
+        _kpi("Saldo em Conta",   txt_saldo_contas, T.PRIMARY, ft.Icons.ACCOUNT_BALANCE_ROUNDED,    "Total nas contas", lambda _: navegar(page, "/contas")),
+        _kpi("Receitas",         txt_receitas,     T.RECEITA, ft.Icons.ARROW_UPWARD_ROUNDED,        "No mês", lambda _: navegar(page, "/relatorios?tipo=Receita")),
+        _kpi("Despesas",         txt_despesas,     T.DESPESA, ft.Icons.ARROW_DOWNWARD_ROUNDED,      "No mês", lambda _: navegar(page, "/relatorios?tipo=Despesa")),
+        _kpi("Faturas Abertas",  txt_faturas,      T.WARNING, ft.Icons.CREDIT_CARD_ROUNDED,         "Cartões de crédito", lambda _: navegar(page, "/cartoes")),
     ])
 
     # =========================================================================

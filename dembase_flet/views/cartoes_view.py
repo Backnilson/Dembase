@@ -101,7 +101,7 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
             label="Limite Total (R$) *",
             hint_text="Ex: 5000,00",
             keyboard_type=ft.KeyboardType.NUMBER,
-            prefix_text="R$ ",
+            prefix="R$ ",
             value=str(cartao_edicao.get("limite_total", "")) if eh_edicao else "",
             **T.campo_estilo(),
         )

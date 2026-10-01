@@ -97,7 +97,7 @@ def criar_view_contas(page: ft.Page) -> ft.View:
             label="Saldo Inicial (R$)",
             hint_text="0,00",
             keyboard_type=ft.KeyboardType.NUMBER,
-            prefix_text="R$ ",
+            prefix="R$ ",
             value=str(conta_edicao.get("saldo_inicial", "0.00")) if eh_edicao else "0,00",
             **T.campo_estilo(),
         )

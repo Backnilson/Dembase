@@ -9,7 +9,7 @@ from core.theme import pad, borda
 from core.constants import formatar_moeda, REGRAS_META
 
 
-def _barra(label: str, gasto: float, orcamento: float, percentual: float, meta: float) -> ft.Column:
+def _barra(label: str, gasto: float, orcamento: float, percentual: float, meta: float, on_click=None) -> ft.Container:
     if percentual <= meta * 100:
         cor = T.PRIMARY
     elif percentual <= (meta * 100) + 5:
@@ -19,9 +19,14 @@ def _barra(label: str, gasto: float, orcamento: float, percentual: float, meta: 
 
     progresso = min(percentual / 100.0, 1.0)
 
-    return ft.Column(
-        spacing=6,
-        controls=[
+    return ft.Container(
+        on_click=on_click,
+        ink=True if on_click else False,
+        padding=pad(all_=5),
+        border_radius=8,
+        content=ft.Column(
+            spacing=6,
+            controls=[
             ft.Row(
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 controls=[
@@ -42,10 +47,10 @@ def _barra(label: str, gasto: float, orcamento: float, percentual: float, meta: 
             ),
             ft.ProgressBar(value=progresso, bgcolor=T.SURFACE_ALT, color=cor, height=8, border_radius=4),
         ],
-    )
+    ))
 
 
-def secao_regra_5030(dados: dict) -> ft.Container:
+def secao_regra_5030(dados: dict, nav_func=None) -> ft.Container:
     receita = float(dados.get("receita_total", 0) or 0)
 
     def ex(chave):
@@ -82,11 +87,11 @@ def secao_regra_5030(dados: dict) -> ft.Container:
                     ],
                 ),
                 ft.Container(height=20),
-                _barra("Essencial (50%)",      ge, oe, pe, REGRAS_META["Essencial"]),
+                _barra("Essencial (50%)",      ge, oe, pe, REGRAS_META["Essencial"], lambda _: nav_func("Essencial") if nav_func else None),
                 ft.Divider(color=T.BORDER, height=20),
-                _barra("Estilo de Vida (30%)", gs, os_, ps, REGRAS_META["Estilo de Vida"]),
+                _barra("Estilo de Vida (30%)", gs, os_, ps, REGRAS_META["Estilo de Vida"], lambda _: nav_func("Estilo de Vida") if nav_func else None),
                 ft.Divider(color=T.BORDER, height=20),
-                _barra("Investimento (20%)",   gi, oi, pi, REGRAS_META["Investimento"]),
+                _barra("Investimento (20%)",   gi, oi, pi, REGRAS_META["Investimento"], lambda _: nav_func("Investimento") if nav_func else None),
             ],
         ),
     )

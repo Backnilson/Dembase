@@ -15,6 +15,7 @@ from core.theme import pad, borda, borda_bottom
 from core.router import navegar, ROTA_AUTH
 from core.window_manager import ajustar_janela_login
 from core.responsive import is_mobile, setup_responsive_resize
+from core.constants import session_clear
 import services.supabase_client as db
 
 ROTA_DASHBOARD   = "/dashboard"
@@ -153,9 +154,26 @@ def criar_shell(
         )
         
         # 2. Drawer (Hamburguer)
+        async def _drawer_change(e):
+            rotas_drawer = [ROTA_DASHBOARD, ROTA_CATEGORIAS, ROTA_CONFIG, ROTA_AUTH]
+            idx = e.control.selected_index
+            if 0 <= idx < len(rotas_drawer):
+                r = rotas_drawer[idx]
+                if r == ROTA_AUTH:
+                    try:
+                        db.fazer_logout()
+                        page.client_storage.remove("auth_access_token")
+                        page.client_storage.remove("auth_refresh_token")
+                        page.client_storage.remove("lembrar_ativo")
+                        session_clear(page)
+                    except Exception:
+                        pass
+                    await ajustar_janela_login(page)
+                navegar(page, r)
+
         drawer = ft.NavigationDrawer(
             bgcolor=T.SURFACE,
-            on_change=lambda e: navegar(page, [ROTA_DASHBOARD, ROTA_CATEGORIAS, ROTA_CONFIG, ROTA_AUTH][e.control.selected_index]),
+            on_change=_drawer_change,
             controls=[
                 ft.Container(
                     padding=pad(h=20, v=20),
@@ -258,7 +276,17 @@ def criar_shell(
             cor_bg    = f"{T.PRIMARY}18" if ativo else "transparent"
             cor_texto = T.TEXT_PRIMARY if ativo else T.TEXT_MUTED
 
-            def _on_click(_):
+            async def _on_click(_):
+                if rota == ROTA_AUTH:
+                    try:
+                        db.fazer_logout()
+                        page.client_storage.remove("auth_access_token")
+                        page.client_storage.remove("auth_refresh_token")
+                        page.client_storage.remove("lembrar_ativo")
+                        session_clear(page)
+                    except Exception:
+                        pass
+                    await ajustar_janela_login(page)
                 navegar(page, rota)
 
             txt_item = ft.Text(

@@ -9,6 +9,7 @@ from core import theme as T
 from core.theme import mostrar_feedback, traduzir_erro_auth, pad, borda, centro
 from core.router import ROTA_DASHBOARD, navegar
 from core.window_manager import ajustar_janela_principal
+from core.constants import session_set, session_clear
 import services.supabase_client as db
 
 
@@ -30,10 +31,13 @@ def criar_view_auth(page: ft.Page) -> ft.View:
 
     # ---- Checkbox Lembre de mim (client_storage) ----
     email_salvo = ""
+    lembrar_ativo = False
     try:
         email_salvo = page.client_storage.get("lembrar_email") or ""
+        lembrar_ativo = bool(page.client_storage.get("lembrar_ativo"))
     except Exception:
         email_salvo = ""
+        lembrar_ativo = False
 
     txt_nome     = _campo("Nome Completo", "Seu nome", ft.Icons.PERSON_OUTLINE_ROUNDED, visible=False)
     txt_email    = _campo("E-mail", "exemplo@email.com", ft.Icons.ALTERNATE_EMAIL_ROUNDED, keyboard=ft.KeyboardType.EMAIL, valor=email_salvo)
@@ -42,7 +46,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
 
     chk_lembrar = ft.Checkbox(
         label="Lembrar meu acesso",
-        value=bool(email_salvo),
+        value=lembrar_ativo,
         check_color=ft.Colors.WHITE,
         active_color=T.PRIMARY,
         label_style=ft.TextStyle(color=T.TEXT_MUTED, size=13),
@@ -133,14 +137,28 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         set_loading(True)
         try:
             if modo_login[0]:
-                db.fazer_login(txt_email.value.strip(), txt_senha.value)
+                resp = db.fazer_login(txt_email.value.strip(), txt_senha.value)
                 try:
-                    if chk_lembrar.value:
-                        page.client_storage.set("lembrar_email", txt_email.value.strip())
-                        page.client_storage.set("lembrar_ativo", True)
-                    else:
-                        page.client_storage.remove("lembrar_email")
-                        page.client_storage.remove("lembrar_ativo")
+                    sess = getattr(resp, "session", None)
+                    if sess:
+                        acc = getattr(sess, "access_token", None)
+                        ref = getattr(sess, "refresh_token", None)
+                        if acc and ref:
+                            if chk_lembrar.value:
+                                # Armazenamento persistente (localStorage)
+                                page.client_storage.set("auth_access_token", acc)
+                                page.client_storage.set("auth_refresh_token", ref)
+                                page.client_storage.set("lembrar_email", txt_email.value.strip())
+                                page.client_storage.set("lembrar_ativo", True)
+                                session_clear(page)
+                            else:
+                                # Armazenamento em sessão temporária (sessionStorage)
+                                session_set(page, "auth_access_token", acc)
+                                session_set(page, "auth_refresh_token", ref)
+                                page.client_storage.remove("auth_access_token")
+                                page.client_storage.remove("auth_refresh_token")
+                                page.client_storage.remove("lembrar_ativo")
+                                page.client_storage.remove("lembrar_email")
                 except Exception:
                     pass
                 await ajustar_janela_principal(page)
@@ -160,49 +178,45 @@ def criar_view_auth(page: ft.Page) -> ft.View:
 
     # ---- Card central ----
     card = ft.Container(
-        width=420,
-        padding=pad(all_=32),
+        width=400,
+        padding=pad(h=24, v=20),
         bgcolor=T.SURFACE,
-        border_radius=20,
+        border_radius=18,
         border=borda(),
-        shadow=ft.BoxShadow(blur_radius=40, color="#00000066", offset=ft.Offset(0, 8)),
+        shadow=ft.BoxShadow(blur_radius=30, color="#00000055", offset=ft.Offset(0, 6)),
         content=ft.Column(
-            spacing=10,
+            spacing=8,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             controls=[
                 # Logo
-                ft.Row(spacing=14, controls=[
+                ft.Row(spacing=12, controls=[
                     ft.Container(
-                        content=ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=T.PRIMARY, size=28),
-                        bgcolor=f"{T.PRIMARY}22", border_radius=12, padding=pad(all_=10),
+                        content=ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=T.PRIMARY, size=24),
+                        bgcolor=f"{T.PRIMARY}22", border_radius=10, padding=pad(all_=8),
                     ),
-                    ft.Column(spacing=2, controls=[
-                        ft.Text("DemBase", color=T.TEXT_PRIMARY, size=20, weight=ft.FontWeight.BOLD),
+                    ft.Column(spacing=1, controls=[
+                        ft.Text("DemBase", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
                         ft.Text("Controle Financeiro Premium", color=T.TEXT_MUTED, size=11),
                     ]),
                 ]),
-                ft.Container(height=10),
                 # Chips
                 ft.Container(
                     content=ft.Row([chip_entrar, chip_cadastrar], spacing=0),
-                    bgcolor=T.SURFACE_ALT, border_radius=10,
-                    padding=pad(all_=4), border=borda(),
+                    bgcolor=T.SURFACE_ALT, border_radius=8,
+                    padding=pad(all_=3), border=borda(),
                 ),
-                ft.Container(height=8),
                 txt_titulo,
                 txt_subtitulo,
-                ft.Container(height=8),
                 txt_nome,
                 txt_email,
                 txt_senha,
                 txt_confirma,
                 chk_lembrar,
-                ft.Container(height=4),
                 btn_acao,
-                ft.Container(height=4),
                 ft.Container(
                     content=txt_alternar,
                     alignment=centro(),
+                    padding=pad(v=4),
                     on_click=lambda _: alternar(not modo_login[0]),
                 ),
             ],
@@ -218,7 +232,12 @@ def criar_view_auth(page: ft.Page) -> ft.View:
                 expand=True,
                 alignment=centro(),
                 bgcolor=T.BG,
-                content=card,
+                content=ft.Column(
+                    controls=[card],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    scroll=ft.ScrollMode.ADAPTIVE,
+                ),
             )
         ],
     )

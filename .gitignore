@@ -46,3 +46,9 @@ dembase_app/web/flutter_service_worker.js
 *.iml
 *.swp
 *.swo
+
+# Dados pessoais e scripts temporários
+mobills_dados.xlsx
+*.xlsx
+import_script.sql
+scripts/

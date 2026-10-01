@@ -7,6 +7,7 @@ Todas as views pós-login são montadas DENTRO do Shell (sidebar + header).
 """
 import flet as ft
 from services import supabase_client as db
+from core.constants import session_get
 
 # ── Constantes de rota ────────────────────────────────────────────────────────
 ROTA_AUTH        = "/auth"
@@ -46,7 +47,13 @@ def configurar_rotas(page: ft.Page):
     def _logado() -> bool:
         try:
             sessao = db.sessao_atual()
-            return bool(sessao and getattr(sessao, "user", None))
+            if sessao and getattr(sessao, "user", None):
+                return True
+            acc = page.client_storage.get("auth_access_token") or session_get(page, "auth_access_token")
+            ref = page.client_storage.get("auth_refresh_token") or session_get(page, "auth_refresh_token")
+            if acc and ref:
+                return db.restaurar_sessao(acc, ref)
+            return False
         except Exception:
             return False
 
