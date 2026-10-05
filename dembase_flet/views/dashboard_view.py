@@ -144,8 +144,8 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                         content=ft.Row(
                             spacing=6, tight=True,
                             controls=[
-                                ft.Icon(ft.Icons.ADD_ROUNDED, color=ft.Colors.WHITE, size=18),
-                                ft.Text("Novo Lançamento", color=ft.Colors.WHITE, size=13, weight=ft.FontWeight.W_600),
+                                ft.Icon(ft.Icons.ADD_ROUNDED, color=T.ON_PRIMARY, size=18),
+                                ft.Text("Novo Lançamento", color=T.ON_PRIMARY, size=13, weight=ft.FontWeight.W_600),
                             ],
                         ),
                         on_click=lambda _: navegar(page, ROTA_LANCAMENTO),

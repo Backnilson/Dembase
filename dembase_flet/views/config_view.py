@@ -9,6 +9,7 @@ import flet as ft
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback
 from core.router import ROTA_CONFIG, ROTA_AUTH, navegar
+from core import storage
 from views.shell_view import criar_shell
 import services.supabase_client as db
 
@@ -306,12 +307,158 @@ def criar_view_config(page: ft.Page) -> ft.View:
             ),
         )
 
+    # ── 2. ABA APARÊNCIA & TEMA ──────────────────────────────────────────────
+    def _montar_aba_tema():
+        pref_atual = storage.obter_preferencia_tema_memoria(page) or "system"
+
+        def _card_opcao_tema(chave: str, titulo: str, subtitulo: str, icone, badge_texto: str):
+            ativo = (pref_atual == chave)
+            cor_destaque = T.NEON if T.IS_DARK else T.PRIMARY
+
+            async def _selecionar(_):
+                await storage.salvar_preferencia_tema(page, chave)
+                T.aplicar_tema_app(page, chave)
+                mostrar_feedback(page, f"Tema configurado para: {titulo}!", "sucesso")
+
+            return ft.Container(
+                expand=True,
+                padding=pad(all_=18),
+                bgcolor=T.SURFACE_ALT if not ativo else (f"{cor_destaque}14"),
+                border_radius=14,
+                border=borda(width=2 if ativo else 1, color=cor_destaque if ativo else T.BORDER),
+                on_click=_selecionar,
+                content=ft.Column(
+                    spacing=10,
+                    controls=[
+                        ft.Row(
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            controls=[
+                                ft.Container(
+                                    width=40, height=40,
+                                    bgcolor=f"{cor_destaque}22" if ativo else f"{T.BORDER}44",
+                                    border_radius=10,
+                                    alignment=ft.Alignment(0, 0),
+                                    content=ft.Icon(icone, color=cor_destaque if ativo else T.TEXT_PRIMARY, size=20),
+                                ),
+                                ft.Icon(
+                                    ft.Icons.CHECK_CIRCLE_ROUNDED if ativo else ft.Icons.RADIO_BUTTON_UNCHECKED_ROUNDED,
+                                    color=cor_destaque if ativo else T.TEXT_MUTED,
+                                    size=20,
+                                ),
+                            ],
+                        ),
+                        ft.Column(
+                            spacing=3,
+                            controls=[
+                                ft.Text(titulo, size=14, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                                ft.Text(subtitulo, size=12, color=T.TEXT_MUTED, height=1.3),
+                            ],
+                        ),
+                        ft.Container(
+                            padding=pad(h=8, v=3),
+                            bgcolor=f"{cor_destaque}20" if ativo else f"{T.BORDER}33",
+                            border_radius=6,
+                            content=ft.Text(badge_texto, size=11, color=cor_destaque if ativo else T.TEXT_MUTED, weight=ft.FontWeight.W_600),
+                        ),
+                    ],
+                ),
+            )
+
+        card_sistema = _card_opcao_tema(
+            "system",
+            "Acompanhar Sistema",
+            "Acompanha o modo Claro ou Escuro do seu celular/PC em tempo real.",
+            ft.Icons.BRIGHTNESS_AUTO_ROUNDED,
+            "Padrão Automático (ThemeMode.system)",
+        )
+        card_escuro = _card_opcao_tema(
+            "dark",
+            "Modo Escuro",
+            "Fundo preto suave com detalhes em Verde Neon de alto contraste.",
+            ft.Icons.DARK_MODE_ROUNDED,
+            "Forçar Escuro Permanente",
+        )
+        card_claro = _card_opcao_tema(
+            "light",
+            "Modo Claro",
+            "Fundo claro com tipografia nítida e contraste otimizado.",
+            ft.Icons.LIGHT_MODE_ROUNDED,
+            "Forçar Claro Permanente",
+        )
+
+        status_texto = (
+            "Seguindo o sistema do dispositivo em tempo real" if pref_atual == "system"
+            else ("Modo Escuro permanente selecionado" if pref_atual == "dark" else "Modo Claro permanente selecionado")
+        )
+
+        return ft.Container(
+            padding=pad(all_=24),
+            bgcolor=T.SURFACE,
+            border_radius=16,
+            border=borda(),
+            content=ft.Column(
+                spacing=20,
+                controls=[
+                    ft.Row(
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Container(
+                                width=40, height=40,
+                                bgcolor=f"{T.NEON}20" if T.IS_DARK else f"{T.PRIMARY}20",
+                                border_radius=10,
+                                alignment=ft.Alignment(0, 0),
+                                content=ft.Icon(ft.Icons.PALETTE_OUTLINED, color=T.NEON if T.IS_DARK else T.PRIMARY, size=22),
+                            ),
+                            ft.Column(
+                                spacing=2,
+                                controls=[
+                                    ft.Text("Aparência & Preferência de Tema", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
+                                    ft.Text(f"Preferência ativa: {status_texto}", color=T.TEXT_MUTED, size=12),
+                                ],
+                            ),
+                        ],
+                    ),
+                    ft.Divider(color=T.BORDER, height=1),
+                    ft.ResponsiveRow(
+                        spacing=14,
+                        run_spacing=14,
+                        controls=[
+                            ft.Container(col={"xs": 12, "md": 4}, content=card_sistema),
+                            ft.Container(col={"xs": 12, "md": 4}, content=card_escuro),
+                            ft.Container(col={"xs": 12, "md": 4}, content=card_claro),
+                        ],
+                    ),
+                    ft.Container(
+                        padding=pad(all_=14),
+                        bgcolor=T.SURFACE_ALT,
+                        border_radius=12,
+                        border=borda(),
+                        content=ft.Row(
+                            spacing=12,
+                            controls=[
+                                ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED, color=T.INFO, size=20),
+                                ft.Text(
+                                    "A opção 'Acompanhar Sistema' detecta automaticamente quando o seu celular, navegador ou Windows muda de tema (dia/noite) e atualiza todas as telas na mesma hora.",
+                                    color=T.TEXT_MUTED,
+                                    size=12,
+                                    expand=True,
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            ),
+        )
+
     # ── Alternar Abas ────────────────────────────────────────────────────────
     def renderizar_aba():
         area_conteudo.controls.clear()
         if aba_ativa[0] == 0:
             area_conteudo.controls.append(_montar_aba_perfil())
         elif aba_ativa[0] == 1:
+            area_conteudo.controls.append(_montar_aba_tema())
+        elif aba_ativa[0] == 2:
             area_conteudo.controls.append(_montar_aba_categorias())
         else:
             area_conteudo.controls.append(_montar_aba_destinos())
@@ -320,32 +467,41 @@ def criar_view_config(page: ft.Page) -> ft.View:
     def _trocar_aba(idx: int):
         aba_ativa[0] = idx
         btn_perfil.bgcolor     = f"{T.PRIMARY}18" if idx == 0 else "transparent"
-        btn_categorias.bgcolor = f"{T.PRIMARY}18" if idx == 1 else "transparent"
-        btn_destinos.bgcolor   = f"{T.PRIMARY}18" if idx == 2 else "transparent"
+        btn_tema.bgcolor       = f"{T.PRIMARY}18" if idx == 1 else "transparent"
+        btn_categorias.bgcolor = f"{T.PRIMARY}18" if idx == 2 else "transparent"
+        btn_destinos.bgcolor   = f"{T.PRIMARY}18" if idx == 3 else "transparent"
         renderizar_aba()
 
     btn_perfil = ft.Container(
         content=ft.Row([ft.Icon(ft.Icons.PERSON_OUTLINED, size=16), ft.Text("Meu Perfil", size=13, weight=ft.FontWeight.W_600)], tight=True),
-        padding=pad(h=16, v=10),
+        padding=pad(h=14, v=10),
         bgcolor=f"{T.PRIMARY}18",
         border_radius=10,
         on_click=lambda _: _trocar_aba(0),
     )
 
-    btn_categorias = ft.Container(
-        content=ft.Row([ft.Icon(ft.Icons.CATEGORY_OUTLINED, size=16), ft.Text("Categorias", size=13, weight=ft.FontWeight.W_600)], tight=True),
-        padding=pad(h=16, v=10),
+    btn_tema = ft.Container(
+        content=ft.Row([ft.Icon(ft.Icons.PALETTE_OUTLINED, size=16), ft.Text("Aparência & Tema", size=13, weight=ft.FontWeight.W_600)], tight=True),
+        padding=pad(h=14, v=10),
         bgcolor="transparent",
         border_radius=10,
         on_click=lambda _: _trocar_aba(1),
     )
 
-    btn_destinos = ft.Container(
-        content=ft.Row([ft.Icon(ft.Icons.LOCATION_ON_OUTLINED, size=16), ft.Text("Destinos", size=13, weight=ft.FontWeight.W_600)], tight=True),
-        padding=pad(h=16, v=10),
+    btn_categorias = ft.Container(
+        content=ft.Row([ft.Icon(ft.Icons.CATEGORY_OUTLINED, size=16), ft.Text("Categorias", size=13, weight=ft.FontWeight.W_600)], tight=True),
+        padding=pad(h=14, v=10),
         bgcolor="transparent",
         border_radius=10,
         on_click=lambda _: _trocar_aba(2),
+    )
+
+    btn_destinos = ft.Container(
+        content=ft.Row([ft.Icon(ft.Icons.LOCATION_ON_OUTLINED, size=16), ft.Text("Destinos", size=13, weight=ft.FontWeight.W_600)], tight=True),
+        padding=pad(h=14, v=10),
+        bgcolor="transparent",
+        border_radius=10,
+        on_click=lambda _: _trocar_aba(3),
     )
 
     seletor_abas = ft.Container(
@@ -353,7 +509,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
         bgcolor=T.SURFACE,
         border_radius=12,
         border=borda(),
-        content=ft.Row(spacing=4, tight=True, controls=[btn_perfil, btn_categorias, btn_destinos]),
+        content=ft.Row(spacing=4, tight=True, scroll=ft.ScrollMode.ADAPTIVE, controls=[btn_perfil, btn_tema, btn_categorias, btn_destinos]),
     )
 
     cabecalho = ft.Row(

@@ -59,6 +59,32 @@ def fazer_logout():
         pass
 
 
+def recuperar_senha(email: str):
+    """Solicita envio de e-mail de recuperação de senha pelo Supabase."""
+    return supabase.auth.reset_password_for_email(email.strip())
+
+
+def login_social(provider: str, redirect_to: str = None) -> str:
+    """
+    Inicia autenticação OAuth (Google / Apple) via Supabase signInWithOAuth.
+    Retorna a URL de redirecionamento/autorização pronta para abertura no navegador.
+    """
+    prov = provider.lower().strip()
+    creds = {"provider": prov}
+    if redirect_to:
+        creds["options"] = {"redirect_to": redirect_to}
+    resp = supabase.auth.sign_in_with_oauth(creds)
+    return getattr(resp, "url", "") or ""
+
+
+def abrir_url_navegador(url: str) -> bool:
+    """Abre a URL de autenticação no navegador padrão do sistema operacional."""
+    import webbrowser
+    if url:
+        return webbrowser.open(url)
+    return False
+
+
 def restaurar_sessao(access_token: str, refresh_token: str) -> bool:
     """Restaura sessão ativa a partir de tokens salvos."""
     try:

@@ -23,14 +23,15 @@ def setup_responsive_resize(page: ft.Page):
     atravesse o breakpoint Mobile <-> Desktop, garantindo transição em tempo real.
     """
     from core.router import navegar
-    page.session.store.set("was_mobile", is_mobile(page))
+    from core.constants import session_set, session_get
+    session_set(page, "was_mobile", is_mobile(page))
 
     def on_resize(e: ft.ControlEvent):
-        was_mobile = page.session.store.get("was_mobile")
+        was_mobile = session_get(page, "was_mobile")
         currently_mobile = is_mobile(page)
         
         if was_mobile != currently_mobile:
-            page.session.store.set("was_mobile", currently_mobile)
+            session_set(page, "was_mobile", currently_mobile)
             navegar(page, page.route)
             
     page.on_resize = on_resize

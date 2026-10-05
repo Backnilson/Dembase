@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="neonGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00E676"/>
+      <stop offset="100%" stop-color="#00B0FF"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00E676" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#00E676" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background tile -->
+  <rect width="128" height="128" rx="30" fill="#0B0F19"/>
+  <rect width="128" height="128" rx="30" fill="url(#glow)"/>
+  <rect x="1" y="1" width="126" height="126" rx="29" fill="none" stroke="#1E293B" stroke-width="1.5"/>
+
+  <!-- D + $ Monogram Glyph -->
+  <g fill="none" stroke="#00E676" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Outer D profile -->
+    <path d="M 36 28 L 66 28 C 96 28 96 100 66 100 L 36 100 Z" />
+
+    <!-- S curve intersecting the D's center -->
+    <path d="M 76 45 C 76 35 48 35 48 49 C 48 63 76 63 76 77 C 76 91 48 91 48 81" stroke-width="6.5" />
+
+    <!-- Vertical Dollar spine -->
+    <line x1="62" y1="18" x2="62" y2="110" stroke-width="6.5" />
+  </g>
+</svg>

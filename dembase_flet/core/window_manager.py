@@ -44,8 +44,8 @@ def obter_area_de_trabalho() -> tuple[int, int, int, int]:
 async def ajustar_janela_login(page: ft.Page) -> None:
     """
     Configura a janela para a tela de autenticação (/auth).
-    Dimensiona de forma segura e proporcional dentro da área útil da tela,
-    garantindo que o topo nunca corte a barra de título e a base nunca encoste na barra de tarefas.
+    Inicia maximizada por padrão no desktop para experiência imersiva e responsiva,
+    garantindo que a barra de título e botões nativos permaneçam visíveis.
     """
     if getattr(page, "web", False) or getattr(page, "platform", None) in (
         ft.PagePlatform.ANDROID,
@@ -53,37 +53,13 @@ async def ajustar_janela_login(page: ft.Page) -> None:
     ):
         return
 
-    # 1. Configurações base da janela
-    page.window.maximized = False
+    page.window.min_width = 380
+    page.window.min_height = 560
     page.window.resizable = True
     page.window.title_bar_hidden = False
     page.window.frameless = False
-
-    # 2. Resolução real e área útil (descontando barra de tarefas)
-    w_util, h_util, off_x, off_y = obter_area_de_trabalho()
-
-    # 3. Dimensões compactas e seguras:
-    # Largura: ideal entre 440px e 460px (proporcional, máx 70% da tela)
-    largura = min(460, max(380, int(w_util * 0.70)))
-
-    # Altura: NUNCA maior que (h_util - 80px) para garantir folga visual no topo e base
-    altura = min(540, max(420, h_util - 80))
-
-    # Limites mínimos para o redimensionamento manual
-    page.window.min_width = 360
-    page.window.min_height = 380
-
-    page.window.width = largura
-    page.window.height = altura
-
-    # 4. Posicionamento centralizado com margens de segurança matemática:
-    # Garante que 'top' seja no mínimo 28px abaixo do topo do monitor (barra de título 100% visível)
-    pos_top = off_y + max(28, (h_util - altura) // 2)
-    pos_left = off_x + max(20, (w_util - largura) // 2)
-
-    page.window.top = pos_top
-    page.window.left = pos_left
-
+    page.window.maximized = True
+    page.window.visible = True
     page.update()
 
 

@@ -16,6 +16,7 @@ from core.router import navegar, ROTA_AUTH
 from core.window_manager import ajustar_janela_login
 from core.responsive import is_mobile, setup_responsive_resize
 from core.constants import session_clear
+from core import storage
 import services.supabase_client as db
 
 ROTA_DASHBOARD   = "/dashboard"
@@ -162,9 +163,7 @@ def criar_shell(
                 if r == ROTA_AUTH:
                     try:
                         db.fazer_logout()
-                        page.client_storage.remove("auth_access_token")
-                        page.client_storage.remove("auth_refresh_token")
-                        page.client_storage.remove("lembrar_ativo")
+                        await storage.limpar_lembrar(page)
                         session_clear(page)
                     except Exception:
                         pass
@@ -280,9 +279,7 @@ def criar_shell(
                 if rota == ROTA_AUTH:
                     try:
                         db.fazer_logout()
-                        page.client_storage.remove("auth_access_token")
-                        page.client_storage.remove("auth_refresh_token")
-                        page.client_storage.remove("lembrar_ativo")
+                        await storage.limpar_lembrar(page)
                         session_clear(page)
                     except Exception:
                         pass
@@ -407,8 +404,8 @@ def criar_shell(
                                 spacing=6,
                                 tight=True,
                                 controls=[
-                                    ft.Icon(ft.Icons.ADD_ROUNDED, color=ft.Colors.WHITE, size=18),
-                                    ft.Text("Novo", color=ft.Colors.WHITE, size=13, weight=ft.FontWeight.W_600),
+                                    ft.Icon(ft.Icons.ADD_ROUNDED, color=T.ON_PRIMARY, size=18),
+                                    ft.Text("Novo", color=T.ON_PRIMARY, size=13, weight=ft.FontWeight.W_600),
                                 ],
                             ),
                             on_click=lambda _: navegar(page, ROTA_LANCAMENTO),

@@ -24,12 +24,18 @@ ROTA_CONFIG      = "/configuracoes"
 _ROTAS_SEM_SHELL = {ROTA_AUTH}
 
 
-# =============================================================================
-# NAVEGAÇÃO
-# =============================================================================
 def navegar(page: ft.Page, rota: str):
     """Navega para uma rota no Flet 1.0 usando page.navigate."""
     page.navigate(rota)
+
+
+def reconstruir_rota_atual(page: ft.Page):
+    """Reconstrói a view da rota atual aplicando a nova paleta de cores."""
+    fn = getattr(page, "_reconstruir_rota", None)
+    if callable(fn):
+        fn()
+    else:
+        page.update()
 
 
 # =============================================================================
@@ -49,8 +55,8 @@ def configurar_rotas(page: ft.Page):
             sessao = db.sessao_atual()
             if sessao and getattr(sessao, "user", None):
                 return True
-            acc = page.client_storage.get("auth_access_token") or session_get(page, "auth_access_token")
-            ref = page.client_storage.get("auth_refresh_token") or session_get(page, "auth_refresh_token")
+            acc = session_get(page, "auth_access_token")
+            ref = session_get(page, "auth_refresh_token")
             if acc and ref:
                 return db.restaurar_sessao(acc, ref)
             return False
@@ -201,3 +207,4 @@ def configurar_rotas(page: ft.Page):
 
     page.on_route_change = on_route_change
     page.on_view_pop     = on_view_pop
+    page._reconstruir_rota = lambda: on_route_change(None)
