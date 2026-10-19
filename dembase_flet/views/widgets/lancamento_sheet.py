@@ -39,7 +39,7 @@ def abrir_lancamento(
         state.lancamento_id = str(lancamento["id"])
         state.serie_id = str(lancamento.get("serie_id")) if lancamento.get("serie_id") else None
         state.recorrente_id = str(lancamento.get("recorrente_id")) if lancamento.get("recorrente_id") else None
-        state.tipo = lancamento.get("tipo", "Despesa")
+        state.mudar_tipo(lancamento.get("tipo", "Despesa"))
         state.subtipo = lancamento.get("subtipo")
         state.forma_movimentacao = lancamento.get("forma_movimentacao", "Pix")
         state.descricao = lancamento.get("descricao") or ""
@@ -57,7 +57,7 @@ def abrir_lancamento(
         d_raw = lancamento.get("data")
         if isinstance(d_raw, str):
             try:
-                state.data_selecionada = datetime.fromisoformat(d_raw).date()
+                state.data_selecionada = datetime.fromisoformat(d_raw[:10]).date()
             except Exception:
                 state.data_selecionada = date.today()
         elif isinstance(d_raw, (date, datetime)):
@@ -81,7 +81,8 @@ def abrir_lancamento(
         if container_dialog:
             container_dialog.open = False
             try:
-                page.pop_dialog()
+                if container_dialog in page.overlay:
+                    page.overlay.remove(container_dialog)
             except Exception:
                 pass
             try:
@@ -119,21 +120,36 @@ def abrir_lancamento(
             pass
 
         try:
+            tipo_db = (
+                "Transferência"
+                if state.eh_transferencia
+                else ("Receita" if state.eh_receita else "Despesa")
+            )
+            desc_final = (state.descricao or "").strip()
+            if not desc_final:
+                desc_final = "Transferência" if state.eh_transferencia else (state.subtipo or "Lançamento")
+
+            conta_id_final = form._obter_conta_id(state.conta_id) if not state.eh_credito else None
+            cartao_id_final = form._obter_cartao_id(state.cartao_id) if state.eh_credito else None
+            cat_id_final = form._obter_cat_id(state.categoria_id) if not state.eh_transferencia else None
+            subcat_id_final = form._obter_subcat_id(state.subcategoria_id) if not state.eh_transferencia else None
+            destino_id_final = form._obter_conta_id(state.destino_id) if state.eh_transferencia else None
+
             dados = {
-                "tipo": state.tipo,
-                "subtipo": state.subtipo,
+                "tipo": tipo_db,
+                "subtipo": state.subtipo or tipo_db,
                 "forma_movimentacao": state.forma_movimentacao,
                 "valor": state.valor,
                 "data": str(state.data_selecionada),
                 "hora": state.hora,
-                "descricao": state.descricao.strip(),
-                "status": "Pago" if state.status_pago else "Pendente",
-                "conta_id": state.conta_id,
-                "cartao_id": state.cartao_id,
-                "categoria_id": state.categoria_id,
-                "subcategoria_id": state.subcategoria_id,
-                "destino_id": state.destino_id,
-                "regra": state.regra if state.tipo == "Despesa" else None,
+                "descricao": desc_final,
+                "status": "Pago" if (state.status_pago or state.eh_transferencia) else "Pendente",
+                "conta_id": conta_id_final,
+                "cartao_id": cartao_id_final,
+                "categoria_id": cat_id_final,
+                "subcategoria_id": subcat_id_final,
+                "destino_id": destino_id_final,
+                "regra": state.regra if state.eh_despesa else None,
             }
 
             if is_edicao:
@@ -144,7 +160,7 @@ def abrir_lancamento(
                 mostrar_feedback(page, "Lançamento atualizado com sucesso!", "sucesso")
             else:
                 modo = state.modo_recorrencia()
-                valor_modo = "parcelado" if (state.tipo == "Despesa" and state.forma_movimentacao == "Credito") else "repetido"
+                valor_modo = "parcelado" if state.eh_credito else "repetido"
                 res = db.criar_lancamento_recorrente(
                     dados=dados,
                     modo=modo,
@@ -181,6 +197,18 @@ def abrir_lancamento(
             mostrar_feedback(page, f"Erro ao salvar: {ex}", "erro")
 
     def ao_clicar_salvar(_):
+        # Garante que os IDs no state estejam normalizados antes de validar
+        if state.eh_credito:
+            state.cartao_id = form._obter_cartao_id(state.cartao_id or form.dd_conta.value)
+        else:
+            state.conta_id = form._obter_conta_id(state.conta_id or form.dd_conta.value)
+
+        if state.eh_transferencia:
+            state.destino_id = form._obter_conta_id(state.destino_id or form.dd_destino.value)
+        else:
+            state.categoria_id = form._obter_cat_id(state.categoria_id or form.dd_categoria.value)
+            state.subcategoria_id = form._obter_subcat_id(state.subcategoria_id or form.dd_subcategoria.value)
+
         valido, erro_msg = state.validar()
         if not valido:
             mostrar_feedback(page, erro_msg or "Verifique os campos obrigatórios.", "alerta")
@@ -195,6 +223,8 @@ def abrir_lancamento(
                 if modal_serie:
                     modal_serie.open = False
                     try:
+                        if modal_serie in page.overlay:
+                            page.overlay.remove(modal_serie)
                         page.update()
                     except Exception:
                         pass

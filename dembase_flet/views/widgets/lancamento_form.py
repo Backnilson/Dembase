@@ -8,29 +8,64 @@ chips de data rápida, switch de status, progressive disclosure e regras de neg�
 from __future__ import annotations
 
 import unicodedata
+import uuid
 from datetime import date, datetime, timedelta
 from typing import Callable, Optional
 
 import flet as ft
 
-from core.constants import REGRAS_5030
-from core.lancamento_state import LancamentoFormState
+from core.constants import (
+    REGRAS_5030,
+    FORMAS_RECEITA,
+    FORMAS_DESPESA,
+    FORMAS_TRANSFERENCIA,
+    SUBTIPOS_RECEITA,
+    SUBTIPOS_DESPESA,
+    SUBTIPOS_TRANSFERENCIA,
+)
+from core.lancamento_state import LancamentoFormState, is_credito_str
 from core.recorrencia import resumo_parcelas
 import core.theme as T
 from core.theme import pad, borda, mostrar_feedback
 import services.supabase_client as db
 
 
-def _norm(texto: str) -> str:
+def _norm(texto: Optional[str]) -> str:
     if not texto:
         return ""
     nfkd = unicodedata.normalize("NFKD", str(texto))
     return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
 
 
+def _is_uuid(val) -> bool:
+    if not val:
+        return False
+    try:
+        uuid.UUID(str(val).strip())
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def _botao_add_verde(on_click, tooltip: str) -> ft.IconButton:
+    """Botão verde (+) colado ao lado direito do Dropdown (Flet 1.0.1)."""
+    return ft.IconButton(
+        icon=ft.Icons.ADD_ROUNDED,
+        icon_color=ft.Colors.WHITE,
+        bgcolor=T.PRIMARY,
+        width=44,
+        height=44,
+        tooltip=tooltip,
+        on_click=on_click,
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=10),
+        ),
+    )
+
+
 class LancamentoForm(ft.Column):
     """
-    Componente reutilizável do formulário de lançamento.
+    Componente reutilizável do formulário de lançamento (Flet 1.0.1).
     Gerencia a reatividade dos controles e reflete o estado em LancamentoFormState.
     """
 
@@ -58,7 +93,8 @@ class LancamentoForm(ft.Column):
 
     def _safe_update(self, ctrl: ft.Control):
         try:
-            ctrl.update()
+            if getattr(ctrl, "page", None) is not None:
+                ctrl.update()
         except Exception:
             pass
 
@@ -67,13 +103,61 @@ class LancamentoForm(ft.Column):
             self.on_state_change()
 
     # =========================================================================
+    # RESOLUÇÃO SEGURA DE UUIDs DE DROPDOWNS (FLET 1.0.1)
+    # =========================================================================
+    def _obter_cat_id(self, val: Optional[str]) -> Optional[str]:
+        if not val:
+            return None
+        val_str = str(val).strip()
+        if _is_uuid(val_str):
+            return val_str
+        for c in self.categorias:
+            if str(c.get("id")) == val_str or str(c.get("nome", "")).strip().lower() == val_str.lower():
+                return str(c["id"])
+        return None
+
+    def _obter_subcat_id(self, val: Optional[str]) -> Optional[str]:
+        if not val:
+            return None
+        val_str = str(val).strip()
+        if _is_uuid(val_str):
+            return val_str
+        for s in self.subcategorias:
+            if str(s.get("id")) == val_str or str(s.get("nome", "")).strip().lower() == val_str.lower():
+                return str(s["id"])
+        return None
+
+    def _obter_conta_id(self, val: Optional[str]) -> Optional[str]:
+        if not val:
+            return None
+        val_str = str(val).strip()
+        if _is_uuid(val_str):
+            return val_str
+        for c in self.contas:
+            if str(c.get("id")) == val_str or str(c.get("nome", "")).strip().lower() == val_str.lower():
+                return str(c["id"])
+        return None
+
+    def _obter_cartao_id(self, val: Optional[str]) -> Optional[str]:
+        if not val:
+            return None
+        val_str = str(val).strip()
+        if _is_uuid(val_str):
+            return val_str
+        for c in self.cartoes:
+            if str(c.get("id")) == val_str or str(c.get("nome", "")).strip().lower() == val_str.lower():
+                return str(c["id"])
+        return None
+
+    # =========================================================================
     # CONSTRUÇÃO DOS CONTROLES
     # =========================================================================
     def _construir_controles(self):
-        # 1. Seletor de Tipo (SegmentedButton)
+        # 1. Seletor de Tipo (SegmentedButton — Flet 1.0.1 exige selected como list[str], NUNCA set!)
         self.btn_tipo = ft.SegmentedButton(
-            selected={self.state.tipo},
+            selected=[self.state.tipo],
             allow_multiple_selection=False,
+            allow_empty_selection=False,
             segments=[
                 ft.Segment(
                     value="Despesa",
@@ -95,7 +179,11 @@ class LancamentoForm(ft.Column):
         )
 
         # 2. Input de Valor Grande e Destacado
-        cor_valor = T.DESPESA if self.state.tipo == "Despesa" else (T.RECEITA if self.state.tipo == "Receita" else T.PRIMARY)
+        cor_valor = (
+            T.DESPESA
+            if self.state.eh_despesa
+            else (T.RECEITA if self.state.eh_receita else T.PRIMARY)
+        )
         str_val = f"{self.state.valor:.2f}".replace(".", ",") if self.state.valor > 0 else "0,00"
         self.txt_valor = ft.TextField(
             label="Valor da transação",
@@ -113,22 +201,22 @@ class LancamentoForm(ft.Column):
             on_change=self._ao_mudar_valor,
         )
 
-        # 3. Chips de Data Rápida
+        # 3. Chips de Data Rápida (Flet 1.0.1: usar on_select para renderizar estado selected)
         self.chip_hoje = ft.Chip(
             label=ft.Text("Hoje"),
             selected=False,
-            on_click=lambda _: self._selecionar_data_rapida(date.today()),
+            on_select=lambda _: self._selecionar_data_rapida(date.today()),
         )
         self.chip_ontem = ft.Chip(
             label=ft.Text("Ontem"),
             selected=False,
-            on_click=lambda _: self._selecionar_data_rapida(date.today() - timedelta(days=1)),
+            on_select=lambda _: self._selecionar_data_rapida(date.today() - timedelta(days=1)),
         )
         self.chip_outros = ft.Chip(
             label=ft.Text("Outros..."),
             selected=False,
             leading=ft.Icon(ft.Icons.CALENDAR_MONTH_ROUNDED, size=16),
-            on_click=self._abrir_seletor_data,
+            on_select=self._abrir_seletor_data,
         )
         self.row_chips_data = ft.Row(
             controls=[self.chip_hoje, self.chip_ontem, self.chip_outros],
@@ -136,7 +224,7 @@ class LancamentoForm(ft.Column):
         )
 
         # 4. Switch de Status
-        label_switch = "Foi paga" if self.state.tipo == "Despesa" else "Foi recebida"
+        label_switch = "Foi paga" if self.state.eh_despesa else "Foi recebida"
         self.switch_status = ft.Switch(
             label=label_switch,
             value=self.state.status_pago,
@@ -146,16 +234,16 @@ class LancamentoForm(ft.Column):
 
         # 5. Descrição
         self.txt_descricao = ft.TextField(
-            label="Descrição *",
+            label="Descrição",
             hint_text="Ex: Supermercado, Aluguel, Salário...",
             value=self.state.descricao,
             border_radius=10,
             border_color=T.BORDER,
             focused_border_color=T.PRIMARY,
-            on_change=lambda e: setattr(self.state, "descricao", e.control.value),
+            on_change=lambda e: setattr(self.state, "descricao", e.control.value or ""),
         )
 
-        # 6. Forma de Movimentação (Sempre Visível)
+        # 6. Forma de Movimentação (Sempre Visível na Área Principal - Decisão 5)
         self.dd_forma = ft.Dropdown(
             label="Forma de movimentação *",
             value=self.state.forma_movimentacao,
@@ -172,16 +260,15 @@ class LancamentoForm(ft.Column):
             on_select=self._ao_mudar_conta,
             **T.dropdown_estilo(),
         )
-        self.btn_add_conta = ft.IconButton(
-            icon=ft.Icons.ADD_ROUNDED,
-            icon_color=T.PRIMARY,
+        self.btn_add_conta = _botao_add_verde(
+            on_click=self._abrir_modal_nova_conta_ou_cartao,
             tooltip="Nova Conta",
-            on_click=self._abrir_modal_nova_conta,
         )
         self.row_conta = ft.Row(
             controls=[self.dd_conta, self.btn_add_conta],
             alignment=ft.MainAxisAlignment.START,
-            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
         )
 
         # 8. Conta de Destino (Só Transferência)
@@ -189,23 +276,22 @@ class LancamentoForm(ft.Column):
             label="Conta de destino *",
             value=self.state.destino_id,
             expand=True,
-            on_select=lambda e: setattr(self.state, "destino_id", e.control.value),
+            on_select=self._ao_mudar_destino,
             **T.dropdown_estilo(),
         )
-        self.btn_add_destino = ft.IconButton(
-            icon=ft.Icons.ADD_ROUNDED,
-            icon_color=T.PRIMARY,
-            tooltip="Nova Conta",
-            on_click=self._abrir_modal_nova_conta,
+        self.btn_add_destino = _botao_add_verde(
+            on_click=lambda _: self._abrir_modal_nova_conta(eh_destino=True),
+            tooltip="Nova Conta de Destino",
         )
         self.row_destino = ft.Row(
             controls=[self.dd_destino, self.btn_add_destino],
             alignment=ft.MainAxisAlignment.START,
-            spacing=8,
-            visible=(self.state.tipo == "Transferencia"),
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
+            visible=self.state.eh_transferencia,
         )
 
-        # 9. Parcelas (Só Crédito)
+        # 9. Parcelas (Só Crédito - Decisão 2)
         self.dd_parcelas = ft.Dropdown(
             label="Número de Parcelas *",
             value=str(self.state.quantidade if self.state.quantidade > 1 else 1),
@@ -223,6 +309,7 @@ class LancamentoForm(ft.Column):
         self.row_parcelas = ft.Row(
             controls=[self.dd_parcelas, self.lbl_resumo_parcelas],
             alignment=ft.MainAxisAlignment.START,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=12,
             visible=False,
         )
@@ -235,40 +322,39 @@ class LancamentoForm(ft.Column):
             on_select=self._ao_mudar_categoria,
             **T.dropdown_estilo(),
         )
-        self.btn_add_categoria = ft.IconButton(
-            icon=ft.Icons.ADD_ROUNDED,
-            icon_color=T.PRIMARY,
-            tooltip="Nova Categoria",
+        self.btn_add_categoria = _botao_add_verde(
             on_click=self._abrir_modal_nova_categoria,
+            tooltip="Nova Categoria",
         )
         self.row_categoria = ft.Row(
             controls=[self.dd_categoria, self.btn_add_categoria],
             alignment=ft.MainAxisAlignment.START,
-            spacing=8,
-            visible=(self.state.tipo != "Transferencia"),
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
+            visible=(not self.state.eh_transferencia),
         )
 
         # =====================================================================
-        # SEÇÃO PROGRESSIVE DISCLOSURE: "Mais detalhes"
+        # SEÇÃO PROGRESSIVE DISCLOSURE: "Mais detalhes" (Decisão 4)
         # =====================================================================
         # Subcategoria
         self.dd_subcategoria = ft.Dropdown(
             label="Subcategoria",
             value=self.state.subcategoria_id,
             expand=True,
-            on_select=lambda e: setattr(self.state, "subcategoria_id", e.control.value),
+            on_select=self._ao_mudar_subcategoria,
             **T.dropdown_estilo(),
         )
-        self.btn_add_subcategoria = ft.IconButton(
-            icon=ft.Icons.ADD_ROUNDED,
-            icon_color=T.PRIMARY,
-            tooltip="Nova Subcategoria",
+        self.btn_add_subcategoria = _botao_add_verde(
             on_click=self._abrir_modal_nova_subcategoria,
+            tooltip="Nova Subcategoria",
         )
         self.row_subcategoria = ft.Row(
             controls=[self.dd_subcategoria, self.btn_add_subcategoria],
             alignment=ft.MainAxisAlignment.START,
-            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
+            visible=(not self.state.eh_transferencia),
         )
 
         # Subtipo
@@ -276,19 +362,18 @@ class LancamentoForm(ft.Column):
             label="Subtipo",
             value=self.state.subtipo,
             expand=True,
-            on_select=lambda e: setattr(self.state, "subtipo", e.control.value),
+            on_select=self._ao_mudar_subtipo,
             **T.dropdown_estilo(),
         )
-        self.btn_add_subtipo = ft.IconButton(
-            icon=ft.Icons.ADD_ROUNDED,
-            icon_color=T.PRIMARY,
-            tooltip="Novo Subtipo",
+        self.btn_add_subtipo = _botao_add_verde(
             on_click=self._abrir_modal_novo_subtipo,
+            tooltip="Novo Subtipo",
         )
         self.row_subtipo = ft.Row(
             controls=[self.dd_subtipo, self.btn_add_subtipo],
             alignment=ft.MainAxisAlignment.START,
-            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
         )
 
         # Regra 50/30/20 (Obrigatória em Despesa)
@@ -297,7 +382,7 @@ class LancamentoForm(ft.Column):
             value=self.state.regra or "Essencial",
             options=[ft.dropdown.Option(key=r, text=r) for r in REGRAS_5030],
             expand=True,
-            on_select=lambda e: setattr(self.state, "regra", e.control.value),
+            on_select=self._ao_mudar_regra,
             **T.dropdown_estilo(),
         )
 
@@ -306,16 +391,16 @@ class LancamentoForm(ft.Column):
             label="Hora do lançamento (0 a 23)",
             value=str(self.state.hora),
             keyboard_type=ft.KeyboardType.NUMBER,
-            width=180,
+            width=200,
             border_radius=10,
             border_color=T.BORDER,
             focused_border_color=T.PRIMARY,
             on_change=self._ao_mudar_hora,
         )
 
-        # Recorrência: Fixa e Repetir
+        # Recorrência: Fixa e Repetir (Dentro de "Mais detalhes" - Decisão 4)
         self.switch_fixa = ft.Switch(
-            label="Despesa Fixa" if self.state.tipo == "Despesa" else "Receita Fixa",
+            label="Despesa Fixa" if self.state.eh_despesa else "Receita Fixa",
             value=self.state.is_fixa,
             active_color=T.PRIMARY,
             on_change=self._ao_mudar_switch_fixa,
@@ -350,10 +435,10 @@ class LancamentoForm(ft.Column):
         )
 
         self.txt_repetir_qtd = ft.TextField(
-            label="Quantidade de repetições *",
+            label="Quantidade *",
             value=str(self.state.quantidade if self.state.quantidade >= 2 else 2),
             keyboard_type=ft.KeyboardType.NUMBER,
-            width=180,
+            width=140,
             border_radius=10,
             border_color=T.BORDER,
             focused_border_color=T.PRIMARY,
@@ -389,22 +474,25 @@ class LancamentoForm(ft.Column):
             visible=self.state.mais_detalhes_aberto,
         )
 
+        self.lbl_toggle_detalhes = ft.Text(
+            "Menos detalhes" if self.state.mais_detalhes_aberto else "Mais detalhes",
+            size=13,
+            weight=ft.FontWeight.BOLD,
+            color=T.PRIMARY,
+        )
+        self.ico_toggle_detalhes = ft.Icon(
+            ft.Icons.KEYBOARD_ARROW_UP_ROUNDED
+            if self.state.mais_detalhes_aberto
+            else ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED,
+            size=18,
+            color=T.PRIMARY,
+        )
+
         self.btn_toggle_detalhes = ft.TextButton(
             content=ft.Row(
                 controls=[
-                    ft.Text(
-                        "Menos detalhes" if self.state.mais_detalhes_aberto else "Mais detalhes",
-                        size=13,
-                        weight=ft.FontWeight.BOLD,
-                        color=T.PRIMARY,
-                    ),
-                    ft.Icon(
-                        ft.Icons.KEYBOARD_ARROW_UP_ROUNDED
-                        if self.state.mais_detalhes_aberto
-                        else ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED,
-                        size=18,
-                        color=T.PRIMARY,
-                    ),
+                    self.lbl_toggle_detalhes,
+                    self.ico_toggle_detalhes,
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
                 spacing=4,
@@ -451,24 +539,41 @@ class LancamentoForm(ft.Column):
         if self.state.categoria_id:
             self._carregar_subcategorias(self.state.categoria_id)
 
-    def _carregar_subcategorias(self, cat_id: str):
+    def _carregar_subcategorias(self, cat_id: Optional[str]):
+        cat_uuid = self._obter_cat_id(cat_id)
+        if not cat_uuid:
+            self.subcategorias = []
+            self.dd_subcategoria.options = []
+            self.dd_subcategoria.value = None
+            self._safe_update(self.dd_subcategoria)
+            return
+
         try:
-            self.subcategorias = db.listar_subcategorias(cat_id)
+            self.subcategorias = db.listar_subcategorias(cat_uuid)
             self.dd_subcategoria.options = [
                 ft.dropdown.Option(key=str(s["id"]), text=s.get("nome", ""))
                 for s in self.subcategorias
+                if s.get("id")
             ]
+            # Garante que subcategoria_id pertence às opções carregadas
+            ids_validos = {str(s["id"]) for s in self.subcategorias if s.get("id")}
+            if self.state.subcategoria_id not in ids_validos:
+                self.state.subcategoria_id = None
             self.dd_subcategoria.value = self.state.subcategoria_id
             self._safe_update(self.dd_subcategoria)
         except Exception:
             self.subcategorias = []
             self.dd_subcategoria.options = []
+            self.dd_subcategoria.value = None
             self._safe_update(self.dd_subcategoria)
 
     # =========================================================================
     # SINCRONIZAÇÃO E ATUALIZAÇÃO DA UI
     # =========================================================================
     def _sincronizar_estado_com_ui(self):
+        # 0. SegmentedButton (SEMPRE list[str], NUNCA set!)
+        self.btn_tipo.selected = [self.state.tipo]
+
         # 1. Chips de Data
         hoje = date.today()
         ontem = hoje - timedelta(days=1)
@@ -490,27 +595,32 @@ class LancamentoForm(ft.Column):
 
         # 2. Switch Status
         self.switch_status.value = self.state.status_pago
-        self.switch_status.visible = (self.state.tipo != "Transferencia")
-        self.switch_status.label = "Foi recebida" if self.state.tipo == "Receita" else "Foi paga"
+        self.switch_status.visible = (not self.state.eh_transferencia)
+        self.switch_status.label = "Foi recebida" if self.state.eh_receita else "Foi paga"
 
         # 3. Cores e Segmentos
-        cor_tema = T.DESPESA if self.state.tipo == "Despesa" else (T.RECEITA if self.state.tipo == "Receita" else T.PRIMARY)
+        cor_tema = (
+            T.DESPESA
+            if self.state.eh_despesa
+            else (T.RECEITA if self.state.eh_receita else T.PRIMARY)
+        )
         self.txt_valor.color = cor_tema
         self.txt_valor.prefix.color = cor_tema
         self.txt_valor.focused_border_color = cor_tema
 
         # 4. Visibilidade de Campos Específicos
-        is_transf = (self.state.tipo == "Transferencia")
-        is_credito = (self.state.tipo == "Despesa" and self.state.forma_movimentacao == "Credito")
+        is_transf = self.state.eh_transferencia
+        is_credito = self.state.eh_credito
 
         self.row_destino.visible = is_transf
         self.row_categoria.visible = not is_transf
+        self.row_subcategoria.visible = not is_transf
         self.row_parcelas.visible = is_credito
-        self.dd_regra.visible = (self.state.tipo == "Despesa")
+        self.dd_regra.visible = self.state.eh_despesa
 
-        # Switches Fixa e Repetir: Ocultos em Transferência e em Despesa+Crédito
+        # Switches Fixa e Repetir: Ocultos em Transferência e em Despesa+Crédito (Decisão 2 e 3)
         self.row_switches_recorrencia.visible = (not is_transf and not is_credito)
-        self.switch_fixa.label = "Receita Fixa" if self.state.tipo == "Receita" else "Despesa Fixa"
+        self.switch_fixa.label = "Receita Fixa" if self.state.eh_receita else "Despesa Fixa"
 
         # Opções de Recorrência
         if self.state.is_fixa:
@@ -529,49 +639,76 @@ class LancamentoForm(ft.Column):
             self._atualizar_resumo_parcelas()
 
     def _atualizar_opcoes_forma(self):
-        if self.state.tipo == "Receita":
-            opcoes = ["Pix", "Dinheiro", "Boleto", "Depósito", "Transferência TED/DOC", "Outros"]
-        elif self.state.tipo == "Transferencia":
-            opcoes = ["Pix", "TED", "DOC", "Entre Contas"]
+        if self.state.eh_receita:
+            opcoes = list(FORMAS_RECEITA)
+        elif self.state.eh_transferencia:
+            opcoes = list(FORMAS_TRANSFERENCIA)
         else:  # Despesa
-            opcoes = ["Pix", "Crédito", "Débito", "Dinheiro", "Boleto", "TED", "Outros"]
+            opcoes = list(FORMAS_DESPESA)
+
+        # Normaliza forma caso venha do banco sem acento ("Credito" -> "Crédito", "Debito" -> "Débito")
+        forma_atual_norm = _norm(self.state.forma_movimentacao)
+        forma_encontrada = None
+        for op in opcoes:
+            if _norm(op) == forma_atual_norm:
+                forma_encontrada = op
+                break
+
+        if forma_encontrada:
+            self.state.forma_movimentacao = forma_encontrada
+        else:
+            self.state.forma_movimentacao = "Pix" if "Pix" in opcoes else opcoes[0]
 
         self.dd_forma.options = [ft.dropdown.Option(key=op, text=op) for op in opcoes]
-        if self.state.forma_movimentacao not in opcoes:
-            self.state.forma_movimentacao = opcoes[0]
         self.dd_forma.value = self.state.forma_movimentacao
         self._safe_update(self.dd_forma)
 
     def _atualizar_opcoes_conta_ou_cartao(self):
-        is_credito = (self.state.tipo == "Despesa" and self.state.forma_movimentacao == "Credito")
+        is_credito = self.state.eh_credito
         if is_credito:
             self.dd_conta.label = "Cartão de crédito *"
             self.btn_add_conta.tooltip = "Novo Cartão"
             self.dd_conta.options = [
                 ft.dropdown.Option(key=str(c["id"]), text=c.get("nome", ""))
                 for c in self.cartoes
+                if c.get("id")
             ]
-            if not self.state.cartao_id and self.cartoes:
-                self.state.cartao_id = str(self.cartoes[0]["id"])
+            ids_cartoes = {str(c["id"]) for c in self.cartoes if c.get("id")}
+            if self.state.cartao_id not in ids_cartoes:
+                self.state.cartao_id = str(self.cartoes[0]["id"]) if self.cartoes else None
             self.dd_conta.value = self.state.cartao_id
         else:
-            self.dd_conta.label = "Conta de origem *" if self.state.tipo == "Transferencia" else "Conta *"
+            self.dd_conta.label = "Conta de origem *" if self.state.eh_transferencia else "Conta *"
             self.btn_add_conta.tooltip = "Nova Conta"
             self.dd_conta.options = [
                 ft.dropdown.Option(key=str(c["id"]), text=c.get("nome", ""))
                 for c in self.contas
+                if c.get("id")
             ]
-            if not self.state.conta_id and self.contas:
-                self.state.conta_id = str(self.contas[0]["id"])
+            ids_contas = {str(c["id"]) for c in self.contas if c.get("id")}
+            if self.state.conta_id not in ids_contas:
+                self.state.conta_id = str(self.contas[0]["id"]) if self.contas else None
             self.dd_conta.value = self.state.conta_id
 
         # Conta de destino para Transferência
         self.dd_destino.options = [
             ft.dropdown.Option(key=str(c["id"]), text=c.get("nome", ""))
             for c in self.contas
+            if c.get("id")
         ]
-        if not self.state.destino_id and len(self.contas) > 1:
-            self.state.destino_id = str(self.contas[1]["id"])
+        ids_contas = {str(c["id"]) for c in self.contas if c.get("id")}
+        if self.state.destino_id not in ids_contas:
+            if len(self.contas) > 1:
+                # Escolhe uma conta diferente da conta de origem
+                for c in self.contas:
+                    cid = str(c["id"])
+                    if cid != self.state.conta_id:
+                        self.state.destino_id = cid
+                        break
+            elif self.contas:
+                self.state.destino_id = str(self.contas[0]["id"])
+            else:
+                self.state.destino_id = None
         self.dd_destino.value = self.state.destino_id
 
         self._safe_update(self.row_conta)
@@ -581,23 +718,29 @@ class LancamentoForm(ft.Column):
         self.dd_categoria.options = [
             ft.dropdown.Option(key=str(c["id"]), text=c.get("nome", ""))
             for c in self.categorias
+            if c.get("id")
         ]
-        if not self.state.categoria_id and self.categorias:
-            self.state.categoria_id = str(self.categorias[0]["id"])
+        ids_cats = {str(c["id"]) for c in self.categorias if c.get("id")}
+        if self.state.categoria_id not in ids_cats:
+            self.state.categoria_id = str(self.categorias[0]["id"]) if self.categorias else None
         self.dd_categoria.value = self.state.categoria_id
         self._safe_update(self.dd_categoria)
 
     def _atualizar_opcoes_subtipo(self):
-        if self.state.tipo == "Receita":
-            opcoes = ["Salário", "Investimento", "Freelance", "Renda Extra", "Vendas", "Outros"]
-        elif self.state.tipo == "Transferencia":
-            opcoes = ["Entre Contas", "Reserva", "Investimento", "Outros"]
+        if self.state.eh_receita:
+            opcoes = list(SUBTIPOS_RECEITA)
+        elif self.state.eh_transferencia:
+            opcoes = list(SUBTIPOS_TRANSFERENCIA)
         else:
-            opcoes = ["Despesa", "Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", "Educação", "DJ", "Outros"]
+            opcoes = list(SUBTIPOS_DESPESA)
+
+        if self.state.subtipo and self.state.subtipo not in opcoes:
+            opcoes.append(self.state.subtipo)
+
+        if not self.state.subtipo and opcoes:
+            self.state.subtipo = opcoes[0]
 
         self.dd_subtipo.options = [ft.dropdown.Option(key=op, text=op) for op in opcoes]
-        if self.state.subtipo and self.state.subtipo not in opcoes:
-            self.dd_subtipo.options.append(ft.dropdown.Option(key=self.state.subtipo, text=self.state.subtipo))
         self.dd_subtipo.value = self.state.subtipo
         self._safe_update(self.dd_subtipo)
 
@@ -628,24 +771,36 @@ class LancamentoForm(ft.Column):
     # HANDLERS DE EVENTOS REATIVOS
     # =========================================================================
     def _ao_mudar_tipo(self, e):
-        novo = list(e.control.selected)[0]
+        sel = e.control.selected
+        if isinstance(sel, (list, set, tuple)) and len(sel) > 0:
+            novo = list(sel)[0]
+        else:
+            novo = self.state.tipo
+        # Garante que e.control.selected seja sempre list[str] para o msgpack do Flet 1.0.1
+        e.control.selected = [novo]
+
         self.state.mudar_tipo(novo)
         self._atualizar_opcoes_forma()
         self._atualizar_opcoes_conta_ou_cartao()
+        self._atualizar_opcoes_categoria()
         self._atualizar_opcoes_subtipo()
+        if self.state.categoria_id:
+            self._carregar_subcategorias(self.state.categoria_id)
+        else:
+            self._carregar_subcategorias(None)
         self._sincronizar_estado_com_ui()
         self._safe_update(self)
         self._notificar_mudanca()
 
     def _ao_mudar_valor(self, e):
-        texto = e.control.value.replace("R$", "").strip().replace(".", "").replace(",", ".")
+        texto = (e.control.value or "").replace("R$", "").strip().replace(".", "").replace(",", ".")
         try:
             val = float(texto)
             self.state.valor = max(0.0, val)
         except ValueError:
             self.state.valor = 0.0
 
-        if self.state.tipo == "Despesa" and self.state.forma_movimentacao == "Credito":
+        if self.state.eh_credito:
             self._atualizar_resumo_parcelas()
         elif self.state.is_repetir:
             self._atualizar_resumo_repetir()
@@ -658,12 +813,16 @@ class LancamentoForm(ft.Column):
         self._notificar_mudanca()
 
     def _abrir_seletor_data(self, _):
+        # Restaura estado visual dos chips caso o usuário cancele o DatePicker
+        self._sincronizar_estado_com_ui()
+        self._safe_update(self.row_chips_data)
+
         def on_date_change(e):
             val = e.control.value
             if val:
                 if isinstance(val, str):
                     try:
-                        d = datetime.fromisoformat(val).date()
+                        d = datetime.fromisoformat(val[:10]).date()
                     except Exception:
                         d = date.today()
                 elif isinstance(val, datetime):
@@ -689,7 +848,7 @@ class LancamentoForm(ft.Column):
         self._notificar_mudanca()
 
     def _ao_mudar_forma(self, e):
-        nova_forma = e.control.value
+        nova_forma = e.data or e.control.value
         self.state.mudar_forma(nova_forma)
         self._atualizar_opcoes_conta_ou_cartao()
         self._sincronizar_estado_com_ui()
@@ -697,25 +856,48 @@ class LancamentoForm(ft.Column):
         self._notificar_mudanca()
 
     def _ao_mudar_conta(self, e):
-        is_credito = (self.state.tipo == "Despesa" and self.state.forma_movimentacao == "Credito")
-        if is_credito:
-            self.state.cartao_id = e.control.value
+        val = e.data or e.control.value
+        if self.state.eh_credito:
+            self.state.cartao_id = self._obter_cartao_id(val)
         else:
-            self.state.conta_id = e.control.value
+            self.state.conta_id = self._obter_conta_id(val)
+        self._notificar_mudanca()
+
+    def _ao_mudar_destino(self, e):
+        val = e.data or e.control.value
+        self.state.destino_id = self._obter_conta_id(val)
         self._notificar_mudanca()
 
     def _ao_mudar_parcelas(self, e):
+        val = e.data or e.control.value
         try:
-            self.state.quantidade = int(e.control.value)
+            self.state.quantidade = int(str(val).replace("x", "").strip())
         except ValueError:
             self.state.quantidade = 1
         self._atualizar_resumo_parcelas()
         self._notificar_mudanca()
 
     def _ao_mudar_categoria(self, e):
-        nova_cat = e.control.value
+        val = e.data or e.control.value
+        nova_cat = self._obter_cat_id(val)
         self.state.mudar_categoria(nova_cat)
+        self.dd_categoria.value = nova_cat
         self._carregar_subcategorias(nova_cat)
+        self._notificar_mudanca()
+
+    def _ao_mudar_subcategoria(self, e):
+        val = e.data or e.control.value
+        self.state.subcategoria_id = self._obter_subcat_id(val)
+        self._notificar_mudanca()
+
+    def _ao_mudar_subtipo(self, e):
+        val = e.data or e.control.value
+        self.state.subtipo = val
+        self._notificar_mudanca()
+
+    def _ao_mudar_regra(self, e):
+        val = e.data or e.control.value
+        self.state.regra = val
         self._notificar_mudanca()
 
     def _ao_mudar_hora(self, e):
@@ -741,7 +923,8 @@ class LancamentoForm(ft.Column):
         self._notificar_mudanca()
 
     def _ao_mudar_frequencia(self, e):
-        self.state.frequencia = e.control.value
+        val = e.data or e.control.value
+        self.state.frequencia = val or "mensal"
         if self.state.is_repetir:
             self._atualizar_resumo_repetir()
         self._notificar_mudanca()
@@ -758,10 +941,11 @@ class LancamentoForm(ft.Column):
     def _toggle_mais_detalhes(self, _):
         self.state.mais_detalhes_aberto = not self.state.mais_detalhes_aberto
         self.col_detalhes.visible = self.state.mais_detalhes_aberto
-        self.btn_toggle_detalhes.content.controls[0].value = (
+        self.lbl_toggle_detalhes.value = (
             "Menos detalhes" if self.state.mais_detalhes_aberto else "Mais detalhes"
         )
-        self.btn_toggle_detalhes.content.controls[1].name = (
+        # Flet 1.0.1: Icon usa propriedade .icon (NUNCA .name!)
+        self.ico_toggle_detalhes.icon = (
             ft.Icons.KEYBOARD_ARROW_UP_ROUNDED
             if self.state.mais_detalhes_aberto
             else ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED
@@ -770,9 +954,15 @@ class LancamentoForm(ft.Column):
         self._safe_update(self.col_detalhes)
 
     # =========================================================================
-    # MODAIS INLINE (+): Conta, Categoria, Subcategoria, Subtipo
+    # MODAIS INLINE (+): Conta/Cartão, Categoria, Subcategoria, Subtipo
     # =========================================================================
-    def _abrir_modal_nova_conta(self, _):
+    def _abrir_modal_nova_conta_ou_cartao(self, _):
+        if self.state.eh_credito:
+            self._abrir_modal_novo_cartao()
+        else:
+            self._abrir_modal_nova_conta(eh_destino=False)
+
+    def _abrir_modal_nova_conta(self, eh_destino: bool = False):
         txt_nome = ft.TextField(
             label="Nome da Conta *",
             hint_text="Ex: Nubank, Itaú, Carteira",
@@ -781,7 +971,7 @@ class LancamentoForm(ft.Column):
         )
 
         def salvar(_):
-            nome = txt_nome.value.strip()
+            nome = (txt_nome.value or "").strip()
             if not nome:
                 mostrar_feedback(self._page, "Informe o nome da conta.", "alerta")
                 return
@@ -790,11 +980,13 @@ class LancamentoForm(ft.Column):
                 modal.open = False
                 self._page.update()
                 self.contas = db.listar_contas()
-                self._atualizar_opcoes_conta_ou_cartao()
                 if res and res.data:
-                    self.state.conta_id = str(res.data[0]["id"])
-                    self.dd_conta.value = self.state.conta_id
-                    self._safe_update(self.dd_conta)
+                    novo_id = str(res.data[0]["id"])
+                    if eh_destino:
+                        self.state.destino_id = novo_id
+                    else:
+                        self.state.conta_id = novo_id
+                self._atualizar_opcoes_conta_ou_cartao()
                 mostrar_feedback(self._page, f"Conta '{nome}' criada!", "sucesso")
             except Exception as ex:
                 mostrar_feedback(self._page, f"Erro ao criar conta: {ex}", "erro")
@@ -809,6 +1001,58 @@ class LancamentoForm(ft.Column):
         )
         self._page.show_dialog(modal)
 
+    def _abrir_modal_novo_cartao(self):
+        txt_nome = ft.TextField(
+            label="Nome do Cartão *",
+            hint_text="Ex: Nubank Ultravioleta, Inter...",
+            autofocus=True,
+            **T.campo_estilo(),
+        )
+        txt_limite = ft.TextField(
+            label="Limite Total (R$)",
+            value="5000",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            **T.campo_estilo(),
+        )
+
+        def salvar(_):
+            nome = (txt_nome.value or "").strip()
+            if not nome:
+                mostrar_feedback(self._page, "Informe o nome do cartão.", "alerta")
+                return
+            try:
+                lim = float((txt_limite.value or "0").replace(".", "").replace(",", "."))
+            except ValueError:
+                lim = 0.0
+            try:
+                res = db.criar_cartao({
+                    "nome": nome,
+                    "bandeira": "Mastercard",
+                    "cor": T.PRIMARY,
+                    "limite_total": lim,
+                    "dia_fechamento": 1,
+                    "dia_vencimento": 10,
+                })
+                modal.open = False
+                self._page.update()
+                self.cartoes = db.listar_cartoes()
+                if res and res.data:
+                    self.state.cartao_id = str(res.data[0]["id"])
+                self._atualizar_opcoes_conta_ou_cartao()
+                mostrar_feedback(self._page, f"Cartão '{nome}' criado!", "sucesso")
+            except Exception as ex:
+                mostrar_feedback(self._page, f"Erro ao criar cartão: {ex}", "erro")
+
+        modal = ft.AlertDialog(
+            title=ft.Text("Novo Cartão de Crédito", weight=ft.FontWeight.BOLD),
+            content=ft.Column([txt_nome, txt_limite], tight=True, spacing=10),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: (setattr(modal, "open", False), self._page.update())),
+                ft.FilledButton("Criar Cartão", style=ft.ButtonStyle(bgcolor=T.PRIMARY), on_click=salvar),
+            ],
+        )
+        self._page.show_dialog(modal)
+
     def _abrir_modal_nova_categoria(self, _):
         txt_nome = ft.TextField(
             label="Nome da Categoria Universal *",
@@ -818,7 +1062,7 @@ class LancamentoForm(ft.Column):
         )
 
         def salvar(_):
-            nome = txt_nome.value.strip()
+            nome = (txt_nome.value or "").strip()
             if not nome:
                 mostrar_feedback(self._page, "Informe o nome da categoria.", "alerta")
                 return
@@ -827,12 +1071,11 @@ class LancamentoForm(ft.Column):
                 modal.open = False
                 self._page.update()
                 self.categorias = db.listar_categorias()
-                self._atualizar_opcoes_categoria()
                 if res and res.data:
                     self.state.categoria_id = str(res.data[0]["id"])
-                    self.dd_categoria.value = self.state.categoria_id
+                self._atualizar_opcoes_categoria()
+                if self.state.categoria_id:
                     self._carregar_subcategorias(self.state.categoria_id)
-                    self._safe_update(self.dd_categoria)
                 mostrar_feedback(self._page, f"Categoria '{nome}' criada!", "sucesso")
             except Exception as ex:
                 mostrar_feedback(self._page, f"Erro ao criar categoria: {ex}", "erro")
@@ -848,7 +1091,8 @@ class LancamentoForm(ft.Column):
         self._page.show_dialog(modal)
 
     def _abrir_modal_nova_subcategoria(self, _):
-        if not self.state.categoria_id:
+        cat_uuid = self._obter_cat_id(self.state.categoria_id)
+        if not cat_uuid:
             mostrar_feedback(self._page, "Selecione uma categoria primeiro.", "alerta")
             return
 
@@ -860,19 +1104,17 @@ class LancamentoForm(ft.Column):
         )
 
         def salvar(_):
-            nome = txt_nome.value.strip()
+            nome = (txt_nome.value or "").strip()
             if not nome:
                 mostrar_feedback(self._page, "Informe o nome da subcategoria.", "alerta")
                 return
             try:
-                res = db.criar_subcategoria({"nome": nome, "categoria_id": self.state.categoria_id})
+                res = db.criar_subcategoria(cat_uuid, nome)
                 modal.open = False
                 self._page.update()
-                self._carregar_subcategorias(self.state.categoria_id)
                 if res and res.data:
                     self.state.subcategoria_id = str(res.data[0]["id"])
-                    self.dd_subcategoria.value = self.state.subcategoria_id
-                    self._safe_update(self.dd_subcategoria)
+                self._carregar_subcategorias(cat_uuid)
                 mostrar_feedback(self._page, f"Subcategoria '{nome}' criada!", "sucesso")
             except Exception as ex:
                 mostrar_feedback(self._page, f"Erro ao criar subcategoria: {ex}", "erro")
@@ -896,14 +1138,12 @@ class LancamentoForm(ft.Column):
         )
 
         def salvar(_):
-            nome = txt_nome.value.strip()
+            nome = (txt_nome.value or "").strip()
             if not nome:
                 mostrar_feedback(self._page, "Informe o subtipo.", "alerta")
                 return
             self.state.subtipo = nome
-            self.dd_subtipo.options.append(ft.dropdown.Option(key=nome, text=nome))
-            self.dd_subtipo.value = nome
-            self._safe_update(self.dd_subtipo)
+            self._atualizar_opcoes_subtipo()
             modal.open = False
             self._page.update()
             mostrar_feedback(self._page, f"Subtipo '{nome}' selecionado!", "sucesso")

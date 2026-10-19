@@ -183,17 +183,9 @@ def configurar_rotas(page: ft.Page):
             page.update()
             return
 
-        # Views empilhadas (back possível)
-        _VIEWS_EMPILHADAS = {ROTA_LANCAMENTO}
-        if rota in _VIEWS_EMPILHADAS:
-            # Garante que o dashboard está como base
-            if not any(v.route == ROTA_DASHBOARD for v in page.views):
-                page.views.insert(0, criar_view_dashboard(page))
-            page.views.append(_view_para_rota(rota))
-        else:
-            # Views de nível raiz: substitui tudo
-            page.views.clear()
-            page.views.append(_view_para_rota(rota))
+        # Views de nível raiz: substitui tudo
+        page.views.clear()
+        page.views.append(_view_para_rota(rota))
 
         page.update()
 

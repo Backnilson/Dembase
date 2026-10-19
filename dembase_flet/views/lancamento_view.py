@@ -25,11 +25,12 @@ def criar_view_lancamento(page: ft.Page) -> ft.View:
     session_remove(page, "edit_lancamento_dados")
     session_remove(page, "edit_lancamento_id")
 
-    # Dispara a abertura do modal moderno
+    view_dash = criar_view_dashboard(page)
+
     abrir_lancamento(
         page,
         lancamento=lanc,
         on_saved=lambda: navegar(page, ROTA_DASHBOARD),
     )
 
-    return criar_view_dashboard(page)
+    return view_dash

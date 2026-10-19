@@ -12,6 +12,7 @@ from core.theme import pad, borda, mostrar_feedback
 from core.constants import formatar_moeda, formatar_data_br, hoje, inicio_mes_atual
 from core.router import ROTA_LANCAMENTO, navegar
 from views.widgets.date_filter import DateFilterBar
+from views.widgets.lancamento_sheet import abrir_lancamento
 from views.shell_view import criar_shell, ROTA_CALENDARIO
 import services.supabase_client as db
 
@@ -350,7 +351,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                                         ft.Text("Novo Lançamento", color=ft.Colors.WHITE, size=13, weight=ft.FontWeight.W_600),
                                     ],
                                 ),
-                                on_click=lambda _: navegar(page, ROTA_LANCAMENTO),
+                                on_click=lambda _: abrir_lancamento(page, on_saved=carregar_dados),
                                 style=ft.ButtonStyle(
                                     bgcolor=T.PRIMARY,
                                     shape=ft.RoundedRectangleBorder(radius=8),
@@ -601,7 +602,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                         ft.Text("Novo Lançamento", color=ft.Colors.WHITE, size=13, weight=ft.FontWeight.W_600),
                     ],
                 ),
-                on_click=lambda _: navegar(page, ROTA_LANCAMENTO),
+                on_click=lambda _: abrir_lancamento(page, on_saved=carregar_dados),
                 style=ft.ButtonStyle(
                     bgcolor=T.PRIMARY,
                     overlay_color=T.PRIMARY_DARK,

@@ -7,9 +7,33 @@ Sem dependências de UI (Flet), 100% testável via terminal.
 """
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional, Tuple
+
+
+def _norm(texto: Optional[str]) -> str:
+    if not texto:
+        return ""
+    nfkd = unicodedata.normalize("NFKD", str(texto))
+    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+
+
+def is_credito_str(forma: Optional[str]) -> bool:
+    return "cred" in _norm(forma)
+
+
+def is_transferencia_str(tipo: Optional[str]) -> bool:
+    return "trans" in _norm(tipo)
+
+
+def is_despesa_str(tipo: Optional[str]) -> bool:
+    return "desp" in _norm(tipo)
+
+
+def is_receita_str(tipo: Optional[str]) -> bool:
+    return "rec" in _norm(tipo)
 
 
 @dataclass
@@ -39,9 +63,33 @@ class LancamentoFormState:
     recorrente_id: Optional[str] = None
 
     def __post_init__(self):
+        # Normaliza tipo para evitar divergências ("Transferência" -> "Transferencia")
+        if is_transferencia_str(self.tipo):
+            self.tipo = "Transferencia"
+        elif is_receita_str(self.tipo):
+            self.tipo = "Receita"
+        else:
+            self.tipo = "Despesa"
+
         # Se for inicializado com data futura e status_manual=False, ajusta status para Pendente
         if not self.status_manual and self.data_selecionada > date.today():
             self.status_pago = False
+
+    @property
+    def eh_credito(self) -> bool:
+        return is_despesa_str(self.tipo) and is_credito_str(self.forma_movimentacao)
+
+    @property
+    def eh_transferencia(self) -> bool:
+        return is_transferencia_str(self.tipo)
+
+    @property
+    def eh_despesa(self) -> bool:
+        return is_despesa_str(self.tipo)
+
+    @property
+    def eh_receita(self) -> bool:
+        return is_receita_str(self.tipo)
 
     def atualizar_data(self, nova_data: date):
         self.data_selecionada = nova_data
@@ -54,29 +102,35 @@ class LancamentoFormState:
         self.status_manual = True
 
     def mudar_tipo(self, novo_tipo: str):
-        self.tipo = novo_tipo
+        if is_transferencia_str(novo_tipo):
+            self.tipo = "Transferencia"
+        elif is_receita_str(novo_tipo):
+            self.tipo = "Receita"
+        else:
+            self.tipo = "Despesa"
+
         self.subtipo = None
         self.categoria_id = None
         self.subcategoria_id = None
 
-        if self.tipo == "Transferencia":
+        if self.eh_transferencia:
             self.regra = None
             self.is_fixa = False
             self.is_repetir = False
             self.status_pago = True
-            if self.forma_movimentacao == "Credito":
+            if is_credito_str(self.forma_movimentacao):
                 self.forma_movimentacao = "Pix"
-        elif self.tipo == "Receita":
+        elif self.eh_receita:
             self.regra = None
-            if self.forma_movimentacao == "Credito":
+            if is_credito_str(self.forma_movimentacao):
                 self.forma_movimentacao = "Pix"
-        elif self.tipo == "Despesa":
+        elif self.eh_despesa:
             if not self.regra:
                 self.regra = "Essencial"
 
     def mudar_forma(self, nova_forma: str):
         self.forma_movimentacao = nova_forma
-        if nova_forma == "Credito":
+        if is_credito_str(nova_forma):
             # Decisão 2: Crédito só tem Parcelado, sem Fixa/Repetir
             self.is_fixa = False
             self.is_repetir = False
@@ -105,9 +159,9 @@ class LancamentoFormState:
 
     def modo_recorrencia(self) -> str:
         """Determina o modo a ser gravado no banco."""
-        if self.tipo == "Transferencia":
+        if self.eh_transferencia:
             return "unica"
-        if self.tipo == "Despesa" and self.forma_movimentacao == "Credito":
+        if self.eh_credito:
             return "parcelada" if self.quantidade > 1 else "unica"
         if self.is_fixa:
             return "fixa"
@@ -120,7 +174,7 @@ class LancamentoFormState:
         if self.valor <= 0:
             return False, "Informe um valor maior que zero."
 
-        if self.tipo == "Transferencia":
+        if self.eh_transferencia:
             if not self.conta_id:
                 return False, "Selecione a conta de origem."
             if not self.destino_id:
@@ -129,7 +183,7 @@ class LancamentoFormState:
                 return False, "A conta de origem e destino não podem ser iguais."
             return True, None
 
-        if self.tipo == "Despesa" and self.forma_movimentacao == "Credito":
+        if self.eh_credito:
             if not self.cartao_id:
                 return False, "Selecione o cartão de crédito."
             if not self.categoria_id:
@@ -144,7 +198,7 @@ class LancamentoFormState:
         if not self.categoria_id:
             return False, "Selecione uma categoria."
 
-        if self.tipo == "Despesa" and not self.regra:
+        if self.eh_despesa and not self.regra:
             return False, "Classifique a despesa na regra 50/30/20."
 
         if self.is_repetir and self.quantidade < 2:

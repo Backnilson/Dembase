@@ -291,11 +291,20 @@ BEGIN
     v_data_inicio := (p_dados->>'data')::date;
     v_valor_total := (p_dados->>'valor')::numeric;
 
+    -- Se houver destino_id (Transferência entre contas), garante espelhamento na tabela destinos
+    IF v_destino_id IS NOT NULL THEN
+        INSERT INTO public.destinos (id, perfil_id, user_id, nome, ativo)
+        SELECT c.id, COALESCE(c.perfil_id, v_perfil_id), COALESCE(c.user_id, v_user_id), c.nome, TRUE
+        FROM public.contas c
+        WHERE c.id = v_destino_id
+        ON CONFLICT (id) DO UPDATE SET nome = EXCLUDED.nome;
+    END IF;
+
     -- =========================================================================
     -- MODO ÚNICA
     -- =========================================================================
     IF p_modo = 'unica' OR (v_qtd <= 1 AND p_modo != 'fixa') THEN
-        IF v_forma = 'Credito' AND v_cartao_id IS NOT NULL THEN
+        IF v_forma IN ('Credito', 'Crédito') AND v_cartao_id IS NOT NULL THEN
             v_fatura_id := fn_obter_ou_criar_fatura_para_compra(v_cartao_id, v_user_id, v_data_inicio);
         END IF;
 
@@ -481,7 +490,8 @@ BEGIN
                 rec.user_id, rec.tipo, rec.subtipo, rec.forma_movimentacao,
                 rec.conta_id, rec.cartao_id, rec.categoria_id, rec.subcategoria_id,
                 rec.valor, v_dt, rec.hora, rec.descricao,
-                COALESCE(rec.status_padrao, 'Pendente')::status_lancamento, rec.regra::tipo_regra,
+                COALESCE(rec.status_padrao, 'Pendente')::status_lancamento,
+                CASE WHEN rec.regra IS NOT NULL AND rec.regra <> '' THEN rec.regra::regra_financeira ELSE NULL END,
                 rec.id, 'fixa'
             )
             ON CONFLICT (recorrente_id, data) DO NOTHING;
@@ -522,14 +532,14 @@ BEGIN
     UPDATE public.lancamentos
     SET
         descricao = COALESCE(p_dados->>'descricao', descricao),
-        categoria_id = CASE WHEN p_dados ? 'categoria_id' THEN (p_dados->>'categoria_id')::uuid ELSE categoria_id END,
+        categoria_id = CASE WHEN p_dados ? 'categoria_id' AND p_dados->>'categoria_id' IS NOT NULL THEN (p_dados->>'categoria_id')::uuid ELSE categoria_id END,
         subcategoria_id = CASE WHEN p_dados ? 'subcategoria_id' THEN (p_dados->>'subcategoria_id')::uuid ELSE subcategoria_id END,
         conta_id = CASE WHEN p_dados ? 'conta_id' THEN (p_dados->>'conta_id')::uuid ELSE conta_id END,
         cartao_id = CASE WHEN p_dados ? 'cartao_id' THEN (p_dados->>'cartao_id')::uuid ELSE cartao_id END,
         forma_movimentacao = COALESCE(p_dados->>'forma_movimentacao', forma_movimentacao),
         subtipo = COALESCE(p_dados->>'subtipo', subtipo),
-        regra = CASE WHEN p_dados ? 'regra' THEN (p_dados->>'regra')::tipo_regra ELSE regra END,
-        valor = CASE WHEN p_dados ? 'valor' THEN (p_dados->>'valor')::numeric ELSE valor END,
+        regra = CASE WHEN p_dados ? 'regra' AND p_dados->>'regra' IS NOT NULL AND p_dados->>'regra' <> '' THEN (p_dados->>'regra')::regra_financeira ELSE regra END,
+        valor = CASE WHEN p_dados ? 'valor' AND p_dados->>'valor' IS NOT NULL THEN (p_dados->>'valor')::numeric ELSE valor END,
         atualizado_em = NOW()
     WHERE serie_id = p_serie_id
       AND (p_a_partir_de IS NULL OR data >= p_a_partir_de);

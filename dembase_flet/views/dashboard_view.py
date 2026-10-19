@@ -12,6 +12,7 @@ from core.constants import FRASES_MOTIVACIONAIS, formatar_moeda, inicio_mes_atua
 from core.router import ROTA_LANCAMENTO, navegar
 from views.widgets.kpi_card import kpi_card
 from views.widgets.regra_5030 import secao_regra_5030
+from views.widgets.lancamento_sheet import abrir_lancamento
 from views.shell_view import criar_shell, ROTA_DASHBOARD
 import services.supabase_client as db
 from datetime import date
@@ -148,7 +149,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                                 ft.Text("Novo Lançamento", color=T.ON_PRIMARY, size=13, weight=ft.FontWeight.W_600),
                             ],
                         ),
-                        on_click=lambda _: navegar(page, ROTA_LANCAMENTO),
+                        on_click=lambda _: abrir_lancamento(page, on_saved=lambda: carregar(inicial=False)),
                         expand=True,
                         style=ft.ButtonStyle(
                             bgcolor=T.PRIMARY, overlay_color=T.PRIMARY_DARK,

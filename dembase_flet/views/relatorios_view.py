@@ -1087,7 +1087,10 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
                                         shape=ft.RoundedRectangleBorder(radius=8),
                                         padding=pad(h=14, v=8),
                                     ),
-                                    on_click=lambda _: navegar(page, ROTA_LANCAMENTO),
+                                    on_click=lambda _: abrir_lancamento(
+                                        page,
+                                        on_saved=lambda: (carregar_todos_lancamentos(forcar=True), carregar_dados()),
+                                    ),
                                 ),
                             ],
                         ),
