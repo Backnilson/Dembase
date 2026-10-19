@@ -222,3 +222,65 @@ def obter_preferencia_tema_memoria(page: ft.Page) -> str:
         return str(val)
     local = _ler_local_json()
     return local.get("preferencia_tema", "system")
+
+
+# =============================================================================
+# PREFERÊNCIAS DE GRÁFICOS DO DASHBOARD
+# =============================================================================
+def obter_graficos_dashboard_memoria(page: ft.Page, padrao: list[str]) -> list[str]:
+    """Retorna a lista ordenada de IDs de gráficos ativos para o Dashboard."""
+    val_sess = session_get(page, "graficos_dashboard")
+    if isinstance(val_sess, list) and val_sess:
+        return list(val_sess)
+    local = _ler_local_json()
+    val_local = local.get("graficos_dashboard")
+    if isinstance(val_local, list) and val_local:
+        session_set(page, "graficos_dashboard", val_local)
+        return list(val_local)
+    return list(padrao)
+
+
+def salvar_graficos_dashboard_sync(page: ft.Page, ids: list[str]) -> None:
+    """Salva de forma síncrona a lista de IDs de gráficos ativos na sessão e em disco."""
+    lista = list(ids)
+    session_set(page, "graficos_dashboard", lista)
+    dados = _ler_local_json()
+    dados["graficos_dashboard"] = lista
+    _salvar_local_json(dados)
+
+
+async def salvar_graficos_dashboard(page: ft.Page, ids: list[str]) -> None:
+    """Salva também no SharedPreferences quando disponível."""
+    salvar_graficos_dashboard_sync(page, ids)
+    sp = _obter_sp(page)
+    if sp:
+        try:
+            await sp.set("graficos_dashboard", json.dumps(list(ids)))
+        except Exception:
+            pass
+
+
+# =============================================================================
+# ESTADO GLOBAL DO FILTRO DE PERÍODO FLEXÍVEL
+# =============================================================================
+def obter_dia_ciclo_padrao(page: ft.Page) -> int:
+    """Retorna o dia inicial do ciclo financeiro personalizado (ex: dia 20)."""
+    val = session_get(page, "dia_ciclo_financeiro")
+    if isinstance(val, int) and 1 <= val <= 28:
+        return val
+    local = _ler_local_json()
+    dia_local = local.get("dia_ciclo_financeiro")
+    if isinstance(dia_local, int) and 1 <= dia_local <= 28:
+        session_set(page, "dia_ciclo_financeiro", dia_local)
+        return dia_local
+    return 20
+
+
+def salvar_dia_ciclo_padrao(page: ft.Page, dia: int) -> None:
+    """Persiste o dia inicial do ciclo financeiro (1 a 28)."""
+    d = max(1, min(28, int(dia)))
+    session_set(page, "dia_ciclo_financeiro", d)
+    dados = _ler_local_json()
+    dados["dia_ciclo_financeiro"] = d
+    _salvar_local_json(dados)
+

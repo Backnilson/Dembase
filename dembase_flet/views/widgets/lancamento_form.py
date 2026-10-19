@@ -23,10 +23,10 @@ from core.constants import (
     SUBTIPOS_DESPESA,
     SUBTIPOS_TRANSFERENCIA,
 )
-from core.lancamento_state import LancamentoFormState, is_credito_str
+from core.lancamento_state import LancamentoFormState
 from core.recorrencia import resumo_parcelas
 import core.theme as T
-from core.theme import pad, borda, mostrar_feedback
+from core.theme import pad, mostrar_feedback
 import services.supabase_client as db
 
 
@@ -75,7 +75,6 @@ class LancamentoForm(ft.Column):
         state: LancamentoFormState,
         on_state_change: Optional[Callable[[], None]] = None,
     ):
-        super().__init__(spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
         self._page = page
         self.state = state
         self.on_state_change = on_state_change
@@ -86,15 +85,37 @@ class LancamentoForm(ft.Column):
         self.categorias: list[dict] = []
         self.subcategorias: list[dict] = []
 
-        # Inicialização dos Controles
-        self._construir_controles()
+        # 1. Constrói os controles filhos antes do super().__init__ (padrão dataclass Flet 1.0.1)
+        controles_iniciais = self._construir_controles()
+        super().__init__(
+            spacing=14,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            controls=controles_iniciais,
+        )
+
+        # 2. Carrega dados do banco e sincroniza estado inicial
         self._carregar_dados_iniciais()
         self._sincronizar_estado_com_ui()
 
-    def _safe_update(self, ctrl: ft.Control):
-        try:
-            if getattr(ctrl, "page", None) is not None:
+        # Limpa _dirty pós-construção para que o diff incremental do Flet 1.0.1 parta de base limpa
+        if hasattr(self, "_dirty"):
+            self._dirty.clear()
+
+    def _safe_update(self, ctrl: Optional[ft.Control] = None):
+        """Atualiza o controle específico e a página com segurança no Flet 1.0.1."""
+        if ctrl is not None:
+            try:
                 ctrl.update()
+            except Exception:
+                pass
+        try:
+            self.update()
+        except Exception:
+            pass
+        try:
+            if self._page is not None:
+                self._page.update()
         except Exception:
             pass
 
@@ -152,7 +173,7 @@ class LancamentoForm(ft.Column):
     # =========================================================================
     # CONSTRUÇÃO DOS CONTROLES
     # =========================================================================
-    def _construir_controles(self):
+    def _construir_controles(self) -> list[ft.Control]:
         # 1. Seletor de Tipo (SegmentedButton — Flet 1.0.1 exige selected como list[str], NUNCA set!)
         self.btn_tipo = ft.SegmentedButton(
             selected=[self.state.tipo],
@@ -462,6 +483,7 @@ class LancamentoForm(ft.Column):
         )
 
         self.col_detalhes = ft.Column(
+            key="sec_detalhes",
             controls=[
                 self.row_subcategoria,
                 self.row_subtipo,
@@ -495,13 +517,13 @@ class LancamentoForm(ft.Column):
                     self.ico_toggle_detalhes,
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
+                tight=True,
                 spacing=4,
             ),
             on_click=self._toggle_mais_detalhes,
         )
 
-        # Montagem do Layout Principal
-        self.controls = [
+        return [
             self.btn_tipo,
             self.txt_valor,
             ft.Row(
@@ -516,7 +538,7 @@ class LancamentoForm(ft.Column):
             self.row_parcelas,
             self.row_categoria,
             ft.Divider(height=1, color=T.BORDER),
-            self.btn_toggle_detalhes,
+            ft.Row([self.btn_toggle_detalhes], alignment=ft.MainAxisAlignment.CENTER),
             self.col_detalhes,
         ]
 
@@ -531,21 +553,22 @@ class LancamentoForm(ft.Column):
         except Exception as ex:
             mostrar_feedback(self._page, f"Erro ao obter dados: {ex}", "erro")
 
-        self._atualizar_opcoes_forma()
-        self._atualizar_opcoes_conta_ou_cartao()
-        self._atualizar_opcoes_categoria()
-        self._atualizar_opcoes_subtipo()
+        self._atualizar_opcoes_forma(atualizar_ui=False)
+        self._atualizar_opcoes_conta_ou_cartao(atualizar_ui=False)
+        self._atualizar_opcoes_categoria(atualizar_ui=False)
+        self._atualizar_opcoes_subtipo(atualizar_ui=False)
 
         if self.state.categoria_id:
-            self._carregar_subcategorias(self.state.categoria_id)
+            self._carregar_subcategorias(self.state.categoria_id, atualizar_ui=False)
 
-    def _carregar_subcategorias(self, cat_id: Optional[str]):
+    def _carregar_subcategorias(self, cat_id: Optional[str], atualizar_ui: bool = True):
         cat_uuid = self._obter_cat_id(cat_id)
         if not cat_uuid:
             self.subcategorias = []
             self.dd_subcategoria.options = []
             self.dd_subcategoria.value = None
-            self._safe_update(self.dd_subcategoria)
+            if atualizar_ui:
+                self._safe_update(self.dd_subcategoria)
             return
 
         try:
@@ -555,17 +578,18 @@ class LancamentoForm(ft.Column):
                 for s in self.subcategorias
                 if s.get("id")
             ]
-            # Garante que subcategoria_id pertence às opções carregadas
             ids_validos = {str(s["id"]) for s in self.subcategorias if s.get("id")}
             if self.state.subcategoria_id not in ids_validos:
                 self.state.subcategoria_id = None
             self.dd_subcategoria.value = self.state.subcategoria_id
-            self._safe_update(self.dd_subcategoria)
+            if atualizar_ui:
+                self._safe_update(self.dd_subcategoria)
         except Exception:
             self.subcategorias = []
             self.dd_subcategoria.options = []
             self.dd_subcategoria.value = None
-            self._safe_update(self.dd_subcategoria)
+            if atualizar_ui:
+                self._safe_update(self.dd_subcategoria)
 
     # =========================================================================
     # SINCRONIZAÇÃO E ATUALIZAÇÃO DA UI
@@ -631,14 +655,14 @@ class LancamentoForm(ft.Column):
         elif self.state.is_repetir:
             self.col_opcoes_recorrencia.visible = True
             self.txt_repetir_qtd.visible = True
-            self._atualizar_resumo_repetir()
+            self._atualizar_resumo_repetir(atualizar_ui=False)
         else:
             self.col_opcoes_recorrencia.visible = False
 
         if is_credito:
-            self._atualizar_resumo_parcelas()
+            self._atualizar_resumo_parcelas(atualizar_ui=False)
 
-    def _atualizar_opcoes_forma(self):
+    def _atualizar_opcoes_forma(self, atualizar_ui: bool = True):
         if self.state.eh_receita:
             opcoes = list(FORMAS_RECEITA)
         elif self.state.eh_transferencia:
@@ -646,7 +670,6 @@ class LancamentoForm(ft.Column):
         else:  # Despesa
             opcoes = list(FORMAS_DESPESA)
 
-        # Normaliza forma caso venha do banco sem acento ("Credito" -> "Crédito", "Debito" -> "Débito")
         forma_atual_norm = _norm(self.state.forma_movimentacao)
         forma_encontrada = None
         for op in opcoes:
@@ -661,9 +684,10 @@ class LancamentoForm(ft.Column):
 
         self.dd_forma.options = [ft.dropdown.Option(key=op, text=op) for op in opcoes]
         self.dd_forma.value = self.state.forma_movimentacao
-        self._safe_update(self.dd_forma)
+        if atualizar_ui:
+            self._safe_update(self.dd_forma)
 
-    def _atualizar_opcoes_conta_ou_cartao(self):
+    def _atualizar_opcoes_conta_ou_cartao(self, atualizar_ui: bool = True):
         is_credito = self.state.eh_credito
         if is_credito:
             self.dd_conta.label = "Cartão de crédito *"
@@ -699,7 +723,6 @@ class LancamentoForm(ft.Column):
         ids_contas = {str(c["id"]) for c in self.contas if c.get("id")}
         if self.state.destino_id not in ids_contas:
             if len(self.contas) > 1:
-                # Escolhe uma conta diferente da conta de origem
                 for c in self.contas:
                     cid = str(c["id"])
                     if cid != self.state.conta_id:
@@ -711,10 +734,11 @@ class LancamentoForm(ft.Column):
                 self.state.destino_id = None
         self.dd_destino.value = self.state.destino_id
 
-        self._safe_update(self.row_conta)
-        self._safe_update(self.row_destino)
+        if atualizar_ui:
+            self._safe_update(self.row_conta)
+            self._safe_update(self.row_destino)
 
-    def _atualizar_opcoes_categoria(self):
+    def _atualizar_opcoes_categoria(self, atualizar_ui: bool = True):
         self.dd_categoria.options = [
             ft.dropdown.Option(key=str(c["id"]), text=c.get("nome", ""))
             for c in self.categorias
@@ -724,9 +748,10 @@ class LancamentoForm(ft.Column):
         if self.state.categoria_id not in ids_cats:
             self.state.categoria_id = str(self.categorias[0]["id"]) if self.categorias else None
         self.dd_categoria.value = self.state.categoria_id
-        self._safe_update(self.dd_categoria)
+        if atualizar_ui:
+            self._safe_update(self.dd_categoria)
 
-    def _atualizar_opcoes_subtipo(self):
+    def _atualizar_opcoes_subtipo(self, atualizar_ui: bool = True):
         if self.state.eh_receita:
             opcoes = list(SUBTIPOS_RECEITA)
         elif self.state.eh_transferencia:
@@ -742,9 +767,10 @@ class LancamentoForm(ft.Column):
 
         self.dd_subtipo.options = [ft.dropdown.Option(key=op, text=op) for op in opcoes]
         self.dd_subtipo.value = self.state.subtipo
-        self._safe_update(self.dd_subtipo)
+        if atualizar_ui:
+            self._safe_update(self.dd_subtipo)
 
-    def _atualizar_resumo_parcelas(self):
+    def _atualizar_resumo_parcelas(self, atualizar_ui: bool = True):
         res = resumo_parcelas(
             self.state.valor,
             self.state.quantidade,
@@ -753,9 +779,10 @@ class LancamentoForm(ft.Column):
             data_inicio=self.state.data_selecionada,
         )
         self.lbl_resumo_parcelas.value = res
-        self._safe_update(self.lbl_resumo_parcelas)
+        if atualizar_ui:
+            self._safe_update(self.lbl_resumo_parcelas)
 
-    def _atualizar_resumo_repetir(self):
+    def _atualizar_resumo_repetir(self, atualizar_ui: bool = True):
         res = resumo_parcelas(
             self.state.valor,
             self.state.quantidade,
@@ -765,7 +792,8 @@ class LancamentoForm(ft.Column):
         )
         self.lbl_resumo_repetir.value = res
         self.lbl_resumo_repetir.color = T.PRIMARY
-        self._safe_update(self.lbl_resumo_repetir)
+        if atualizar_ui:
+            self._safe_update(self.lbl_resumo_repetir)
 
     # =========================================================================
     # HANDLERS DE EVENTOS REATIVOS
@@ -780,14 +808,14 @@ class LancamentoForm(ft.Column):
         e.control.selected = [novo]
 
         self.state.mudar_tipo(novo)
-        self._atualizar_opcoes_forma()
-        self._atualizar_opcoes_conta_ou_cartao()
-        self._atualizar_opcoes_categoria()
-        self._atualizar_opcoes_subtipo()
+        self._atualizar_opcoes_forma(atualizar_ui=False)
+        self._atualizar_opcoes_conta_ou_cartao(atualizar_ui=False)
+        self._atualizar_opcoes_categoria(atualizar_ui=False)
+        self._atualizar_opcoes_subtipo(atualizar_ui=False)
         if self.state.categoria_id:
-            self._carregar_subcategorias(self.state.categoria_id)
+            self._carregar_subcategorias(self.state.categoria_id, atualizar_ui=False)
         else:
-            self._carregar_subcategorias(None)
+            self._carregar_subcategorias(None, atualizar_ui=False)
         self._sincronizar_estado_com_ui()
         self._safe_update(self)
         self._notificar_mudanca()
@@ -850,7 +878,7 @@ class LancamentoForm(ft.Column):
     def _ao_mudar_forma(self, e):
         nova_forma = e.data or e.control.value
         self.state.mudar_forma(nova_forma)
-        self._atualizar_opcoes_conta_ou_cartao()
+        self._atualizar_opcoes_conta_ou_cartao(atualizar_ui=False)
         self._sincronizar_estado_com_ui()
         self._safe_update(self)
         self._notificar_mudanca()
@@ -938,24 +966,55 @@ class LancamentoForm(ft.Column):
         self._atualizar_resumo_repetir()
         self._notificar_mudanca()
 
+    async def _rolar_para_detalhes(self):
+        try:
+            await self.scroll_to(offset=-1, duration=280)
+        except Exception:
+            pass
+
     def _toggle_mais_detalhes(self, _):
         self.state.mais_detalhes_aberto = not self.state.mais_detalhes_aberto
-        self.col_detalhes.visible = self.state.mais_detalhes_aberto
-        self.lbl_toggle_detalhes.value = (
-            "Menos detalhes" if self.state.mais_detalhes_aberto else "Mais detalhes"
-        )
+        aberto = self.state.mais_detalhes_aberto
+
+        self.col_detalhes.visible = aberto
+        self.lbl_toggle_detalhes.value = "Menos detalhes" if aberto else "Mais detalhes"
         # Flet 1.0.1: Icon usa propriedade .icon (NUNCA .name!)
         self.ico_toggle_detalhes.icon = (
             ft.Icons.KEYBOARD_ARROW_UP_ROUNDED
-            if self.state.mais_detalhes_aberto
+            if aberto
             else ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED
         )
+
         self._safe_update(self.btn_toggle_detalhes)
         self._safe_update(self.col_detalhes)
+        self._notificar_mudanca()
+
+        # Ao expandir, rola suavemente para exibir os novos controles
+        if aberto and hasattr(self._page, "run_task"):
+            try:
+                self._page.run_task(self._rolar_para_detalhes)
+            except Exception:
+                pass
 
     # =========================================================================
     # MODAIS INLINE (+): Conta/Cartão, Categoria, Subcategoria, Subtipo
     # =========================================================================
+    def _fechar_submodal(self, modal: ft.AlertDialog):
+        try:
+            self._page.pop_dialog()
+        except Exception:
+            pass
+        if getattr(modal, "open", False):
+            modal.open = False
+            try:
+                modal.update()
+            except Exception:
+                pass
+        try:
+            self._page.update()
+        except Exception:
+            pass
+
     def _abrir_modal_nova_conta_ou_cartao(self, _):
         if self.state.eh_credito:
             self._abrir_modal_novo_cartao()
@@ -977,8 +1036,7 @@ class LancamentoForm(ft.Column):
                 return
             try:
                 res = db.criar_conta({"nome": nome, "tipo": "corrente", "cor": T.PRIMARY})
-                modal.open = False
-                self._page.update()
+                self._fechar_submodal(modal)
                 self.contas = db.listar_contas()
                 if res and res.data:
                     novo_id = str(res.data[0]["id"])
@@ -995,7 +1053,7 @@ class LancamentoForm(ft.Column):
             title=ft.Text("Nova Conta", weight=ft.FontWeight.BOLD),
             content=ft.Column([txt_nome], tight=True, spacing=10),
             actions=[
-                ft.TextButton("Cancelar", on_click=lambda _: (setattr(modal, "open", False), self._page.update())),
+                ft.TextButton("Cancelar", on_click=lambda _: self._fechar_submodal(modal)),
                 ft.FilledButton("Criar Conta", style=ft.ButtonStyle(bgcolor=T.PRIMARY), on_click=salvar),
             ],
         )
@@ -1033,8 +1091,7 @@ class LancamentoForm(ft.Column):
                     "dia_fechamento": 1,
                     "dia_vencimento": 10,
                 })
-                modal.open = False
-                self._page.update()
+                self._fechar_submodal(modal)
                 self.cartoes = db.listar_cartoes()
                 if res and res.data:
                     self.state.cartao_id = str(res.data[0]["id"])
@@ -1047,7 +1104,7 @@ class LancamentoForm(ft.Column):
             title=ft.Text("Novo Cartão de Crédito", weight=ft.FontWeight.BOLD),
             content=ft.Column([txt_nome, txt_limite], tight=True, spacing=10),
             actions=[
-                ft.TextButton("Cancelar", on_click=lambda _: (setattr(modal, "open", False), self._page.update())),
+                ft.TextButton("Cancelar", on_click=lambda _: self._fechar_submodal(modal)),
                 ft.FilledButton("Criar Cartão", style=ft.ButtonStyle(bgcolor=T.PRIMARY), on_click=salvar),
             ],
         )
@@ -1068,8 +1125,7 @@ class LancamentoForm(ft.Column):
                 return
             try:
                 res = db.criar_categoria({"nome": nome, "tipo": "ambos", "cor": T.PRIMARY, "icone": "category"})
-                modal.open = False
-                self._page.update()
+                self._fechar_submodal(modal)
                 self.categorias = db.listar_categorias()
                 if res and res.data:
                     self.state.categoria_id = str(res.data[0]["id"])
@@ -1084,7 +1140,7 @@ class LancamentoForm(ft.Column):
             title=ft.Text("Nova Categoria Universal", weight=ft.FontWeight.BOLD),
             content=ft.Column([txt_nome], tight=True, spacing=10),
             actions=[
-                ft.TextButton("Cancelar", on_click=lambda _: (setattr(modal, "open", False), self._page.update())),
+                ft.TextButton("Cancelar", on_click=lambda _: self._fechar_submodal(modal)),
                 ft.FilledButton("Criar", style=ft.ButtonStyle(bgcolor=T.PRIMARY), on_click=salvar),
             ],
         )
@@ -1110,8 +1166,7 @@ class LancamentoForm(ft.Column):
                 return
             try:
                 res = db.criar_subcategoria(cat_uuid, nome)
-                modal.open = False
-                self._page.update()
+                self._fechar_submodal(modal)
                 if res and res.data:
                     self.state.subcategoria_id = str(res.data[0]["id"])
                 self._carregar_subcategorias(cat_uuid)
@@ -1123,7 +1178,7 @@ class LancamentoForm(ft.Column):
             title=ft.Text("Nova Subcategoria", weight=ft.FontWeight.BOLD),
             content=ft.Column([txt_nome], tight=True, spacing=10),
             actions=[
-                ft.TextButton("Cancelar", on_click=lambda _: (setattr(modal, "open", False), self._page.update())),
+                ft.TextButton("Cancelar", on_click=lambda _: self._fechar_submodal(modal)),
                 ft.FilledButton("Criar", style=ft.ButtonStyle(bgcolor=T.PRIMARY), on_click=salvar),
             ],
         )
@@ -1144,15 +1199,14 @@ class LancamentoForm(ft.Column):
                 return
             self.state.subtipo = nome
             self._atualizar_opcoes_subtipo()
-            modal.open = False
-            self._page.update()
+            self._fechar_submodal(modal)
             mostrar_feedback(self._page, f"Subtipo '{nome}' selecionado!", "sucesso")
 
         modal = ft.AlertDialog(
             title=ft.Text("Novo Subtipo", weight=ft.FontWeight.BOLD),
             content=ft.Column([txt_nome], tight=True, spacing=10),
             actions=[
-                ft.TextButton("Cancelar", on_click=lambda _: (setattr(modal, "open", False), self._page.update())),
+                ft.TextButton("Cancelar", on_click=lambda _: self._fechar_submodal(modal)),
                 ft.FilledButton("Adicionar", style=ft.ButtonStyle(bgcolor=T.PRIMARY), on_click=salvar),
             ],
         )

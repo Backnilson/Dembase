@@ -451,6 +451,96 @@ def criar_view_config(page: ft.Page) -> ft.View:
             ),
         )
 
+    # ── 5. ABA GRÁFICOS DO DASHBOARD ─────────────────────────────────────────
+    def _montar_aba_graficos():
+        from views.widgets.dashboard_charts import DASHBOARD_CHARTS_CATALOG, GRAFICOS_PADRAO_IDS
+
+        ativos = set(storage.obter_graficos_dashboard_memoria(page, GRAFICOS_PADRAO_IDS))
+        switches: dict[str, ft.Switch] = {}
+
+        def _ao_alternar(_):
+            selecionados = [
+                item["id"]
+                for item in DASHBOARD_CHARTS_CATALOG
+                if switches[item["id"]].value
+            ]
+            if not selecionados:
+                mostrar_feedback(page, "Mantenha ao menos 1 gráfico ativo no Dashboard.", "alerta")
+                return
+            storage.salvar_graficos_dashboard_sync(page, selecionados)
+            mostrar_feedback(page, "Preferências de gráficos do Dashboard salvas!", "sucesso")
+
+        linhas_graf = []
+        for item in DASHBOARD_CHARTS_CATALOG:
+            cid = item["id"]
+            sw = ft.Switch(
+                value=(cid in ativos),
+                active_color=T.PRIMARY,
+                on_change=_ao_alternar,
+            )
+            switches[cid] = sw
+            linhas_graf.append(
+                ft.Container(
+                    padding=pad(h=14, v=12),
+                    bgcolor=T.SURFACE_ALT,
+                    border_radius=12,
+                    border=borda(),
+                    content=ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        controls=[
+                            ft.Row(
+                                spacing=12,
+                                expand=True,
+                                controls=[
+                                    ft.Container(
+                                        padding=pad(all_=8),
+                                        bgcolor=f"{item['cor']}1F",
+                                        border_radius=10,
+                                        content=ft.Icon(item["icone"], color=item["cor"], size=20),
+                                    ),
+                                    ft.Column(
+                                        spacing=2,
+                                        expand=True,
+                                        controls=[
+                                            ft.Text(item["titulo"].strip(), color=T.TEXT_PRIMARY, size=14, weight=ft.FontWeight.BOLD),
+                                            ft.Text(item["subtitulo"], color=T.TEXT_MUTED, size=12),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            sw,
+                        ],
+                    ),
+                )
+            )
+
+        return ft.Container(
+            padding=pad(all_=24),
+            bgcolor=T.SURFACE,
+            border_radius=16,
+            border=borda(),
+            content=ft.Column(
+                spacing=14,
+                controls=[
+                    ft.Row(
+                        spacing=10,
+                        controls=[
+                            ft.Icon(ft.Icons.DASHBOARD_CUSTOMIZE_ROUNDED, color=T.PRIMARY, size=24),
+                            ft.Column(
+                                spacing=2,
+                                controls=[
+                                    ft.Text("Gráficos da Tela Inicial (Dashboard)", color=T.TEXT_PRIMARY, size=17, weight=ft.FontWeight.BOLD),
+                                    ft.Text("Escolha quais análises visuais devem aparecer na sua tela inicial.", color=T.TEXT_MUTED, size=12),
+                                ],
+                            ),
+                        ],
+                    ),
+                    ft.Divider(height=1, color=T.BORDER),
+                    *linhas_graf,
+                ],
+            ),
+        )
+
     # ── Alternar Abas ────────────────────────────────────────────────────────
     def renderizar_aba():
         area_conteudo.controls.clear()
@@ -459,6 +549,8 @@ def criar_view_config(page: ft.Page) -> ft.View:
         elif aba_ativa[0] == 1:
             area_conteudo.controls.append(_montar_aba_tema())
         elif aba_ativa[0] == 2:
+            area_conteudo.controls.append(_montar_aba_graficos())
+        elif aba_ativa[0] == 3:
             area_conteudo.controls.append(_montar_aba_categorias())
         else:
             area_conteudo.controls.append(_montar_aba_destinos())
@@ -468,8 +560,9 @@ def criar_view_config(page: ft.Page) -> ft.View:
         aba_ativa[0] = idx
         btn_perfil.bgcolor     = f"{T.PRIMARY}18" if idx == 0 else "transparent"
         btn_tema.bgcolor       = f"{T.PRIMARY}18" if idx == 1 else "transparent"
-        btn_categorias.bgcolor = f"{T.PRIMARY}18" if idx == 2 else "transparent"
-        btn_destinos.bgcolor   = f"{T.PRIMARY}18" if idx == 3 else "transparent"
+        btn_graficos.bgcolor   = f"{T.PRIMARY}18" if idx == 2 else "transparent"
+        btn_categorias.bgcolor = f"{T.PRIMARY}18" if idx == 3 else "transparent"
+        btn_destinos.bgcolor   = f"{T.PRIMARY}18" if idx == 4 else "transparent"
         renderizar_aba()
 
     btn_perfil = ft.Container(
@@ -488,12 +581,20 @@ def criar_view_config(page: ft.Page) -> ft.View:
         on_click=lambda _: _trocar_aba(1),
     )
 
+    btn_graficos = ft.Container(
+        content=ft.Row([ft.Icon(ft.Icons.DASHBOARD_CUSTOMIZE_ROUNDED, size=16), ft.Text("Gráficos do Dashboard", size=13, weight=ft.FontWeight.W_600)], tight=True),
+        padding=pad(h=14, v=10),
+        bgcolor="transparent",
+        border_radius=10,
+        on_click=lambda _: _trocar_aba(2),
+    )
+
     btn_categorias = ft.Container(
         content=ft.Row([ft.Icon(ft.Icons.CATEGORY_OUTLINED, size=16), ft.Text("Categorias", size=13, weight=ft.FontWeight.W_600)], tight=True),
         padding=pad(h=14, v=10),
         bgcolor="transparent",
         border_radius=10,
-        on_click=lambda _: _trocar_aba(2),
+        on_click=lambda _: _trocar_aba(3),
     )
 
     btn_destinos = ft.Container(
@@ -501,7 +602,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
         padding=pad(h=14, v=10),
         bgcolor="transparent",
         border_radius=10,
-        on_click=lambda _: _trocar_aba(3),
+        on_click=lambda _: _trocar_aba(4),
     )
 
     seletor_abas = ft.Container(
@@ -509,7 +610,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
         bgcolor=T.SURFACE,
         border_radius=12,
         border=borda(),
-        content=ft.Row(spacing=4, tight=True, scroll=ft.ScrollMode.ADAPTIVE, controls=[btn_perfil, btn_tema, btn_categorias, btn_destinos]),
+        content=ft.Row(spacing=4, tight=True, scroll=ft.ScrollMode.ADAPTIVE, controls=[btn_perfil, btn_tema, btn_graficos, btn_categorias, btn_destinos]),
     )
 
     cabecalho = ft.Row(

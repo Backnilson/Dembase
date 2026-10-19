@@ -597,11 +597,39 @@ def deletar_objetivo(objetivo_id: str):
 # =============================================================================
 # RPCs DO DASHBOARD E MÓDULOS (processamento no PostgreSQL)
 # =============================================================================
-def obter_overview_dashboard(mes: int = None, ano: int = None) -> dict:
+def obter_dashboard_periodo(data_inicio: str, data_fim: str) -> dict:
     """
-    Chama a RPC 'get_dashboard_overview'.
+    Chama a RPC consolidada 'get_dashboard_periodo' para qualquer intervalo de datas.
+    Retorna: {
+      overview: {receitas, despesas, saldo, saldo_contas, total_faturas, periodo_inicio, periodo_fim},
+      despesas_por_categoria: {total, categorias: [...]},
+      receitas_por_categoria: {total, categorias: [...]},
+      frequencia_diaria: [...],
+      despesas_por_forma: [...]
+    }
+    """
+    params = {
+        "p_data_inicio": str(data_inicio),
+        "p_data_fim": str(data_fim),
+    }
+    resp = supabase.rpc("get_dashboard_periodo", params).execute()
+    return resp.data or {}
+
+
+def obter_overview_dashboard(
+    mes: int = None,
+    ano: int = None,
+    data_inicio: str = None,
+    data_fim: str = None,
+) -> dict:
+    """
+    Chama a RPC 'get_dashboard_overview' (ou 'get_dashboard_periodo' quando período livre).
     Retorna: {receitas, despesas, saldo, saldo_contas, total_faturas, periodo_*}
     """
+    if data_inicio and data_fim:
+        pacote = obter_dashboard_periodo(data_inicio, data_fim)
+        if isinstance(pacote, dict) and "overview" in pacote:
+            return pacote["overview"] or {}
     params: dict = {}
     if mes:
         params["p_mes"] = mes
@@ -611,8 +639,17 @@ def obter_overview_dashboard(mes: int = None, ano: int = None) -> dict:
     return resp.data or {}
 
 
-def obter_despesas_por_categoria(mes: int = None, ano: int = None) -> dict:
-    """Chama 'get_despesas_por_categoria'. Retorna {total, categorias: [...]}"""
+def obter_despesas_por_categoria(
+    mes: int = None,
+    ano: int = None,
+    data_inicio: str = None,
+    data_fim: str = None,
+) -> dict:
+    """Chama 'get_despesas_por_categoria' (ou via período livre). Retorna {total, categorias: [...]}"""
+    if data_inicio and data_fim:
+        pacote = obter_dashboard_periodo(data_inicio, data_fim)
+        if isinstance(pacote, dict) and "despesas_por_categoria" in pacote:
+            return pacote["despesas_por_categoria"] or {"total": 0, "categorias": []}
     params: dict = {}
     if mes:
         params["p_mes"] = mes
@@ -622,8 +659,17 @@ def obter_despesas_por_categoria(mes: int = None, ano: int = None) -> dict:
     return resp.data or {"total": 0, "categorias": []}
 
 
-def obter_receitas_por_categoria(mes: int = None, ano: int = None) -> dict:
-    """Chama 'get_receitas_por_categoria'. Retorna {total, categorias: [...]}"""
+def obter_receitas_por_categoria(
+    mes: int = None,
+    ano: int = None,
+    data_inicio: str = None,
+    data_fim: str = None,
+) -> dict:
+    """Chama 'get_receitas_por_categoria' (ou via período livre). Retorna {total, categorias: [...]}"""
+    if data_inicio and data_fim:
+        pacote = obter_dashboard_periodo(data_inicio, data_fim)
+        if isinstance(pacote, dict) and "receitas_por_categoria" in pacote:
+            return pacote["receitas_por_categoria"] or {"total": 0, "categorias": []}
     params: dict = {}
     if mes:
         params["p_mes"] = mes
@@ -639,8 +685,17 @@ def obter_balanco_6_meses() -> list:
     return resp.data or []
 
 
-def obter_frequencia_gastos(mes: int = None, ano: int = None) -> list:
-    """Chama 'get_frequencia_gastos_mes'. Retorna [{data, dia, despesas, receitas}]"""
+def obter_frequencia_gastos(
+    mes: int = None,
+    ano: int = None,
+    data_inicio: str = None,
+    data_fim: str = None,
+) -> list:
+    """Chama 'get_frequencia_gastos_mes' (ou via período livre). Retorna [{data, dia, despesas, receitas}]"""
+    if data_inicio and data_fim:
+        pacote = obter_dashboard_periodo(data_inicio, data_fim)
+        if isinstance(pacote, dict) and "frequencia_diaria" in pacote:
+            return pacote["frequencia_diaria"] or []
     params: dict = {}
     if mes:
         params["p_mes"] = mes
@@ -686,11 +741,12 @@ def obter_totais_dashboard(data_inicio: str = None, data_fim: str = None) -> dic
 
 
 def obter_resumo_5030(data_inicio: str = None, data_fim: str = None) -> dict:
-    """Legado — mantido para não quebrar dashboard_view.py atual."""
+    """Retorna o resumo da Regra 50/30/20 filtrado por período."""
     params: dict = {}
     if data_inicio:
-        params["p_data_inicio"] = data_inicio
+        params["p_data_inicio"] = str(data_inicio)
     if data_fim:
-        params["p_data_fim"] = data_fim
+        params["p_data_fim"] = str(data_fim)
     resp = supabase.rpc("get_regra_50_30_20_summary", params).execute()
     return resp.data or {}
+

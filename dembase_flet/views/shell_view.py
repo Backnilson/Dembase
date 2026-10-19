@@ -3,19 +3,20 @@
 DemBase v3 - views/shell_view.py  (Flet 1.0.1)
 Shell principal da aplicação após o login.
 Adaptativo:
-- Mobile (<768px): BottomAppBar com FAB + Top AppBar + Drawer
-- Desktop (>=768px): Sidebar Fixa + Header
+- Mobile (<768px): BottomAppBar com FAB + Top AppBar + Drawer + Filtro Global Flexível
+- Desktop (>=768px): Sidebar Fixa Retrátil + Header com Filtro Global Flexível
 =============================================================================
 """
 from __future__ import annotations
+import calendar
 import flet as ft
-from datetime import date
+from datetime import date, datetime, timedelta
 from core import theme as T
 from core.theme import pad, borda, borda_bottom
 from core.router import navegar, ROTA_AUTH
 from core.window_manager import ajustar_janela_login
 from core.responsive import is_mobile, setup_responsive_resize
-from core.constants import session_clear
+from core.constants import session_clear, session_get, session_set, formatar_data_br
 from core import storage
 import services.supabase_client as db
 
@@ -43,22 +44,95 @@ _MESES_PT = [
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ]
 
+_MESES_CURTOS = [
+    "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+    "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+]
+
 _sidebar_expandida: bool = False
+
+
+def _calcular_ciclo(mes_ref: int, ano_ref: int, dia_inicio: int) -> tuple[date, date]:
+    """
+    Calcula um ciclo personalizado que começa em `dia_inicio` do mês anterior
+    e termina em `dia_inicio - 1` do mês de referência (ex: 20/Set a 19/Out).
+    Se dia_inicio <= 1, retorna o mês fechado normal.
+    """
+    if dia_inicio <= 1:
+        ultimo_dia = calendar.monthrange(ano_ref, mes_ref)[1]
+        return date(ano_ref, mes_ref, 1), date(ano_ref, mes_ref, ultimo_dia)
+
+    if mes_ref == 1:
+        mes_ant, ano_ant = 12, ano_ref - 1
+    else:
+        mes_ant, ano_ant = mes_ref - 1, ano_ref
+
+    max_dia_ant = calendar.monthrange(ano_ant, mes_ant)[1]
+    d_ini = date(ano_ant, mes_ant, min(dia_inicio, max_dia_ant))
+
+    max_dia_atual = calendar.monthrange(ano_ref, mes_ref)[1]
+    d_fim = date(ano_ref, mes_ref, min(dia_inicio, max_dia_atual)) - timedelta(days=1)
+    return d_ini, d_fim
+
+
+def obter_estado_periodo_atual(page: ft.Page) -> dict:
+    """
+    Recupera (ou inicializa) o estado global do filtro de período na sessão.
+    Chaves: modo ('mes' | 'ciclo' | '30d' | 'custom'), data_inicio (date), data_fim (date),
+            mes (int), ano (int), dia_ciclo (int).
+    """
+    hoje_d = date.today()
+    modo = session_get(page, "periodo_modo", "mes") or "mes"
+    mes = int(session_get(page, "periodo_mes", hoje_d.month) or hoje_d.month)
+    ano = int(session_get(page, "periodo_ano", hoje_d.year) or hoje_d.year)
+    dia_ciclo = storage.obter_dia_ciclo_padrao(page)
+
+    ini_str = session_get(page, "periodo_inicio")
+    fim_str = session_get(page, "periodo_fim")
+
+    try:
+        if ini_str and fim_str:
+            d_ini = date.fromisoformat(str(ini_str)[:10])
+            d_fim = date.fromisoformat(str(fim_str)[:10])
+        else:
+            raise ValueError()
+    except Exception:
+        ultimo_dia = calendar.monthrange(ano, mes)[1]
+        d_ini = date(ano, mes, 1)
+        d_fim = date(ano, mes, ultimo_dia)
+
+    return {
+        "modo": modo,
+        "data_inicio": d_ini,
+        "data_fim": d_fim,
+        "mes": mes,
+        "ano": ano,
+        "dia_ciclo": dia_ciclo,
+    }
+
+
+def _persistir_estado_periodo(page: ft.Page, estado: dict) -> None:
+    session_set(page, "periodo_modo", estado["modo"])
+    session_set(page, "periodo_inicio", estado["data_inicio"].isoformat())
+    session_set(page, "periodo_fim", estado["data_fim"].isoformat())
+    session_set(page, "periodo_mes", int(estado["mes"]))
+    session_set(page, "periodo_ano", int(estado["ano"]))
+
 
 def criar_shell(
     page: ft.Page,
     rota_ativa: str = ROTA_DASHBOARD,
     conteudo: ft.Control | None = None,
     on_mes_ano_change=None,
+    on_periodo_change=None,
+    on_lancamento_saved=None,
 ) -> ft.View:
     global _sidebar_expandida
-    
-    # Registra o evento de resize adaptativo (transição suave Web/Desktop)
-    setup_responsive_resize(page)
 
-    hoje = date.today()
-    mes_sel = [hoje.month]
-    ano_sel = [hoje.year]
+    setup_responsive_resize(page)
+    mobile = is_mobile(page)
+
+    estado_p = obter_estado_periodo_atual(page)
 
     try:
         perfil = db.ler_perfil()
@@ -67,60 +141,348 @@ def criar_shell(
     except Exception:
         nome_curto = nome_completo = "Usuário"
 
-    # --- Seletor de Mês/Ano (usado tanto no Mobile Top AppBar quanto Desktop Header) ---
+    # --- Formatação responsiva do rótulo da Pílula de Período ---
+    def _formatar_label_periodo() -> str:
+        modo = estado_p["modo"]
+        m = estado_p["mes"]
+        a = estado_p["ano"]
+        d_ini: date = estado_p["data_inicio"]
+        d_fim: date = estado_p["data_fim"]
+
+        if modo == "mes":
+            if mobile:
+                return f"{_MESES_CURTOS[m - 1]} {a}"
+            return f"{_MESES_PT[m - 1]} {a}"
+        if mobile:
+            return f"{d_ini.strftime('%d/%m')} – {d_fim.strftime('%d/%m')}"
+        return f"{d_ini.strftime('%d/%m/%y')} → {d_fim.strftime('%d/%m/%y')}"
+
     txt_mes_ano = ft.Text(
-        f"{_MESES_PT[hoje.month - 1]} {hoje.year}",
+        _formatar_label_periodo(),
         color=T.TEXT_PRIMARY,
-        size=15,
+        size=12.5 if mobile else 14,
         weight=ft.FontWeight.W_600,
     )
 
-    def _emitir_mes_ano():
-        if on_mes_ano_change:
-            on_mes_ano_change(mes_sel[0], ano_sel[0])
-
-    def _mes_anterior(_):
-        if mes_sel[0] == 1:
-            mes_sel[0] = 12
-            ano_sel[0] -= 1
-        else:
-            mes_sel[0] -= 1
-        txt_mes_ano.value = f"{_MESES_PT[mes_sel[0] - 1]} {ano_sel[0]}"
+    def _sincronizar_e_emitir():
+        _persistir_estado_periodo(page, estado_p)
+        txt_mes_ano.value = _formatar_label_periodo()
         page.update()
-        _emitir_mes_ano()
+        if callable(on_periodo_change):
+            on_periodo_change(
+                estado_p["data_inicio"].isoformat(),
+                estado_p["data_fim"].isoformat(),
+                estado_p["mes"],
+                estado_p["ano"],
+            )
+        elif callable(on_mes_ano_change):
+            on_mes_ano_change(estado_p["mes"], estado_p["ano"])
 
-    def _mes_proximo(_):
-        if mes_sel[0] == 12:
-            mes_sel[0] = 1
-            ano_sel[0] += 1
+    def _passo_periodo(direcao: int):
+        modo = estado_p["modo"]
+        if modo in ("mes", "ciclo"):
+            m = estado_p["mes"] + direcao
+            a = estado_p["ano"]
+            if m < 1:
+                m = 12
+                a -= 1
+            elif m > 12:
+                m = 1
+                a += 1
+            estado_p["mes"] = m
+            estado_p["ano"] = a
+            if modo == "mes":
+                ult = calendar.monthrange(a, m)[1]
+                estado_p["data_inicio"] = date(a, m, 1)
+                estado_p["data_fim"] = date(a, m, ult)
+            else:
+                d_ini, d_fim = _calcular_ciclo(m, a, estado_p["dia_ciclo"])
+                estado_p["data_inicio"] = d_ini
+                estado_p["data_fim"] = d_fim
         else:
-            mes_sel[0] += 1
-        txt_mes_ano.value = f"{_MESES_PT[mes_sel[0] - 1]} {ano_sel[0]}"
-        page.update()
-        _emitir_mes_ano()
+            dias = max(1, (estado_p["data_fim"] - estado_p["data_inicio"]).days + 1)
+            delta = timedelta(days=dias * direcao)
+            estado_p["data_inicio"] = estado_p["data_inicio"] + delta
+            estado_p["data_fim"] = estado_p["data_fim"] + delta
+            estado_p["mes"] = estado_p["data_fim"].month
+            estado_p["ano"] = estado_p["data_fim"].year
+
+        _sincronizar_e_emitir()
+
+    # --- Modal de Filtro de Período Flexível (Flet 1.0.1) ---
+    def _abrir_modal_periodo(_=None):
+        temp_ini = [estado_p["data_inicio"]]
+        temp_fim = [estado_p["data_fim"]]
+        temp_modo = [estado_p["modo"]]
+        temp_dia_ciclo = [estado_p["dia_ciclo"]]
+
+        lbl_resumo_datas = ft.Text(
+            f"{formatar_data_br(temp_ini[0])}  até  {formatar_data_br(temp_fim[0])}",
+            color=T.PRIMARY,
+            size=14,
+            weight=ft.FontWeight.BOLD,
+        )
+
+        btn_data_ini = ft.OutlinedButton(
+            content=ft.Row(
+                spacing=6,
+                tight=True,
+                controls=[
+                    ft.Icon(ft.Icons.CALENDAR_TODAY_ROUNDED, size=15, color=T.PRIMARY),
+                    ft.Text(f"Início: {formatar_data_br(temp_ini[0])}", size=12.5, color=T.TEXT_PRIMARY),
+                ],
+            ),
+            on_click=lambda _: _escolher_data(True),
+        )
+
+        btn_data_fim = ft.OutlinedButton(
+            content=ft.Row(
+                spacing=6,
+                tight=True,
+                controls=[
+                    ft.Icon(ft.Icons.EVENT_ROUNDED, size=15, color=T.PRIMARY),
+                    ft.Text(f"Fim: {formatar_data_br(temp_fim[0])}", size=12.5, color=T.TEXT_PRIMARY),
+                ],
+            ),
+            on_click=lambda _: _escolher_data(False),
+        )
+
+        row_dias_ciclo = ft.Row(spacing=6, wrap=True, visible=(temp_modo[0] == "ciclo"))
+
+        def _atualizar_labels_modal():
+            lbl_resumo_datas.value = f"{formatar_data_br(temp_ini[0])}  até  {formatar_data_br(temp_fim[0])}"
+            btn_data_ini.content.controls[1].value = f"Início: {formatar_data_br(temp_ini[0])}"
+            btn_data_fim.content.controls[1].value = f"Fim: {formatar_data_br(temp_fim[0])}"
+            row_dias_ciclo.visible = (temp_modo[0] == "ciclo")
+            _popular_chips_modo()
+            _popular_chips_dia_ciclo()
+            try:
+                page.update()
+            except Exception:
+                pass
+
+        def _aplicar_preset(novo_modo: str):
+            temp_modo[0] = novo_modo
+            hoje_d = date.today()
+            if novo_modo == "mes":
+                m, a = estado_p["mes"], estado_p["ano"]
+                ult = calendar.monthrange(a, m)[1]
+                temp_ini[0] = date(a, m, 1)
+                temp_fim[0] = date(a, m, ult)
+            elif novo_modo == "ciclo":
+                d_i, d_f = _calcular_ciclo(estado_p["mes"], estado_p["ano"], temp_dia_ciclo[0])
+                temp_ini[0] = d_i
+                temp_fim[0] = d_f
+            elif novo_modo == "30d":
+                temp_fim[0] = hoje_d
+                temp_ini[0] = hoje_d - timedelta(days=29)
+            _atualizar_labels_modal()
+
+        def _mudar_dia_ciclo(novo_dia: int):
+            temp_dia_ciclo[0] = novo_dia
+            temp_modo[0] = "ciclo"
+            d_i, d_f = _calcular_ciclo(estado_p["mes"], estado_p["ano"], novo_dia)
+            temp_ini[0] = d_i
+            temp_fim[0] = d_f
+            _atualizar_labels_modal()
+
+        row_chips_modo = ft.Row(spacing=8, wrap=True)
+
+        def _popular_chips_modo():
+            opcoes = [
+                ("mes", "Mês Fechado"),
+                ("ciclo", f"Ciclo (Dia {temp_dia_ciclo[0]})"),
+                ("30d", "Últimos 30 dias"),
+                ("custom", "Personalizado"),
+            ]
+            row_chips_modo.controls.clear()
+            for cod, titulo_op in opcoes:
+                ativo = (temp_modo[0] == cod)
+                row_chips_modo.controls.append(
+                    ft.Container(
+                        padding=pad(h=12, v=7),
+                        bgcolor=T.PRIMARY if ativo else T.SURFACE_ALT,
+                        border_radius=18,
+                        border=borda(1, T.PRIMARY if ativo else T.BORDER),
+                        on_click=lambda _, c=cod: _aplicar_preset(c),
+                        content=ft.Text(
+                            titulo_op,
+                            size=12,
+                            weight=ft.FontWeight.BOLD if ativo else ft.FontWeight.W_500,
+                            color=ft.Colors.WHITE if ativo else T.TEXT_PRIMARY,
+                        ),
+                    )
+                )
+
+        def _popular_chips_dia_ciclo():
+            row_dias_ciclo.controls.clear()
+            row_dias_ciclo.controls.append(
+                ft.Text("Dia de início do ciclo:", color=T.TEXT_MUTED, size=12)
+            )
+            for d_op in [5, 10, 15, 20, 25]:
+                sel = (temp_dia_ciclo[0] == d_op)
+                row_dias_ciclo.controls.append(
+                    ft.Container(
+                        padding=pad(h=10, v=4),
+                        bgcolor=f"{T.PRIMARY}22" if sel else T.SURFACE_ALT,
+                        border_radius=12,
+                        border=borda(1, T.PRIMARY if sel else T.BORDER),
+                        on_click=lambda _, d=d_op: _mudar_dia_ciclo(d),
+                        content=ft.Text(
+                            f"Dia {d_op}",
+                            size=11.5,
+                            weight=ft.FontWeight.BOLD if sel else ft.FontWeight.NORMAL,
+                            color=T.PRIMARY if sel else T.TEXT_MUTED,
+                        ),
+                    )
+                )
+
+        def _escolher_data(eh_inicio: bool):
+            def _on_pick(e):
+                val = e.control.value
+                if val:
+                    dt = val.date() if isinstance(val, datetime) else val
+                    if eh_inicio:
+                        temp_ini[0] = dt
+                        if temp_ini[0] > temp_fim[0]:
+                            temp_fim[0] = temp_ini[0]
+                    else:
+                        temp_fim[0] = dt
+                        if temp_fim[0] < temp_ini[0]:
+                            temp_ini[0] = temp_fim[0]
+                    temp_modo[0] = "custom"
+                    _atualizar_labels_modal()
+
+            dp = ft.DatePicker(
+                first_date=date(2020, 1, 1),
+                last_date=date(2035, 12, 31),
+                value=temp_ini[0] if eh_inicio else temp_fim[0],
+                on_change=_on_pick,
+            )
+            page.show_dialog(dp)
+
+        def _confirmar_periodo(_):
+            estado_p["modo"] = temp_modo[0]
+            estado_p["data_inicio"] = temp_ini[0]
+            estado_p["data_fim"] = temp_fim[0]
+            estado_p["dia_ciclo"] = temp_dia_ciclo[0]
+            estado_p["mes"] = temp_fim[0].month
+            estado_p["ano"] = temp_fim[0].year
+            storage.salvar_dia_ciclo_padrao(page, temp_dia_ciclo[0])
+            page.pop_dialog()
+            _sincronizar_e_emitir()
+
+        _popular_chips_modo()
+        _popular_chips_dia_ciclo()
+
+        dlg_periodo = ft.AlertDialog(
+            modal=False,
+            bgcolor=T.SURFACE,
+            shape=ft.RoundedRectangleBorder(radius=18),
+            title=ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                controls=[
+                    ft.Row(
+                        spacing=8,
+                        controls=[
+                            ft.Icon(ft.Icons.DATE_RANGE_ROUNDED, color=T.PRIMARY, size=20),
+                            ft.Text("Filtro de Período Flexível", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
+                        ],
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.CLOSE_ROUNDED,
+                        icon_color=T.TEXT_MUTED,
+                        icon_size=18,
+                        on_click=lambda _: page.pop_dialog(),
+                    ),
+                ],
+            ),
+            content=ft.Container(
+                width=400,
+                content=ft.Column(
+                    tight=True,
+                    spacing=14,
+                    controls=[
+                        ft.Text(
+                            "Escolha um ciclo automático ou defina datas livres (ex: dia 20 ao dia 10):",
+                            color=T.TEXT_MUTED,
+                            size=12,
+                        ),
+                        row_chips_modo,
+                        row_dias_ciclo,
+                        ft.Divider(height=1, color=T.BORDER),
+                        ft.Text("Intervalo de Datas:", color=T.TEXT_MUTED, size=11.5, weight=ft.FontWeight.W_600),
+                        ft.Row(
+                            spacing=8,
+                            wrap=True,
+                            controls=[btn_data_ini, btn_data_fim],
+                        ),
+                        ft.Container(
+                            padding=pad(h=12, v=10),
+                            bgcolor=f"{T.PRIMARY}14",
+                            border_radius=10,
+                            border=borda(1, f"{T.PRIMARY}35"),
+                            content=ft.Row(
+                                spacing=8,
+                                controls=[
+                                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED, color=T.PRIMARY, size=16),
+                                    lbl_resumo_datas,
+                                ],
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: page.pop_dialog()),
+                ft.FilledButton(
+                    content=ft.Text("Aplicar Período", color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                    style=ft.ButtonStyle(
+                        bgcolor=T.PRIMARY,
+                        shape=ft.RoundedRectangleBorder(radius=10),
+                    ),
+                    on_click=_confirmar_periodo,
+                ),
+            ],
+        )
+        page.show_dialog(dlg_periodo)
 
     seletor_mes = ft.Container(
         content=ft.Row(
-            spacing=4,
+            spacing=2 if mobile else 4,
+            tight=True,
             controls=[
                 ft.IconButton(
                     icon=ft.Icons.CHEVRON_LEFT_ROUNDED,
                     icon_color=T.TEXT_MUTED,
-                    icon_size=20,
-                    on_click=_mes_anterior,
+                    icon_size=18 if mobile else 20,
+                    tooltip="Período anterior",
+                    on_click=lambda _: _passo_periodo(-1),
                 ),
                 ft.Container(
-                    content=txt_mes_ano,
-                    padding=pad(h=12, v=6),
+                    content=ft.Row(
+                        spacing=4,
+                        tight=True,
+                        controls=[
+                            ft.Icon(ft.Icons.CALENDAR_TODAY_ROUNDED, color=T.PRIMARY, size=13),
+                            txt_mes_ano,
+                            ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, color=T.TEXT_MUTED, size=15),
+                        ],
+                    ),
+                    padding=pad(h=10 if mobile else 12, v=5 if mobile else 6),
                     bgcolor=T.SURFACE_ALT,
                     border_radius=20,
                     border=borda(),
+                    on_click=_abrir_modal_periodo,
+                    ink=True,
+                    tooltip="Clique para alterar o período (Ex: dia 20 ao dia 10)",
                 ),
                 ft.IconButton(
                     icon=ft.Icons.CHEVRON_RIGHT_ROUNDED,
                     icon_color=T.TEXT_MUTED,
-                    icon_size=20,
-                    on_click=_mes_proximo,
+                    icon_size=18 if mobile else 20,
+                    tooltip="Próximo período",
+                    on_click=lambda _: _passo_periodo(1),
                 ),
             ],
         ),
@@ -132,7 +494,7 @@ def criar_shell(
     area_conteudo = ft.Container(
         expand=True,
         bgcolor=T.BG,
-        padding=pad(h=28 if not is_mobile(page) else 16, v=20),
+        padding=pad(h=28 if not mobile else 14, v=18 if not mobile else 12),
         content=ft.Column(
             expand=True,
             scroll=ft.ScrollMode.AUTO,
@@ -141,28 +503,43 @@ def criar_shell(
         ),
     )
 
+    def _ao_salvar_lancamento():
+        if callable(on_lancamento_saved):
+            on_lancamento_saved()
+        else:
+            navegar(page, rota_ativa)
+
     def _abrir_novo_lancamento(_=None):
         from views.widgets.lancamento_sheet import abrir_lancamento
-        abrir_lancamento(page, on_saved=lambda: navegar(page, rota_ativa))
+        abrir_lancamento(page, on_saved=_ao_salvar_lancamento)
 
     # -------------------------------------------------------------------------
     # LAYOUT ADAPTATIVO (MOBILE VS DESKTOP)
     # -------------------------------------------------------------------------
-    if is_mobile(page):
+    if mobile:
         # ================== LAYOUT MOBILE ==================
-        
-        # 1. AppBar Superior
+        titulo_rota = next((i["label"] for i in _NAV_ITEMS if i["rota"] == rota_ativa), "DemBase")
+
         appbar = ft.AppBar(
             bgcolor=T.SURFACE,
-            title=ft.Text(next((i["label"] for i in _NAV_ITEMS if i["rota"] == rota_ativa), "DemBase"), size=16),
-            actions=[seletor_mes, ft.Container(width=8)]
+            title=ft.GestureDetector(
+                on_tap=lambda _: navegar(page, ROTA_DASHBOARD) if rota_ativa != ROTA_DASHBOARD else None,
+                content=ft.Row(
+                    spacing=6,
+                    tight=True,
+                    controls=[
+                        ft.Text(titulo_rota, size=15, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                    ],
+                ),
+            ),
+            actions=[seletor_mes, ft.Container(width=4)],
         )
-        
-        # 2. Drawer (Hamburguer)
+
+        # 2. Drawer (Hambúrguer)
         async def _drawer_change(e):
             rotas_drawer = [ROTA_DASHBOARD, ROTA_CATEGORIAS, ROTA_CONFIG, ROTA_AUTH]
             idx = e.control.selected_index
-            if 0 <= idx < len(rotas_drawer):
+            if idx is not None and 0 <= idx < len(rotas_drawer):
                 r = rotas_drawer[idx]
                 if r == ROTA_AUTH:
                     try:
@@ -184,44 +561,44 @@ def criar_shell(
                         ft.CircleAvatar(
                             content=ft.Text(nome_curto[0], weight=ft.FontWeight.BOLD),
                             bgcolor=T.PRIMARY,
-                            color=T.BG
+                            color=T.BG,
                         ),
                         ft.Text(nome_completo, weight=ft.FontWeight.BOLD, size=16),
-                        ft.Text("DemBase", color=T.TEXT_MUTED, size=12),
-                    ])
+                        ft.Text("DemBase Controle Financeiro", color=T.TEXT_MUTED, size=12),
+                    ]),
                 ),
                 ft.Divider(color=T.BORDER),
                 ft.NavigationDrawerDestination(
                     icon=ft.Icons.DASHBOARD_ROUNDED,
-                    label="Dashboard"
+                    label="Tela Inicial (Dashboard)",
                 ),
                 ft.NavigationDrawerDestination(
                     icon=ft.Icons.CATEGORY_ROUNDED,
-                    label="Categorias"
+                    label="Categorias & Subcategorias",
                 ),
                 ft.NavigationDrawerDestination(
                     icon=ft.Icons.SETTINGS_ROUNDED,
-                    label="Configurações"
+                    label="Configurações & Gráficos",
                 ),
                 ft.Divider(color=T.BORDER),
                 ft.NavigationDrawerDestination(
                     icon=ft.Icons.LOGOUT_ROUNDED,
-                    label="Sair"
+                    label="Sair",
                 ),
-            ]
+            ],
         )
-        
-        # 3. Bottom App Bar & FAB
+
+        # 3. Bottom App Bar & FAB (sem ícone redundante de Dashboard, foco 1 mão)
         fab = ft.FloatingActionButton(
             icon=ft.Icons.ADD_ROUNDED,
             bgcolor=T.PRIMARY,
             shape=ft.CircleBorder(),
+            tooltip="Novo Lançamento",
             on_click=_abrir_novo_lancamento,
         )
-        
-        # Utiliza CircularRectangleNotchShape suportado no Flet 1.0.1
+
         notch_shape = ft.CircularRectangleNotchShape()
-        
+
         bottom_appbar = ft.BottomAppBar(
             bgcolor=T.SURFACE,
             shape=notch_shape,
@@ -229,28 +606,32 @@ def criar_shell(
                 alignment=ft.MainAxisAlignment.SPACE_AROUND,
                 controls=[
                     ft.IconButton(
-                        icon=ft.Icons.ACCOUNT_BALANCE_ROUNDED, 
+                        icon=ft.Icons.ACCOUNT_BALANCE_ROUNDED,
                         icon_color=T.PRIMARY if rota_ativa == ROTA_CONTAS else T.TEXT_MUTED,
-                        on_click=lambda _: navegar(page, ROTA_CONTAS)
+                        tooltip="Contas",
+                        on_click=lambda _: navegar(page, ROTA_CONTAS),
                     ),
                     ft.IconButton(
-                        icon=ft.Icons.CREDIT_CARD_ROUNDED, 
+                        icon=ft.Icons.CREDIT_CARD_ROUNDED,
                         icon_color=T.PRIMARY if rota_ativa == ROTA_CARTOES else T.TEXT_MUTED,
-                        on_click=lambda _: navegar(page, ROTA_CARTOES)
+                        tooltip="Cartões",
+                        on_click=lambda _: navegar(page, ROTA_CARTOES),
                     ),
-                    ft.Container(expand=True), # Espaço centralizado para acomodar o FAB
+                    ft.Container(expand=True),  # Espaço centralizado para acomodar o FAB
                     ft.IconButton(
-                        icon=ft.Icons.CALENDAR_MONTH_ROUNDED, 
+                        icon=ft.Icons.CALENDAR_MONTH_ROUNDED,
                         icon_color=T.PRIMARY if rota_ativa == ROTA_CALENDARIO else T.TEXT_MUTED,
-                        on_click=lambda _: navegar(page, ROTA_CALENDARIO)
+                        tooltip="Calendário",
+                        on_click=lambda _: navegar(page, ROTA_CALENDARIO),
                     ),
                     ft.IconButton(
-                        icon=ft.Icons.BAR_CHART_ROUNDED, 
+                        icon=ft.Icons.BAR_CHART_ROUNDED,
                         icon_color=T.PRIMARY if rota_ativa == ROTA_RELATORIOS else T.TEXT_MUTED,
-                        on_click=lambda _: navegar(page, ROTA_RELATORIOS)
+                        tooltip="Relatórios e Extrato",
+                        on_click=lambda _: navegar(page, ROTA_RELATORIOS),
                     ),
-                ]
-            )
+                ],
+            ),
         )
 
         return ft.View(
@@ -262,14 +643,14 @@ def criar_shell(
             bottom_appbar=bottom_appbar,
             floating_action_button=fab,
             floating_action_button_location=ft.FloatingActionButtonLocation.CENTER_DOCKED,
-            controls=[area_conteudo]
+            controls=[area_conteudo],
         )
-        
+
     else:
         # ================== LAYOUT DESKTOP ==================
         W_EXPANDED  = 230
         W_COLLAPSED = 68
-        
+
         textos_colapsaveis: list[ft.Control] = []
         nav_containers: list[tuple[ft.Container, str]] = []
 
@@ -291,8 +672,7 @@ def criar_shell(
                     navegar(page, rota)
                     return
                 if rota == ROTA_LANCAMENTO:
-                    from views.widgets.lancamento_sheet import abrir_lancamento
-                    abrir_lancamento(page, on_saved=lambda: navegar(page, rota_ativa))
+                    _abrir_novo_lancamento()
                     return
                 navegar(page, rota)
 
@@ -301,7 +681,7 @@ def criar_shell(
                 color=cor_texto,
                 size=14,
                 weight=ft.FontWeight.W_500 if ativo else ft.FontWeight.NORMAL,
-                visible=_sidebar_expandida
+                visible=_sidebar_expandida,
             )
             textos_colapsaveis.append(txt_item)
 
@@ -311,7 +691,7 @@ def criar_shell(
                     controls=[
                         ft.Icon(icone, color=cor_icone, size=20),
                         txt_item,
-                    ]
+                    ],
                 ),
                 bgcolor=cor_bg,
                 padding=pad(h=12, v=10),
@@ -324,12 +704,12 @@ def criar_shell(
 
         lista_nav = ft.Column(
             spacing=4,
-            controls=[_nav_item(i["rota"], i["icone"], i["label"]) for i in _NAV_ITEMS]
+            controls=[_nav_item(i["rota"], i["icone"], i["label"]) for i in _NAV_ITEMS],
         )
 
         txt_logo = ft.Text("DemBase", color=T.TEXT_PRIMARY, size=20, weight=ft.FontWeight.BOLD, visible=_sidebar_expandida)
         textos_colapsaveis.append(txt_logo)
-        
+
         sidebar = ft.Container(
             width=W_EXPANDED if _sidebar_expandida else W_COLLAPSED,
             bgcolor=T.SURFACE,
@@ -349,8 +729,8 @@ def criar_shell(
                                     border_radius=8,
                                     padding=pad(all_=8),
                                 ),
-                                txt_logo
-                            ]
+                                txt_logo,
+                            ],
                         ),
                         lista_nav,
                     ]),
@@ -358,8 +738,8 @@ def criar_shell(
                         _nav_item(ROTA_CONFIG, ft.Icons.SETTINGS_ROUNDED, "Configurações"),
                         _nav_item(ROTA_AUTH, ft.Icons.LOGOUT_ROUNDED, "Sair"),
                     ]),
-                ]
-            )
+                ],
+            ),
         )
 
         def _toggle_sidebar(_=None):
@@ -368,7 +748,7 @@ def criar_shell(
 
             sidebar.width = W_EXPANDED if _sidebar_expandida else W_COLLAPSED
 
-            for idx, ctrl in enumerate(textos_colapsaveis):
+            for ctrl in textos_colapsaveis:
                 ctrl.visible = _sidebar_expandida
 
             for container, label in nav_containers:
@@ -454,6 +834,7 @@ def criar_shell(
                 )
             ],
         )
+
 
 def placeholder_view(titulo: str, descricao: str, icone) -> ft.Column:
     return ft.Column(

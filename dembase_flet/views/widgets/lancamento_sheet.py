@@ -2,9 +2,10 @@
 =============================================================================
 DemBase v3 — views/widgets/lancamento_sheet.py (Flet 1.0.1)
 Hospedeiro responsivo para o formulário de lançamentos:
-- Mobile (<768px): BottomSheet rolável com drag handle.
-- Desktop (>=768px): AlertDialog compacto com largura controlada.
-Gerencia ciclo de vida, persistência e suporte a edição de séries/recorrências.
+- Mobile (<768px): BottomSheet rolável (scrollable=True) com drag handle.
+- Desktop (>=768px): AlertDialog compacto com title, content e actions nativos.
+Gerencia ciclo de vida via page.show_dialog / page.pop_dialog (Flet 1.0.1),
+suporte à tecla ESC, persistência e edição de séries/recorrências.
 =============================================================================
 """
 from __future__ import annotations
@@ -17,7 +18,7 @@ import flet as ft
 from core.lancamento_state import LancamentoFormState
 from core.responsive import is_mobile
 import core.theme as T
-from core.theme import pad, borda, mostrar_feedback
+from core.theme import pad, mostrar_feedback
 import services.supabase_client as db
 from views.widgets.lancamento_form import LancamentoForm
 
@@ -30,6 +31,7 @@ def abrir_lancamento(
 ):
     """
     Abre o modal/bottom sheet de criação ou edição de lançamento financeiro.
+    Usa a pilha nativa de diálogos do Flet 1.0.1 (page.show_dialog / page.pop_dialog).
     """
     is_edicao = (lancamento is not None and bool(lancamento.get("id")))
 
@@ -72,48 +74,105 @@ def abrir_lancamento(
     # 2. Instanciação do formulário
     form = LancamentoForm(page, state)
 
-    # 3. Definição do Contêiner (Mobile vs Desktop)
+    # 3. Controle de Fechamento e Tecla ESC (Flet 1.0.1)
     mobile = is_mobile(page)
-    container_dialog = None
+    container_dialog: Optional[ft.DialogControl] = None
+    prev_keyboard_handler = getattr(page, "on_keyboard_event", None)
+    ja_fechado = [False]
 
-    def fechar_dialog():
+    def _restaurar_teclado():
+        try:
+            page.on_keyboard_event = prev_keyboard_handler
+        except Exception:
+            pass
+
+    def fechar_dialog(_=None):
         nonlocal container_dialog
-        if container_dialog:
+        if ja_fechado[0]:
+            return
+        ja_fechado[0] = True
+        _restaurar_teclado()
+
+        try:
+            page.pop_dialog()
+        except Exception:
+            pass
+
+        if container_dialog is not None:
             container_dialog.open = False
             try:
-                if container_dialog in page.overlay:
-                    page.overlay.remove(container_dialog)
-            except Exception:
-                pass
-            try:
-                page.update()
+                container_dialog.update()
             except Exception:
                 pass
 
-    # Botões de Ação
-    btn_salvar = ft.FilledButton(
-        content=ft.Row(
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    def _ao_dispensar_dialog(_=None):
+        ja_fechado[0] = True
+        _restaurar_teclado()
+
+    def _ao_pressionar_tecla(e: ft.KeyboardEvent):
+        if e.key == "Escape":
+            fechar_dialog()
+        elif callable(prev_keyboard_handler):
+            prev_keyboard_handler(e)
+
+    page.on_keyboard_event = _ao_pressionar_tecla
+
+    # 4. Botões de Ação (com tight=True e dimensões explícitas para nunca cortar/espremer)
+    texto_botao_acao = "Salvar Alterações" if is_edicao else "Confirmar Lançamento"
+
+    def _conteudo_padrao_btn_salvar() -> ft.Control:
+        return ft.Row(
             controls=[
-                ft.Icon(ft.Icons.CHECK_ROUNDED, size=18),
-                ft.Text("Salvar" if is_edicao else "Confirmar", weight=ft.FontWeight.BOLD),
+                ft.Icon(ft.Icons.CHECK_ROUNDED, size=18, color=T.ON_PRIMARY),
+                ft.Text(
+                    texto_botao_acao,
+                    size=14,
+                    weight=ft.FontWeight.BOLD,
+                    color=T.ON_PRIMARY,
+                ),
             ],
-            spacing=6,
+            spacing=8,
+            tight=True,
             alignment=ft.MainAxisAlignment.CENTER,
-        ),
+        )
+
+    btn_salvar = ft.FilledButton(
+        content=_conteudo_padrao_btn_salvar(),
+        height=44,
         style=ft.ButtonStyle(
             bgcolor=T.PRIMARY,
             color=T.ON_PRIMARY,
+            padding=pad(h=22, v=10),
+            shape=ft.RoundedRectangleBorder(radius=10),
         ),
     )
 
     btn_cancelar = ft.TextButton(
-        content=ft.Text("Cancelar", color=T.TEXT_MUTED),
-        on_click=lambda _: fechar_dialog(),
+        content=ft.Text("Cancelar", size=14, weight=ft.FontWeight.W_600, color=T.TEXT_MUTED),
+        height=44,
+        style=ft.ButtonStyle(
+            padding=pad(h=16, v=10),
+            shape=ft.RoundedRectangleBorder(radius=10),
+        ),
+        on_click=fechar_dialog,
     )
 
     def executar_salvamento(modo_serie: str = "individual"):
         btn_salvar.disabled = True
-        btn_salvar.content = ft.ProgressRing(width=16, height=16, stroke_width=2, color=T.ON_PRIMARY)
+        btn_salvar.content = ft.Row(
+            controls=[
+                ft.ProgressRing(width=16, height=16, stroke_width=2, color=T.ON_PRIMARY),
+                ft.Text("Salvando...", size=14, weight=ft.FontWeight.BOLD, color=T.ON_PRIMARY),
+            ],
+            spacing=8,
+            tight=True,
+            alignment=ft.MainAxisAlignment.CENTER,
+        )
         try:
             page.update()
         except Exception:
@@ -182,14 +241,7 @@ def abrir_lancamento(
 
         except Exception as ex:
             btn_salvar.disabled = False
-            btn_salvar.content = ft.Row(
-                controls=[
-                    ft.Icon(ft.Icons.CHECK_ROUNDED, size=18),
-                    ft.Text("Salvar" if is_edicao else "Confirmar", weight=ft.FontWeight.BOLD),
-                ],
-                spacing=6,
-                alignment=ft.MainAxisAlignment.CENTER,
-            )
+            btn_salvar.content = _conteudo_padrao_btn_salvar()
             try:
                 page.update()
             except Exception:
@@ -218,16 +270,25 @@ def abrir_lancamento(
         if is_edicao and (state.serie_id or state.recorrente_id):
             modal_serie = None
 
-            def escolher_escopo(escopo: str):
+            def fechar_modal_serie():
                 nonlocal modal_serie
-                if modal_serie:
+                try:
+                    page.pop_dialog()
+                except Exception:
+                    pass
+                if modal_serie is not None:
                     modal_serie.open = False
                     try:
-                        if modal_serie in page.overlay:
-                            page.overlay.remove(modal_serie)
-                        page.update()
+                        modal_serie.update()
                     except Exception:
                         pass
+                try:
+                    page.update()
+                except Exception:
+                    pass
+
+            def escolher_escopo(escopo: str):
+                fechar_modal_serie()
                 executar_salvamento(escopo)
 
             modal_serie = ft.AlertDialog(
@@ -242,25 +303,23 @@ def abrir_lancamento(
                     color=T.TEXT_MUTED,
                 ),
                 actions=[
-                    ft.TextButton("Cancelar", on_click=lambda _: (setattr(modal_serie, "open", False), page.update())),
+                    ft.TextButton("Cancelar", on_click=lambda _: fechar_modal_serie()),
                     ft.FilledButton("Somente este", on_click=lambda _: escolher_escopo("individual")),
                     ft.FilledButton(
                         "Este e os próximos",
-                        style=ft.ButtonStyle(bgcolor=T.PRIMARY),
+                        style=ft.ButtonStyle(bgcolor=T.PRIMARY, color=T.ON_PRIMARY),
                         on_click=lambda _: escolher_escopo("proximos"),
                     ),
                 ],
             )
-            page.overlay.append(modal_serie)
-            modal_serie.open = True
-            page.update()
+            page.show_dialog(modal_serie)
             return
 
         executar_salvamento("individual")
 
     btn_salvar.on_click = ao_clicar_salvar
 
-    # 4. Construção da Janela
+    # 5. Construção da Janela (Header + Corpo + Rodapé Fixo)
     titulo_texto = "Editar Lançamento" if is_edicao else "Novo Lançamento"
     icone_titulo = ft.Icons.EDIT_ROUNDED if is_edicao else ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED
 
@@ -269,28 +328,25 @@ def abrir_lancamento(
             ft.Row(
                 controls=[
                     ft.Icon(icone_titulo, color=T.PRIMARY, size=22),
-                    ft.Text(titulo_texto, size=18, weight=ft.FontWeight.BOLD),
+                    ft.Text(titulo_texto, size=18, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
                 ],
                 spacing=8,
+                tight=True,
             ),
             ft.IconButton(
                 icon=ft.Icons.CLOSE_ROUNDED,
                 icon_color=T.TEXT_MUTED,
-                tooltip="Fechar",
-                on_click=lambda _: fechar_dialog(),
+                tooltip="Fechar (ESC)",
+                on_click=fechar_dialog,
             ),
         ],
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-    )
-
-    actions_row = ft.Row(
-        controls=[btn_cancelar, btn_salvar],
-        alignment=ft.MainAxisAlignment.END,
-        spacing=10,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
     if mobile:
-        # BottomSheet para Mobile
+        # BottomSheet para Mobile (scrollable=True é obrigatório no Flet 1.0.1 para não cortar a metade inferior!)
+        altura_sheet = int((page.height or 760) * 0.86)
         conteudo_sheet = ft.Container(
             content=ft.Column(
                 controls=[
@@ -298,43 +354,61 @@ def abrir_lancamento(
                     ft.Divider(height=1, color=T.BORDER),
                     ft.Container(content=form, expand=True),
                     ft.Divider(height=1, color=T.BORDER),
-                    actions_row,
+                    ft.Row(
+                        controls=[btn_cancelar, ft.Container(content=btn_salvar, expand=True)],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=10,
+                    ),
                 ],
-                spacing=12,
+                spacing=10,
                 expand=True,
             ),
-            padding=pad(h=16, v=14),
-            height=page.height * 0.88 if getattr(page, "height", None) else 660,
+            padding=pad(h=16, v=12),
+            height=altura_sheet,
+            bgcolor=T.SURFACE,
         )
         container_dialog = ft.BottomSheet(
             content=conteudo_sheet,
             show_drag_handle=True,
-            scrollable=False,
+            scrollable=True,
+            dismissible=True,
+            bgcolor=T.SURFACE,
+            on_dismiss=_ao_dispensar_dialog,
         )
     else:
-        # AlertDialog para Desktop
-        conteudo_dialog = ft.Container(
-            content=ft.Column(
+        # AlertDialog para Desktop usando slots nativos title, content e actions
+        # Assim o cabeçalho e o botão Salvar ficam 100% fixos e visíveis sem corte.
+        altura_disp = int((page.height or 768) * 0.58)
+        altura_corpo = max(340, min(440, altura_disp))
+
+        container_dialog = ft.AlertDialog(
+            modal=False,  # Permite fechar com tecla ESC ou clique fora
+            bgcolor=T.SURFACE,
+            shape=ft.RoundedRectangleBorder(radius=16),
+            inset_padding=pad(h=20, v=16),
+            title_padding=pad(left=20, right=12, top=14, bottom=0),
+            content_padding=pad(left=20, right=20, top=8, bottom=8),
+            actions_padding=pad(left=20, right=20, top=8, bottom=16),
+            actions_alignment=ft.MainAxisAlignment.END,
+            title= ft.Column(
                 controls=[
                     header_row,
                     ft.Divider(height=1, color=T.BORDER),
-                    ft.Container(content=form, height=480),
-                    ft.Divider(height=1, color=T.BORDER),
-                    actions_row,
                 ],
-                spacing=12,
+                spacing=6,
                 tight=True,
             ),
-            width=500,
-            padding=pad(h=20, v=16),
-            border_radius=16,
-        )
-        container_dialog = ft.AlertDialog(
-            content=conteudo_dialog,
-            modal=True,
-            inset_padding=pad(20),
+            content=ft.Container(
+                content=form,
+                width=480,
+                height=altura_corpo,
+            ),
+            actions=[
+                btn_cancelar,
+                btn_salvar,
+            ],
+            on_dismiss=_ao_dispensar_dialog,
         )
 
-    page.overlay.append(container_dialog)
-    container_dialog.open = True
-    page.update()
+    page.show_dialog(container_dialog)

@@ -107,8 +107,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
                 return
             try:
                 db.recuperar_senha(email)
-                dlg.open = False
-                page.update()
+                page.pop_dialog()
                 mostrar_feedback(page, "Link de recuperação enviado para seu e-mail!", "sucesso")
             except Exception as ex:
                 txt_email_recup.error_text = str(ex)
@@ -128,7 +127,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
                 ],
             ),
             actions=[
-                ft.TextButton("Cancelar", on_click=lambda _: setattr(dlg, "open", False) or page.update()),
+                ft.TextButton("Cancelar", on_click=lambda _: page.pop_dialog()),
                 ft.FilledButton(
                     "Enviar Link",
                     on_click=enviar_recuperacao,
@@ -140,9 +139,7 @@ def criar_view_auth(page: ft.Page) -> ft.View:
             ],
             bgcolor=T.SURFACE,
         )
-        page.overlay.append(dlg)
-        dlg.open = True
-        page.update()
+        page.show_dialog(dlg)
 
     link_esqueci_senha = ft.TextButton(
         content=ft.Text(

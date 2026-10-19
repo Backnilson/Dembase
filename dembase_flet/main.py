@@ -2,14 +2,14 @@
 =============================================================================
 DemBase v3 — main.py  (Flet 1.0.1 — async)
 Ponto de entrada principal com suporte a Tema Dinâmico do Sistema (Dark/Light),
-detecção de brilho da plataforma e restauração segura de sessão.
+detecção de brilho da plataforma e inicialização obrigatória na tela de início (Auth).
 =============================================================================
 """
-import os
 import flet as ft
 from core import theme as T
-from core.router import configurar_rotas, navegar, reconstruir_rota_atual, ROTA_AUTH, ROTA_DASHBOARD
-from core.window_manager import ajustar_janela_login, ajustar_janela_principal
+from core.constants import session_remove
+from core.router import configurar_rotas, navegar, ROTA_AUTH
+from core.window_manager import ajustar_janela_login
 from core import storage
 import services.supabase_client as db
 
@@ -29,32 +29,24 @@ async def main(page: ft.Page):
     page.on_platform_brightness_change = on_brightness_change
     T.aplicar_tema_app(page, pref_tema)
 
-    # 2. Configura roteamento
+    # 2. Limpa qualquer sessão residual em memória para garantir abertura na tela de início (Auth).
+    # O e-mail salvo em 'Lembrar de mim' permanece disponível para preenchimento na tela de login.
+    try:
+        db.fazer_logout()
+        session_remove(page, "auth_access_token")
+        session_remove(page, "auth_refresh_token")
+    except Exception:
+        pass
+
+    # 3. Configura roteamento
     configurar_rotas(page)
 
-    # 3. Restauração de Sessão (Lembrar de mim / SharedPreferences / Sessão)
-    logado = False
-    try:
-        email, acc, ref, lembrar_ativo = await storage.carregar_lembrar(page)
-
-        if acc and ref:
-            logado = db.restaurar_sessao(acc, ref)
-        else:
-            sessao = db.sessao_atual()
-            logado = bool(sessao and getattr(sessao, "user", None))
-    except Exception:
-        logado = False
-
-    # 4. Navegação inicial
-    if logado:
-        await ajustar_janela_principal(page)
-        try:
-            db.gerar_recorrentes_pendentes()
-        except Exception:
-            pass
-        navegar(page, ROTA_DASHBOARD)
+    # 4. Navegação inicial sempre para a tela de início (ROTA_AUTH)
+    await ajustar_janela_login(page)
+    page.route = ROTA_AUTH
+    if hasattr(page, "_reconstruir_rota") and callable(page._reconstruir_rota):
+        page._reconstruir_rota()
     else:
-        await ajustar_janela_login(page)
         navegar(page, ROTA_AUTH)
 
 

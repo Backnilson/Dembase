@@ -13,7 +13,7 @@ from core import theme as T
 from core.theme import pad, borda, mostrar_feedback
 from core.constants import formatar_moeda, hoje, session_get, session_set, session_pop, session_remove
 from core.router import ROTA_LANCAMENTO, navegar
-from views.shell_view import criar_shell, ROTA_RELATORIOS
+from views.shell_view import criar_shell, ROTA_RELATORIOS, obter_estado_periodo_atual
 import services.supabase_client as db
 
 
@@ -31,9 +31,11 @@ def _formatar_data_br(data_str: str) -> str:
 
 
 def criar_view_relatorios(page: ft.Page) -> ft.View:
-    hoje_d = hoje()
-    mes_sel = [hoje_d.month]
-    ano_sel = [hoje_d.year]
+    est_p = obter_estado_periodo_atual(page)
+    mes_sel = [est_p["mes"]]
+    ano_sel = [est_p["ano"]]
+    data_ini_sel = [est_p["data_inicio"].isoformat()]
+    data_fim_sel = [est_p["data_fim"].isoformat()]
 
     # Verifica se deve abrir direto na aba de lançamentos (ex: voltando da edição)
     aba_inicial = session_pop(page, "tab_relatorios", 0) or 0
@@ -68,10 +70,12 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
 
         m = mes_sel[0]
         a = ano_sel[0]
+        di = data_ini_sel[0]
+        df = data_fim_sel[0]
 
         try:
-            # 1. Overview para os KPIs do Mês
-            overview = db.obter_overview_dashboard(m, a)
+            # 1. Overview para os KPIs do Período
+            overview = db.obter_overview_dashboard(m, a, data_inicio=di, data_fim=df)
             rec  = float(overview.get("receitas", 0) or 0)
             desp = float(overview.get("despesas", 0) or 0)
             saldo = rec - desp
@@ -85,13 +89,13 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
             txt_taxa_poupanca.color = T.RECEITA if taxa_poup >= 20 else (T.WARNING if taxa_poup >= 0 else T.DESPESA)
 
             # 2. Despesas por Categoria
-            _carregar_categorias(m, a, desp)
+            _carregar_categorias(m, a, desp, di, df)
 
             # 3. Balanço dos Últimos 6 Meses
             _carregar_balanco_semestral()
 
             # 4. Regra 50/30/20
-            _carregar_regra_5030()
+            _carregar_regra_5030(di, df)
 
         except Exception as ex:
             mostrar_feedback(page, f"Erro ao gerar relatórios: {ex}", "erro")
@@ -99,10 +103,10 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
             spinner.visible = False
             _safe_update(container_visao_geral)
 
-    def _carregar_categorias(m: int, a: int, total_desp_mes: float):
+    def _carregar_categorias(m: int, a: int, total_desp_mes: float, di: str = None, df: str = None):
         col_categorias.controls.clear()
         try:
-            dados_cat = db.obter_despesas_por_categoria(m, a)
+            dados_cat = db.obter_despesas_por_categoria(m, a, data_inicio=di, data_fim=df)
             lista = dados_cat.get("categorias", []) if isinstance(dados_cat, dict) else (dados_cat or [])
 
             if not lista:
@@ -230,21 +234,21 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
                 ft.Text("Sem histórico de 6 meses no momento.", color=T.TEXT_MUTED, size=13)
             )
 
-    def _carregar_regra_5030():
+    def _carregar_regra_5030(di: str = None, df: str = None):
         col_regra5030.controls.clear()
         try:
-            resumo = db.obter_resumo_5030()
+            resumo = db.obter_resumo_5030(di, df)
             itens_regra = [
-                {"titulo": "Essencial (Meta 50%)",      "chave": "essencial",      "cor": T.PRIMARY, "meta": 0.50},
-                {"titulo": "Estilo de Vida (Meta 30%)", "chave": "estilo_de_vida", "cor": T.WARNING, "meta": 0.30},
-                {"titulo": "Investimento (Meta 20%)",   "chave": "investimento",   "cor": T.SALDO,   "meta": 0.20},
+                {"titulo": "Essencial (Meta 50%)",      "chave": "essencial",   "cor": T.PRIMARY, "meta": 0.50},
+                {"titulo": "Estilo de Vida (Meta 30%)", "chave": "estilo_vida", "cor": T.WARNING, "meta": 0.30},
+                {"titulo": "Investimento (Meta 20%)",   "chave": "investimento","cor": T.SALDO,   "meta": 0.20},
             ]
 
             for reg in itens_regra:
-                dados_reg = resumo.get(reg["chave"], {})
+                dados_reg = resumo.get(reg["chave"]) or resumo.get("estilo_de_vida" if reg["chave"] == "estilo_vida" else reg["chave"], {})
                 gasto = float(dados_reg.get("gasto", 0) or 0)
-                ideal = float(dados_reg.get("ideal", 0) or 0)
-                pct_real = float(dados_reg.get("percentual_real", 0) or 0)
+                ideal = float(dados_reg.get("orcamento") or dados_reg.get("ideal") or 0)
+                pct_real = float(dados_reg.get("percentual_usado") or dados_reg.get("percentual_real") or 0)
                 progresso = min(1.0, max(0.0, gasto / ideal)) if ideal > 0 else 0.0
 
                 col_regra5030.controls.append(
@@ -514,14 +518,16 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
 
         m = mes_sel[0]
         a = ano_sel[0]
+        di = data_ini_sel[0]
+        df = data_fim_sel[0]
 
         filtrados = []
         for item in todos_lancamentos:
-            dt = str(item.get("data") or "")
+            dt = str(item.get("data") or "")[:10]
 
             # 1. Filtro Período
             if periodo == "mes":
-                if not dt.startswith(f"{a:04d}-{m:02d}"):
+                if not (di <= dt <= df):
                     continue
             elif periodo == "ano":
                 if not dt.startswith(f"{a:04d}"):
@@ -788,10 +794,15 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
         dt_str = _formatar_data_br(item.get("data", ""))
 
         def _fechar_modal():
+            try:
+                page.pop_dialog()
+            except Exception:
+                pass
             modal_excluir.open = False
-            page.update()
-            if modal_excluir in page.overlay:
-                page.overlay.remove(modal_excluir)
+            try:
+                page.update()
+            except Exception:
+                pass
 
         def _executar_exclusao(modo: str):
             try:
@@ -840,7 +851,7 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
             )
 
         modal_excluir = ft.AlertDialog(
-            modal=True,
+            modal=False,
             title=ft.Row(
                 spacing=8,
                 controls=[
@@ -879,9 +890,7 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
             actions=acoes,
         )
 
-        page.overlay.append(modal_excluir)
-        modal_excluir.open = True
-        page.update()
+        page.show_dialog(modal_excluir)
 
     # ── Navegação de Paginação ────────────────────────────────────────────────
     def _pag_anterior(_):
@@ -1209,22 +1218,24 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
         ],
     )
 
-    # ── Listener de Mês/Ano Global do Shell ──────────────────────────────────
-    def on_mes_ano_change(m: int, a: int):
+    # ── Listener de Período Global do Shell ──────────────────────────────────
+    def on_periodo_change(di: str, df: str, m: int, a: int):
+        data_ini_sel[0] = di
+        data_fim_sel[0] = df
         mes_sel[0] = m
         ano_sel[0] = a
 
-        # Atualiza o label da opção de período do extrato
-        dd_filtro_periodo.options[0] = ft.dropdown.Option("mes", f"Mês ({m:02d}/{a})")
+        dd_filtro_periodo.options[0] = ft.dropdown.Option("mes", f"Período ({_formatar_data_br(di)} a {_formatar_data_br(df)})")
         dd_filtro_periodo.options[1] = ft.dropdown.Option("ano", f"Ano Inteiro ({a})")
         _safe_update(dd_filtro_periodo)
 
-        # Atualiza visão geral
         carregar_visao_geral()
-
-        # Se período for mês, re-aplica filtros no extrato
         if dd_filtro_periodo.value == "mes" and lancamentos_carregados[0]:
             _aplicar_filtros()
+
+    def on_mes_ano_change(m: int, a: int):
+        est = obter_estado_periodo_atual(page)
+        on_periodo_change(est["data_inicio"].isoformat(), est["data_fim"].isoformat(), m, a)
 
     conteudo = ft.Column(
         spacing=0,
@@ -1242,4 +1253,10 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
     if aba_ativa[0] == 1:
         carregar_todos_lancamentos()
 
-    return criar_shell(page, rota_ativa=ROTA_RELATORIOS, conteudo=conteudo, on_mes_ano_change=on_mes_ano_change)
+    return criar_shell(
+        page,
+        rota_ativa=ROTA_RELATORIOS,
+        conteudo=conteudo,
+        on_mes_ano_change=on_mes_ano_change,
+        on_periodo_change=on_periodo_change,
+    )
