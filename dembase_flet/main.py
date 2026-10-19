@@ -48,6 +48,10 @@ async def main(page: ft.Page):
     # 4. Navegação inicial
     if logado:
         await ajustar_janela_principal(page)
+        try:
+            db.gerar_recorrentes_pendentes()
+        except Exception:
+            pass
         navegar(page, ROTA_DASHBOARD)
     else:
         await ajustar_janela_login(page)

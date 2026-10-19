@@ -497,6 +497,74 @@ def desativar_recorrente(recorrente_id: str):
     return supabase.table("transacoes_recorrentes").update({"ativo": False}).eq("id", recorrente_id).execute()
 
 
+def criar_lancamento_recorrente(
+    dados: dict,
+    modo: str = "unica",
+    frequencia: str = "mensal",
+    quantidade: int = 1,
+    valor_modo: str = "parcelado",
+) -> dict:
+    """
+    Cria lançamentos com regras de recorrência atômicas (RPC).
+    Modos: 'unica', 'parcelada', 'repetida', 'fixa'.
+    """
+    user = usuario_atual()
+    if user and "user_id" not in dados:
+        dados["user_id"] = user.id
+
+    params = {
+        "p_dados": dados,
+        "p_modo": modo,
+        "p_frequencia": frequencia,
+        "p_quantidade": quantidade,
+        "p_valor_modo": valor_modo,
+    }
+    resp = supabase.rpc("criar_lancamento_com_recorrencia", params).execute()
+    return resp.data or {}
+
+
+def gerar_recorrentes_pendentes(ate: str = None) -> dict:
+    """
+    Executa a materialização de lançamentos de fixas pendentes até uma data limite.
+    Idempotente: chamada automaticamente ao iniciar o app.
+    """
+    params = {}
+    if ate:
+        params["p_ate"] = ate
+    resp = supabase.rpc("gerar_lancamentos_recorrentes", params).execute()
+    return resp.data or {}
+
+
+def atualizar_serie(serie_id: str, dados: dict, a_partir_de: str = None) -> dict:
+    """
+    Atualiza lançamentos de uma série. Se a_partir_de for informado,
+    atualiza apenas os lançamentos a partir daquela data (ex: 'este e os próximos').
+    """
+    params = {
+        "p_serie_id": serie_id,
+        "p_dados": dados,
+    }
+    if a_partir_de:
+        params["p_a_partir_de"] = a_partir_de
+    resp = supabase.rpc("atualizar_serie", params).execute()
+    return resp.data or {}
+
+
+def excluir_serie(serie_id: str, a_partir_de: str = None) -> dict:
+    """
+    Exclui lançamentos de uma série. Se a_partir_de for informado,
+    exclui apenas os lançamentos a partir daquela data (ex: 'este e os próximos').
+    """
+    params = {
+        "p_serie_id": serie_id,
+    }
+    if a_partir_de:
+        params["p_a_partir_de"] = a_partir_de
+    resp = supabase.rpc("excluir_serie", params).execute()
+    return resp.data or {}
+
+
+
 # =============================================================================
 # OBJETIVOS / METAS
 # =============================================================================

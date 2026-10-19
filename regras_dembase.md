@@ -64,6 +64,9 @@ dembase_flet/
 ├── main.py                    → Ponto de entrada (Flet 1.0.1 async com ft.run(main))
 ├── core/
 │   ├── constants.py           → Constantes de negócio, paleta e rotas
+│   ├── lancamento_state.py    → Máquina de estado, cascatas e validação de lançamentos
+│   ├── recorrencia.py         → Lógica pura de datas (clamping) e parcelas (centavos exatos)
+│   ├── responsive.py          → Detecção de breakpoints (Mobile vs Desktop)
 │   ├── router.py              → Roteamento assíncrono Flet
 │   ├── theme.py               → Design tokens premium (cores, estilos, bordas)
 │   └── window_manager.py      → Responsividade e dimensionamento adaptativo de janelas
@@ -72,10 +75,13 @@ dembase_flet/
 ├── views/
 │   ├── auth_view.py           → Autenticação (Login e Cadastro com validação)
 │   ├── dashboard_view.py      → Dashboard com KPIs, gráficos e regra 50/30/20
-│   ├── lancamento_view.py     → Cadastro de lançamentos financeiros
+│   ├── lancamento_view.py     → Adaptador de rota /lancamento delegando ao modal
 │   ├── shell_view.py          → Layout shell persistente com sidebar responsiva retrátil
-│   └── widgets/               → KPI cards, Date filter, Regra 50/30
-├── migrations/                → Scripts SQL de schema, tabelas e RPCs
+│   └── widgets/
+│       ├── lancamento_form.py  → Formulário moderno (chips data rápida, switch status, progressive disclosure)
+│       ├── lancamento_sheet.py → Hospedeiro modal (BottomSheet no mobile, AlertDialog no desktop)
+│       └── regra_5030.py       → Componentes da Regra 50/30/20
+├── migrations/                → Scripts SQL de schema, tabelas e RPCs (001 a 005)
 └── requirements.txt           → Dependências (flet>=1.0.0, supabase, python-dotenv)
 ```
 

@@ -366,6 +366,10 @@ def criar_view_auth(page: ft.Page) -> ft.View:
                     storage.salvar_sessao_temporaria(page, acc, ref)
 
             await ajustar_janela_principal(page)
+            try:
+                db.gerar_recorrentes_pendentes()
+            except Exception:
+                pass
             navegar(page, ROTA_DASHBOARD)
         except Exception as ex:
             mostrar_feedback(page, traduzir_erro_auth(str(ex)), "erro")

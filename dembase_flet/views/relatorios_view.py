@@ -772,14 +772,17 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
 
     # ── Ação de Editar Lançamento ─────────────────────────────────────────────
     def _ao_editar(item: dict):
-        session_set(page, "edit_lancamento_id", str(item.get("id")))
-        session_set(page, "edit_lancamento_dados", item)
-        session_set(page, "tab_relatorios", 1)
-        navegar(page, ROTA_LANCAMENTO)
+        from views.widgets.lancamento_sheet import abrir_lancamento
+        def _on_saved():
+            _carregar_dados_tabela()
+            carregar_visao_geral()
+        abrir_lancamento(page, lancamento=item, on_saved=_on_saved)
 
-    # ── Ação de Excluir Lançamento (Modal Confirmação) ─────────────────────────
+    # ── Ação de Excluir Lançamento (Modal Confirmação com suporte a séries) ───
     def _ao_excluir(item: dict):
         lanc_id = item.get("id")
+        serie_id = item.get("serie_id")
+        rec_id = item.get("recorrente_id")
         desc = item.get("descricao") or "Lançamento"
         val = formatar_moeda(float(item.get("valor", 0) or 0))
         dt_str = _formatar_data_br(item.get("data", ""))
@@ -790,19 +793,51 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
             if modal_excluir in page.overlay:
                 page.overlay.remove(modal_excluir)
 
-        def _confirmar(_):
+        def _executar_exclusao(modo: str):
             try:
-                db.deletar_lancamento(lanc_id)
+                if modo == "individual" or not serie_id:
+                    db.deletar_lancamento(lanc_id)
+                elif modo == "proximos":
+                    db.excluir_serie(serie_id, a_partir_de=str(item.get("data")))
+                elif modo == "todos":
+                    db.excluir_serie(serie_id)
+
                 _fechar_modal()
-                # Remove da lista em memória
-                todos_lancamentos[:] = [l for l in todos_lancamentos if str(l.get("id")) != str(lanc_id)]
-                _aplicar_filtros()
-                # Atualiza também os dados gerenciais da Visão Geral
+                _carregar_dados_tabela()
                 carregar_visao_geral()
-                mostrar_feedback(page, "Lançamento excluído com sucesso!", "sucesso")
+                mostrar_feedback(page, "Exclusão realizada com sucesso!", "sucesso")
             except Exception as ex:
                 _fechar_modal()
                 mostrar_feedback(page, f"Erro ao excluir lançamento: {ex}", "erro")
+
+        is_serie = bool(serie_id or rec_id)
+        acoes = [
+            ft.TextButton(
+                content=ft.Text("Cancelar", color=T.TEXT_MUTED),
+                on_click=lambda _: _fechar_modal(),
+            ),
+        ]
+        if is_serie:
+            acoes.extend([
+                ft.FilledButton(
+                    content=ft.Text("Somente este"),
+                    style=ft.ButtonStyle(bgcolor=T.SURFACE_ALT, color=T.TEXT_PRIMARY),
+                    on_click=lambda _: _executar_exclusao("individual"),
+                ),
+                ft.FilledButton(
+                    content=ft.Text("Este e próximos"),
+                    style=ft.ButtonStyle(bgcolor=T.DESPESA),
+                    on_click=lambda _: _executar_exclusao("proximos"),
+                ),
+            ])
+        else:
+            acoes.append(
+                ft.FilledButton(
+                    content=ft.Text("Excluir"),
+                    style=ft.ButtonStyle(bgcolor=T.DESPESA),
+                    on_click=lambda _: _executar_exclusao("individual"),
+                )
+            )
 
         modal_excluir = ft.AlertDialog(
             modal=True,
@@ -817,7 +852,13 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
                 tight=True,
                 spacing=12,
                 controls=[
-                    ft.Text("Tem certeza que deseja excluir permanentemente este lançamento?", color=T.TEXT_PRIMARY, size=14),
+                    ft.Text(
+                        "Este lançamento faz parte de uma série/recorrência. Deseja excluir apenas este ou este e os próximos?"
+                        if is_serie else
+                        "Tem certeza que deseja excluir permanentemente este lançamento?",
+                        color=T.TEXT_PRIMARY,
+                        size=14,
+                    ),
                     ft.Container(
                         padding=pad(all_=14),
                         bgcolor=T.SURFACE_ALT,
@@ -835,17 +876,7 @@ def criar_view_relatorios(page: ft.Page) -> ft.View:
                     ft.Text("Esta ação não poderá ser desfeita.", color=T.TEXT_MUTED, size=12),
                 ],
             ),
-            actions=[
-                ft.TextButton(
-                    content=ft.Text("Cancelar", color=T.TEXT_MUTED),
-                    on_click=lambda _: _fechar_modal(),
-                ),
-                ft.FilledButton(
-                    content=ft.Text("Excluir"),
-                    style=ft.ButtonStyle(bgcolor=T.DESPESA),
-                    on_click=_confirmar,
-                ),
-            ],
+            actions=acoes,
         )
 
         page.overlay.append(modal_excluir)

@@ -207,12 +207,16 @@ def criar_shell(
             ]
         )
         
+        def _abrir_novo_lancamento(_):
+            from views.widgets.lancamento_sheet import abrir_lancamento
+            abrir_lancamento(page, on_saved=lambda: navegar(page, rota_ativa))
+
         # 3. Bottom App Bar & FAB
         fab = ft.FloatingActionButton(
             icon=ft.Icons.ADD_ROUNDED,
             bgcolor=T.PRIMARY,
             shape=ft.CircleBorder(),
-            on_click=lambda _: navegar(page, ROTA_LANCAMENTO)
+            on_click=_abrir_novo_lancamento,
         )
         
         # Utiliza CircularRectangleNotchShape suportado no Flet 1.0.1
@@ -284,6 +288,12 @@ def criar_shell(
                     except Exception:
                         pass
                     await ajustar_janela_login(page)
+                    navegar(page, rota)
+                    return
+                if rota == ROTA_LANCAMENTO:
+                    from views.widgets.lancamento_sheet import abrir_lancamento
+                    abrir_lancamento(page, on_saved=lambda: navegar(page, rota_ativa))
+                    return
                 navegar(page, rota)
 
             txt_item = ft.Text(
@@ -408,7 +418,7 @@ def criar_shell(
                                     ft.Text("Novo", color=T.ON_PRIMARY, size=13, weight=ft.FontWeight.W_600),
                                 ],
                             ),
-                            on_click=lambda _: navegar(page, ROTA_LANCAMENTO),
+                            on_click=_abrir_novo_lancamento,
                             style=ft.ButtonStyle(
                                 bgcolor=T.PRIMARY,
                                 overlay_color=T.PRIMARY_DARK,
