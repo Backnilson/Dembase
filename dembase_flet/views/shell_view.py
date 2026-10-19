@@ -141,6 +141,10 @@ def criar_shell(
         ),
     )
 
+    def _abrir_novo_lancamento(_=None):
+        from views.widgets.lancamento_sheet import abrir_lancamento
+        abrir_lancamento(page, on_saved=lambda: navegar(page, rota_ativa))
+
     # -------------------------------------------------------------------------
     # LAYOUT ADAPTATIVO (MOBILE VS DESKTOP)
     # -------------------------------------------------------------------------
@@ -207,10 +211,6 @@ def criar_shell(
             ]
         )
         
-        def _abrir_novo_lancamento(_):
-            from views.widgets.lancamento_sheet import abrir_lancamento
-            abrir_lancamento(page, on_saved=lambda: navegar(page, rota_ativa))
-
         # 3. Bottom App Bar & FAB
         fab = ft.FloatingActionButton(
             icon=ft.Icons.ADD_ROUNDED,
