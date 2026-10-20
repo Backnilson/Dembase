@@ -24,6 +24,7 @@ from core.periodo import (
 )
 from core.nav import voltar
 from core import storage
+from views.widgets.custom_date_picker import abrir_modal_periodo_mobills
 import services.supabase_client as db
 
 ROTA_DASHBOARD   = "/dashboard"
@@ -155,243 +156,23 @@ def criar_shell(
 
         _sincronizar_e_emitir()
 
-    # --- Modal de Filtro de Período Flexível (Flet 1.0.1) ---
+    # --- Modal de Filtro de Período Flexível Estilo Mobills (Flet 1.0.1) ---
     def _abrir_modal_periodo(_=None):
-        temp_ini = [estado_p["data_inicio"]]
-        temp_fim = [estado_p["data_fim"]]
-        temp_modo = [estado_p["modo"]]
-        temp_dia_ciclo = [estado_p["dia_ciclo"]]
-
-        lbl_resumo_datas = ft.Text(
-            f"{formatar_data_br(temp_ini[0])}  até  {formatar_data_br(temp_fim[0])}",
-            color=T.PRIMARY,
-            size=14,
-            weight=ft.FontWeight.BOLD,
-        )
-
-        btn_data_ini = ft.OutlinedButton(
-            content=ft.Row(
-                spacing=6,
-                tight=True,
-                controls=[
-                    ft.Icon(ft.Icons.CALENDAR_TODAY_ROUNDED, size=15, color=T.PRIMARY),
-                    ft.Text(f"Início: {formatar_data_br(temp_ini[0])}", size=12.5, color=T.TEXT_PRIMARY),
-                ],
-            ),
-            on_click=lambda _: _escolher_data(True),
-        )
-
-        btn_data_fim = ft.OutlinedButton(
-            content=ft.Row(
-                spacing=6,
-                tight=True,
-                controls=[
-                    ft.Icon(ft.Icons.EVENT_ROUNDED, size=15, color=T.PRIMARY),
-                    ft.Text(f"Fim: {formatar_data_br(temp_fim[0])}", size=12.5, color=T.TEXT_PRIMARY),
-                ],
-            ),
-            on_click=lambda _: _escolher_data(False),
-        )
-
-        row_dias_ciclo = ft.Row(spacing=6, wrap=True, visible=(temp_modo[0] == "ciclo"))
-
-        def _atualizar_labels_modal():
-            lbl_resumo_datas.value = f"{formatar_data_br(temp_ini[0])}  até  {formatar_data_br(temp_fim[0])}"
-            btn_data_ini.content.controls[1].value = f"Início: {formatar_data_br(temp_ini[0])}"
-            btn_data_fim.content.controls[1].value = f"Fim: {formatar_data_br(temp_fim[0])}"
-            row_dias_ciclo.visible = (temp_modo[0] == "ciclo")
-            _popular_chips_modo()
-            _popular_chips_dia_ciclo()
-            try:
-                page.update()
-            except Exception:
-                pass
-
-        def _aplicar_preset(novo_modo: str):
-            temp_modo[0] = novo_modo
-            hoje_d = date.today()
-            if novo_modo == "mes":
-                m, a = estado_p["mes"], estado_p["ano"]
-                ult = calendar.monthrange(a, m)[1]
-                temp_ini[0] = date(a, m, 1)
-                temp_fim[0] = date(a, m, ult)
-            elif novo_modo == "ciclo":
-                d_i, d_f = _calcular_ciclo(estado_p["mes"], estado_p["ano"], temp_dia_ciclo[0])
-                temp_ini[0] = d_i
-                temp_fim[0] = d_f
-            elif novo_modo == "30d":
-                temp_fim[0] = hoje_d
-                temp_ini[0] = hoje_d - timedelta(days=29)
-            _atualizar_labels_modal()
-
-        def _mudar_dia_ciclo(novo_dia: int):
-            temp_dia_ciclo[0] = novo_dia
-            temp_modo[0] = "ciclo"
-            d_i, d_f = _calcular_ciclo(estado_p["mes"], estado_p["ano"], novo_dia)
-            temp_ini[0] = d_i
-            temp_fim[0] = d_f
-            _atualizar_labels_modal()
-
-        row_chips_modo = ft.Row(spacing=8, wrap=True)
-
-        def _popular_chips_modo():
-            opcoes = [
-                ("mes", "Mês Fechado"),
-                ("ciclo", f"Ciclo (Dia {temp_dia_ciclo[0]})"),
-                ("30d", "Últimos 30 dias"),
-                ("custom", "Personalizado"),
-            ]
-            row_chips_modo.controls.clear()
-            for cod, titulo_op in opcoes:
-                ativo = (temp_modo[0] == cod)
-                row_chips_modo.controls.append(
-                    ft.Container(
-                        padding=pad(h=12, v=7),
-                        bgcolor=T.PRIMARY if ativo else T.SURFACE_ALT,
-                        border_radius=18,
-                        border=borda(1, T.PRIMARY if ativo else T.BORDER),
-                        on_click=lambda _, c=cod: _aplicar_preset(c),
-                        content=ft.Text(
-                            titulo_op,
-                            size=12,
-                            weight=ft.FontWeight.BOLD if ativo else ft.FontWeight.W_500,
-                            color=ft.Colors.WHITE if ativo else T.TEXT_PRIMARY,
-                        ),
-                    )
-                )
-
-        def _popular_chips_dia_ciclo():
-            row_dias_ciclo.controls.clear()
-            row_dias_ciclo.controls.append(
-                ft.Text("Dia de início do ciclo:", color=T.TEXT_MUTED, size=12)
-            )
-            for d_op in [5, 10, 15, 20, 25]:
-                sel = (temp_dia_ciclo[0] == d_op)
-                row_dias_ciclo.controls.append(
-                    ft.Container(
-                        padding=pad(h=10, v=4),
-                        bgcolor=f"{T.PRIMARY}22" if sel else T.SURFACE_ALT,
-                        border_radius=12,
-                        border=borda(1, T.PRIMARY if sel else T.BORDER),
-                        on_click=lambda _, d=d_op: _mudar_dia_ciclo(d),
-                        content=ft.Text(
-                            f"Dia {d_op}",
-                            size=11.5,
-                            weight=ft.FontWeight.BOLD if sel else ft.FontWeight.NORMAL,
-                            color=T.PRIMARY if sel else T.TEXT_MUTED,
-                        ),
-                    )
-                )
-
-        def _escolher_data(eh_inicio: bool):
-            def _on_pick(e):
-                val = e.control.value
-                if val:
-                    dt = val.date() if isinstance(val, datetime) else val
-                    if eh_inicio:
-                        temp_ini[0] = dt
-                        if temp_ini[0] > temp_fim[0]:
-                            temp_fim[0] = temp_ini[0]
-                    else:
-                        temp_fim[0] = dt
-                        if temp_fim[0] < temp_ini[0]:
-                            temp_ini[0] = temp_fim[0]
-                    temp_modo[0] = "custom"
-                    _atualizar_labels_modal()
-
-            dp = ft.DatePicker(
-                first_date=date(2020, 1, 1),
-                last_date=date(2035, 12, 31),
-                value=temp_ini[0] if eh_inicio else temp_fim[0],
-                on_change=_on_pick,
-            )
-            page.show_dialog(dp)
-
-        def _confirmar_periodo(_):
-            estado_p["modo"] = temp_modo[0]
-            estado_p["data_inicio"] = temp_ini[0]
-            estado_p["data_fim"] = temp_fim[0]
-            estado_p["dia_ciclo"] = temp_dia_ciclo[0]
-            estado_p["mes"] = temp_fim[0].month
-            estado_p["ano"] = temp_fim[0].year
-            storage.salvar_dia_ciclo_padrao(page, temp_dia_ciclo[0])
-            page.pop_dialog()
+        def _ao_confirmar_periodo(novo_estado: dict):
+            estado_p["modo"] = novo_estado["modo"]
+            estado_p["data_inicio"] = novo_estado["data_inicio"]
+            estado_p["data_fim"] = novo_estado["data_fim"]
+            estado_p["dia_ciclo"] = novo_estado.get("dia_ciclo", estado_p["dia_ciclo"])
+            estado_p["mes"] = novo_estado.get("mes", novo_estado["data_fim"].month)
+            estado_p["ano"] = novo_estado.get("ano", novo_estado["data_fim"].year)
+            storage.salvar_dia_ciclo_padrao(page, estado_p["dia_ciclo"])
             _sincronizar_e_emitir()
 
-        _popular_chips_modo()
-        _popular_chips_dia_ciclo()
-
-        dlg_periodo = ft.AlertDialog(
-            modal=False,
-            bgcolor=T.SURFACE,
-            shape=ft.RoundedRectangleBorder(radius=18),
-            title=ft.Row(
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                controls=[
-                    ft.Row(
-                        spacing=8,
-                        controls=[
-                            ft.Icon(ft.Icons.DATE_RANGE_ROUNDED, color=T.PRIMARY, size=20),
-                            ft.Text("Filtro de Período Flexível", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
-                        ],
-                    ),
-                    ft.IconButton(
-                        icon=ft.Icons.CLOSE_ROUNDED,
-                        icon_color=T.TEXT_MUTED,
-                        icon_size=18,
-                        on_click=lambda _: page.pop_dialog(),
-                    ),
-                ],
-            ),
-            content=ft.Container(
-                width=400,
-                content=ft.Column(
-                    tight=True,
-                    spacing=14,
-                    controls=[
-                        ft.Text(
-                            "Escolha um ciclo automático ou defina datas livres (ex: dia 20 ao dia 10):",
-                            color=T.TEXT_MUTED,
-                            size=12,
-                        ),
-                        row_chips_modo,
-                        row_dias_ciclo,
-                        ft.Divider(height=1, color=T.BORDER),
-                        ft.Text("Intervalo de Datas:", color=T.TEXT_MUTED, size=11.5, weight=ft.FontWeight.W_600),
-                        ft.Row(
-                            spacing=8,
-                            wrap=True,
-                            controls=[btn_data_ini, btn_data_fim],
-                        ),
-                        ft.Container(
-                            padding=pad(h=12, v=10),
-                            bgcolor=f"{T.PRIMARY}14",
-                            border_radius=10,
-                            border=borda(1, f"{T.PRIMARY}35"),
-                            content=ft.Row(
-                                spacing=8,
-                                controls=[
-                                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED, color=T.PRIMARY, size=16),
-                                    lbl_resumo_datas,
-                                ],
-                            ),
-                        ),
-                    ],
-                ),
-            ),
-            actions=[
-                ft.TextButton("Cancelar", on_click=lambda _: page.pop_dialog()),
-                ft.FilledButton(
-                    content=ft.Text("Aplicar Período", color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
-                    style=ft.ButtonStyle(
-                        bgcolor=T.PRIMARY,
-                        shape=ft.RoundedRectangleBorder(radius=10),
-                    ),
-                    on_click=_confirmar_periodo,
-                ),
-            ],
+        abrir_modal_periodo_mobills(
+            page=page,
+            estado_periodo=estado_p,
+            on_confirm=_ao_confirmar_periodo,
         )
-        page.show_dialog(dlg_periodo)
 
     seletor_mes = ft.Container(
         content=ft.Row(

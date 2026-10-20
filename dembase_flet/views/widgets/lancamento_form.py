@@ -26,7 +26,12 @@ from core.constants import (
 from core.lancamento_state import LancamentoFormState
 from core.recorrencia import resumo_parcelas
 import core.theme as T
-from core.theme import pad, mostrar_feedback
+from core.theme import pad, borda, mostrar_feedback
+from views.widgets.custom_date_picker import (
+    abrir_seletor_data_modal,
+    formatar_data_amigavel,
+    formatar_data_curta_amigavel,
+)
 import services.supabase_client as db
 
 
@@ -222,27 +227,44 @@ class LancamentoForm(ft.Column):
             on_change=self._ao_mudar_valor,
         )
 
-        # 3. Chips de Data Rápida (Flet 1.0.1: usar on_select para renderizar estado selected)
-        self.chip_hoje = ft.Chip(
-            label=ft.Text("Hoje"),
-            selected=False,
-            on_select=lambda _: self._selecionar_data_rapida(date.today()),
+        # 3. Seletor de Data Estilo Mobills (Card Clicável + Atalhos Rápidos)
+        self.txt_data_label = ft.Text(
+            formatar_data_amigavel(self.state.data_selecionada),
+            size=12.5,
+            weight=ft.FontWeight.BOLD,
+            color=T.TEXT_PRIMARY,
         )
-        self.chip_ontem = ft.Chip(
-            label=ft.Text("Ontem"),
-            selected=False,
-            on_select=lambda _: self._selecionar_data_rapida(date.today() - timedelta(days=1)),
+        self.card_seletor_data = ft.Container(
+            content=ft.Row(
+                spacing=8,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Container(
+                        content=ft.Icon(ft.Icons.CALENDAR_MONTH_ROUNDED, color=T.PRIMARY, size=15),
+                        padding=pad(all_=5),
+                        bgcolor=f"{T.PRIMARY}18",
+                        border_radius=7,
+                    ),
+                    self.txt_data_label,
+                    ft.Icon(ft.Icons.ARROW_DROP_DOWN_ROUNDED, color=T.TEXT_MUTED, size=18),
+                ],
+            ),
+            padding=pad(h=10, v=6),
+            bgcolor=T.SURFACE,
+            border_radius=10,
+            border=borda(1, T.BORDER),
+            ink=True,
+            on_click=self._abrir_seletor_data,
+            tooltip="Clique para alterar a data",
         )
-        self.chip_outros = ft.Chip(
-            label=ft.Text("Outros..."),
-            selected=False,
-            leading=ft.Icon(ft.Icons.CALENDAR_MONTH_ROUNDED, size=16),
-            on_select=self._abrir_seletor_data,
-        )
-        self.row_chips_data = ft.Row(
-            controls=[self.chip_hoje, self.chip_ontem, self.chip_outros],
-            spacing=8,
-        )
+
+        self.chip_hoje = ft.Container()
+        self.chip_ontem = ft.Container()
+        self.chip_amanha = ft.Container()
+        self.chip_outros = ft.Container()
+        self.row_chips_data = ft.Row(spacing=6, wrap=True)
+        self._construir_chips_data()
 
         # 4. Switch de Status
         label_switch = "Foi paga" if self.state.eh_despesa else "Foi recebida"
@@ -526,10 +548,20 @@ class LancamentoForm(ft.Column):
         return [
             self.btn_tipo,
             self.txt_valor,
-            ft.Row(
-                controls=[self.row_chips_data, self.switch_status],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ft.Container(
+                content=ft.Column(
+                    spacing=6,
+                    tight=True,
+                    controls=[
+                        ft.Row(
+                            controls=[self.card_seletor_data, self.switch_status],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        self.row_chips_data,
+                    ],
+                ),
+                padding=pad(bottom=4),
             ),
             self.txt_descricao,
             self.dd_forma,
@@ -591,6 +623,54 @@ class LancamentoForm(ft.Column):
             if atualizar_ui:
                 self._safe_update(self.dd_subcategoria)
 
+    def _construir_chips_data(self):
+        hoje = date.today()
+        ontem = hoje - timedelta(days=1)
+        amanha = hoje + timedelta(days=1)
+        data_sel = self.state.data_selecionada
+
+        def _criar_chip(label: str, dt_alvo: date | None, ativo: bool, eh_outros: bool = False):
+            return ft.Container(
+                content=ft.Row(
+                    spacing=4,
+                    tight=True,
+                    controls=[
+                        ft.Icon(ft.Icons.CALENDAR_MONTH_ROUNDED, size=13, color=T.ON_PRIMARY if ativo else T.TEXT_MUTED)
+                        if eh_outros else ft.Container(),
+                        ft.Text(
+                            label,
+                            size=11,
+                            weight=ft.FontWeight.BOLD if ativo else ft.FontWeight.W_500,
+                            color=T.ON_PRIMARY if ativo else T.TEXT_PRIMARY,
+                        ),
+                    ],
+                ),
+                padding=pad(h=9, v=5),
+                bgcolor=T.PRIMARY if ativo else T.SURFACE_ALT,
+                border_radius=12,
+                border=borda(1, T.PRIMARY if ativo else T.BORDER),
+                ink=True,
+                on_click=(lambda _: self._abrir_seletor_data()) if eh_outros else (lambda _, d=dt_alvo: self._selecionar_data_rapida(d)),
+            )
+
+        eh_hoje = (data_sel == hoje)
+        eh_ontem = (data_sel == ontem)
+        eh_amanha = (data_sel == amanha)
+        eh_outra = not (eh_hoje or eh_ontem or eh_amanha)
+
+        self.chip_ontem = _criar_chip("Ontem", ontem, eh_ontem)
+        self.chip_hoje = _criar_chip("Hoje", hoje, eh_hoje)
+        self.chip_amanha = _criar_chip("Amanhã", amanha, eh_amanha)
+        label_outros = data_sel.strftime("%d/%m") if eh_outra else "Outros..."
+        self.chip_outros = _criar_chip(label_outros, None, eh_outra, eh_outros=True)
+
+        self.row_chips_data.controls = [
+            self.chip_ontem,
+            self.chip_hoje,
+            self.chip_amanha,
+            self.chip_outros,
+        ]
+
     # =========================================================================
     # SINCRONIZAÇÃO E ATUALIZAÇÃO DA UI
     # =========================================================================
@@ -598,24 +678,9 @@ class LancamentoForm(ft.Column):
         # 0. SegmentedButton (SEMPRE list[str], NUNCA set!)
         self.btn_tipo.selected = [self.state.tipo]
 
-        # 1. Chips de Data
-        hoje = date.today()
-        ontem = hoje - timedelta(days=1)
-        if self.state.data_selecionada == hoje:
-            self.chip_hoje.selected = True
-            self.chip_ontem.selected = False
-            self.chip_outros.selected = False
-            self.chip_outros.label = ft.Text("Outros...")
-        elif self.state.data_selecionada == ontem:
-            self.chip_hoje.selected = False
-            self.chip_ontem.selected = True
-            self.chip_outros.selected = False
-            self.chip_outros.label = ft.Text("Outros...")
-        else:
-            self.chip_hoje.selected = False
-            self.chip_ontem.selected = False
-            self.chip_outros.selected = True
-            self.chip_outros.label = ft.Text(self.state.data_selecionada.strftime("%d/%m"))
+        # 1. Seletor de Data e Chips
+        self.txt_data_label.value = formatar_data_amigavel(self.state.data_selecionada)
+        self._construir_chips_data()
 
         # 2. Switch Status
         self.switch_status.value = self.state.status_pago
@@ -836,40 +901,26 @@ class LancamentoForm(ft.Column):
     def _selecionar_data_rapida(self, dt: date):
         self.state.atualizar_data(dt)
         self._sincronizar_estado_com_ui()
+        self._safe_update(self.card_seletor_data)
         self._safe_update(self.row_chips_data)
         self._safe_update(self.switch_status)
         self._notificar_mudanca()
 
-    def _abrir_seletor_data(self, _):
-        # Restaura estado visual dos chips caso o usuário cancele o DatePicker
-        self._sincronizar_estado_com_ui()
-        self._safe_update(self.row_chips_data)
+    def _abrir_seletor_data(self, _=None):
+        def _ao_selecionar(d: date):
+            self.state.atualizar_data(d)
+            self._sincronizar_estado_com_ui()
+            self._safe_update(self.card_seletor_data)
+            self._safe_update(self.row_chips_data)
+            self._safe_update(self.switch_status)
+            self._notificar_mudanca()
 
-        def on_date_change(e):
-            val = e.control.value
-            if val:
-                if isinstance(val, str):
-                    try:
-                        d = datetime.fromisoformat(val[:10]).date()
-                    except Exception:
-                        d = date.today()
-                elif isinstance(val, datetime):
-                    d = val.date()
-                else:
-                    d = val
-                self.state.atualizar_data(d)
-                self._sincronizar_estado_com_ui()
-                self._safe_update(self.row_chips_data)
-                self._safe_update(self.switch_status)
-                self._notificar_mudanca()
-
-        dp = ft.DatePicker(
-            value=self.state.data_selecionada,
-            first_date=datetime(2020, 1, 1),
-            last_date=datetime(2035, 12, 31),
-            on_change=on_date_change,
+        abrir_seletor_data_modal(
+            page=self._page,
+            data_inicial=self.state.data_selecionada,
+            on_select=_ao_selecionar,
+            titulo="Data do Lançamento",
         )
-        self._page.show_dialog(dp)
 
     def _ao_tocar_switch_status(self, e):
         self.state.tocar_switch_status(bool(e.control.value))

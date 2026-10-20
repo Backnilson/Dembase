@@ -9,6 +9,7 @@ from datetime import date, timedelta
 from core import theme as T
 from core.theme import pad, borda
 from core.constants import formatar_data_br, inicio_mes_atual, hoje
+from views.widgets.custom_date_picker import abrir_modal_periodo_mobills
 
 
 class DateFilterBar(ft.Column):
@@ -55,23 +56,29 @@ class DateFilterBar(ft.Column):
 
     def _abrir_picker(self):
         page = self.page
-        if not page: return
+        if not page:
+            return
 
-        def on_change(e):
-            if e.control.value:
-                r = e.control.value
-                self._inicio = r.start.date() if hasattr(r.start, "date") else r.start
-                self._fim    = r.end.date()   if hasattr(r.end,   "date") else r.end
-                self._sel = 3
-                self._rebuild()
-                self._emitir()
+        def _ao_confirmar(res: dict):
+            self._inicio = res["data_inicio"]
+            self._fim = res["data_fim"]
+            self._sel = 3
+            self._rebuild()
+            self._emitir()
 
-        picker = ft.DateRangePicker(
-            first_date=date(2020, 1, 1),
-            last_date=date(2030, 12, 31),
-            on_change=on_change,
+        estado_p = {
+            "modo": "custom",
+            "data_inicio": self._inicio,
+            "data_fim": self._fim,
+            "mes": self._fim.month,
+            "ano": self._fim.year,
+            "dia_ciclo": 1,
+        }
+        abrir_modal_periodo_mobills(
+            page=page,
+            estado_periodo=estado_p,
+            on_confirm=_ao_confirmar,
         )
-        page.show_dialog(picker)
 
     def _rebuild(self):
         label = ft.Text(
