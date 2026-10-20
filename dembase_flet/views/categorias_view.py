@@ -8,7 +8,7 @@ Permite criar, renomear, listar e excluir categorias e suas subcategorias filhas
 """
 import flet as ft
 from core import theme as T
-from core.theme import pad, borda, mostrar_feedback
+from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
 from core.router import ROTA_CATEGORIAS
 from views.shell_view import criar_shell
 import services.supabase_client as db
@@ -261,12 +261,12 @@ def criar_view_categorias(page: ft.Page) -> ft.View:
             try:
                 if cat_id_edicao:
                     db.atualizar_categoria(cat_id_edicao, {"nome": nome})
-                    mostrar_feedback(page, "Categoria atualizada com sucesso!", "sucesso")
+                    msg_ok = "Categoria atualizada com sucesso!"
                 else:
                     db.criar_categoria({"nome": nome, "tipo": "ambos", "cor": T.PRIMARY, "icone": "category"})
-                    mostrar_feedback(page, "Categoria criada com sucesso!", "sucesso")
-                modal.open = False
-                page.update()
+                    msg_ok = "Categoria criada com sucesso!"
+                fechar_dialogo(page, modal)
+                mostrar_feedback(page, msg_ok, "sucesso")
                 carregar_dados()
             except Exception as ex:
                 mostrar_feedback(page, f"Erro ao salvar: {ex}", "erro")
@@ -283,7 +283,7 @@ def criar_view_categorias(page: ft.Page) -> ft.View:
             actions=[
                 ft.TextButton(
                     content=ft.Text("Cancelar", color=T.TEXT_MUTED),
-                    on_click=lambda _: (setattr(modal, "open", False), page.update()),
+                    on_click=lambda _: fechar_dialogo(page, modal),
                 ),
                 ft.FilledButton(
                     content=ft.Text("Salvar"),
@@ -292,9 +292,7 @@ def criar_view_categorias(page: ft.Page) -> ft.View:
                 ),
             ],
         )
-        page.overlay.append(modal)
-        modal.open = True
-        page.update()
+        abrir_dialogo(page, modal)
 
     # ---- Modal de Subcategoria (Criar / Editar) ----
     def abrir_modal_subcategoria(categoria_id: str, categoria_nome: str, sub_id_edicao: str = None, nome_atual: str = ""):
@@ -314,12 +312,12 @@ def criar_view_categorias(page: ft.Page) -> ft.View:
             try:
                 if sub_id_edicao:
                     db.atualizar_subcategoria(sub_id_edicao, {"nome": nome})
-                    mostrar_feedback(page, "Subcategoria atualizada com sucesso!", "sucesso")
+                    msg_ok = "Subcategoria atualizada com sucesso!"
                 else:
                     db.criar_subcategoria(categoria_id=categoria_id, nome=nome)
-                    mostrar_feedback(page, f"Subcategoria vinculada a '{categoria_nome}' criada com sucesso!", "sucesso")
-                modal_sub.open = False
-                page.update()
+                    msg_ok = f"Subcategoria vinculada a '{categoria_nome}' criada com sucesso!"
+                fechar_dialogo(page, modal_sub)
+                mostrar_feedback(page, msg_ok, "sucesso")
                 carregar_dados()
             except Exception as ex:
                 mostrar_feedback(page, f"Erro ao salvar: {ex}", "erro")
@@ -345,7 +343,7 @@ def criar_view_categorias(page: ft.Page) -> ft.View:
             actions=[
                 ft.TextButton(
                     content=ft.Text("Cancelar", color=T.TEXT_MUTED),
-                    on_click=lambda _: (setattr(modal_sub, "open", False), page.update()),
+                    on_click=lambda _: fechar_dialogo(page, modal_sub),
                 ),
                 ft.FilledButton(
                     content=ft.Text("Salvar"),
@@ -354,9 +352,7 @@ def criar_view_categorias(page: ft.Page) -> ft.View:
                 ),
             ],
         )
-        page.overlay.append(modal_sub)
-        modal_sub.open = True
-        page.update()
+        abrir_dialogo(page, modal_sub)
 
     txt_busca.on_change = lambda _: carregar_dados()
 

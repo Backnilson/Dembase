@@ -1,19 +1,32 @@
 """
 =============================================================================
 DemBase v3 — views/cartoes_view.py  (Flet 1.0.1)
-Gestão de Cartões de Crédito, Limites e Faturas.
-Montado DENTRO do Shell (sidebar + header).
+Gestão de Cartões de Crédito, Limites e Faturas com Drill-down Analítico.
+- Clicar em qualquer cartão abre /cartoes/:cartao_id (Fatura & Extrato do Cartão)
+- Ações Editar / Inativar isoladas no rodapé do card
 =============================================================================
 """
+from __future__ import annotations
 import flet as ft
-from datetime import date
 from core import theme as T
-from core.theme import pad, borda, mostrar_feedback
-from core.constants import formatar_moeda, hoje
+from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
+from core.constants import formatar_moeda
+from core.periodo import obter_estado_periodo_atual
+from core.nav import ir_cartao, ir_relatorio_lancamentos
+from core.report_context import ReportContext
 from views.shell_view import criar_shell, ROTA_CARTOES
+from views.widgets.clickable_card import kpi_clicavel
 import services.supabase_client as db
 
-BANDEIRAS = ["Mastercard", "Visa", "Elo", "American Express", "Hipercard", "Outra"]
+BANDEIRAS_OPCOES = [
+    ("mastercard", "Mastercard"),
+    ("visa", "Visa"),
+    ("elo", "Elo"),
+    ("amex", "American Express"),
+    ("hipercard", "Hipercard"),
+    ("outro", "Outra"),
+]
+LABELS_BANDEIRAS = dict(BANDEIRAS_OPCOES)
 
 CORES_CARTOES = [
     {"label": "Roxo Nubank",   "hex": "#820AD1"},
@@ -26,25 +39,37 @@ CORES_CARTOES = [
 ]
 
 
-def criar_view_cartoes(page: ft.Page) -> ft.View:
-    hoje_d = hoje()
-    mes_sel = [hoje_d.month]
-    ano_sel = [hoje_d.year]
+def criar_view_cartoes(
+    page: ft.Page,
+    match: dict | None = None,
+    ctx: ReportContext | None = None,
+) -> ft.View:
+    est_p = obter_estado_periodo_atual(page)
+    mes_sel = [est_p["mes"]]
+    ano_sel = [est_p["ano"]]
 
-    cartoes_lista = []
+    cartoes_lista: list[dict] = []
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2, visible=False)
 
     txt_total_limite     = ft.Text("R$ 0,00", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD)
     txt_total_disponivel = ft.Text("R$ 0,00", color=T.PRIMARY,      size=18, weight=ft.FontWeight.BOLD)
     txt_total_faturas    = ft.Text("R$ 0,00", color=T.WARNING,      size=18, weight=ft.FontWeight.BOLD)
-    txt_qtd_cartoes      = ft.Text("0 cartões", color=T.TEXT_MUTED,  size=18, weight=ft.FontWeight.BOLD)
+    txt_qtd_cartoes      = ft.Text("0 cartões", color=T.INFO,       size=18, weight=ft.FontWeight.BOLD)
 
     grid_cartoes = ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[])
 
+    def _safe_update():
+        try:
+            page.update()
+        except Exception:
+            pass
+
     # ── Carregar Dados ────────────────────────────────────────────────────────
-    def carregar_cartoes():
-        spinner.visible = True
-        page.update()
+    def carregar_cartoes(inicial: bool = False):
+        if not inicial:
+            spinner.visible = True
+            _safe_update()
+
         nonlocal cartoes_lista
         try:
             cartoes_lista = db.listar_cartoes()
@@ -73,13 +98,15 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
 
             renderizar_cards()
         except Exception as ex:
-            mostrar_feedback(page, f"Erro ao listar cartões: {ex}", "erro")
+            if not inicial:
+                mostrar_feedback(page, f"Erro ao listar cartões: {ex}", "erro")
         finally:
             spinner.visible = False
-            page.update()
+            if not inicial:
+                _safe_update()
 
     # ── Modal de Criação / Edição ─────────────────────────────────────────────
-    def abrir_modal_cartao(cartao_edicao: dict = None):
+    def abrir_modal_cartao(cartao_edicao: dict | None = None):
         eh_edicao = cartao_edicao is not None
         titulo_modal = "Editar Cartão" if eh_edicao else "Novo Cartão de Crédito"
 
@@ -90,10 +117,15 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
             **T.campo_estilo(),
         )
 
+        bandeira_inicial = (
+            db.normalizar_bandeira_cartao(cartao_edicao.get("bandeira"))
+            if eh_edicao
+            else "mastercard"
+        )
         dd_bandeira = ft.Dropdown(
             label="Bandeira *",
-            options=[ft.dropdown.Option(b) for b in BANDEIRAS],
-            value=cartao_edicao.get("bandeira", BANDEIRAS[0]) if eh_edicao else BANDEIRAS[0],
+            options=[ft.dropdown.Option(key=k, text=lbl) for k, lbl in BANDEIRAS_OPCOES],
+            value=bandeira_inicial,
             **T.dropdown_estilo(),
         )
 
@@ -122,7 +154,6 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
             **T.campo_estilo(),
         )
 
-        # Contas para débito automático (opcional)
         contas_disponiveis = db.listar_contas()
         opts_contas = [ft.dropdown.Option(key="", text="Nenhuma (Manual)")] + [
             ft.dropdown.Option(key=str(c["id"]), text=c["nome"]) for c in contas_disponiveis
@@ -140,7 +171,7 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
             cor_selecionada[0] = hex_cor
             for c_box in row_cores.controls:
                 c_box.border = borda(2, ft.Colors.WHITE) if c_box.data == hex_cor else borda(1, T.BORDER)
-            page.update()
+            _safe_update()
 
         row_cores = ft.Row(
             spacing=8,
@@ -184,7 +215,7 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
 
             dados = {
                 "nome": nome,
-                "bandeira": dd_bandeira.value,
+                "bandeira": db.normalizar_bandeira_cartao(dd_bandeira.value),
                 "cor": cor_selecionada[0],
                 "icone": "credit_card",
                 "limite_total": limite_num,
@@ -196,21 +227,24 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
 
             try:
                 if eh_edicao:
+                    old_total = float(cartao_edicao.get("limite_total", 0) or 0)
+                    old_disp  = float(cartao_edicao.get("limite_disponivel", old_total) or 0)
+                    usado     = max(0.0, old_total - old_disp)
+                    dados["limite_disponivel"] = max(0.0, limite_num - usado)
                     db.atualizar_cartao(cartao_edicao["id"], dados)
-                    mostrar_feedback(page, "Cartão atualizado!", "sucesso")
+                    msg_ok = "Cartão atualizado!"
                 else:
                     db.criar_cartao(dados)
-                    mostrar_feedback(page, "Cartão criado com sucesso!", "sucesso")
+                    msg_ok = "Cartão criado com sucesso!"
 
-                modal.open = False
-                page.update()
-                carregar_cartoes()
+                fechar_dialogo(page, modal)
+                mostrar_feedback(page, msg_ok, "sucesso")
+                carregar_cartoes(inicial=False)
             except Exception as ex:
                 mostrar_feedback(page, f"Erro ao salvar: {ex}", "erro")
 
         def fechar_modal(_):
-            modal.open = False
-            page.update()
+            fechar_dialogo(page, modal)
 
         modal = ft.AlertDialog(
             title=ft.Text(titulo_modal, color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
@@ -236,18 +270,15 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
             actions_alignment=ft.MainAxisAlignment.END,
         )
 
-        page.overlay.append(modal)
-        modal.open = True
-        page.update()
+        abrir_dialogo(page, modal)
 
     def confirmar_exclusao_cartao(cartao: dict):
         def _executar(_):
-            dialog.open = False
-            page.update()
+            fechar_dialogo(page, dialog)
             try:
                 db.deletar_cartao(cartao["id"])
                 mostrar_feedback(page, "Cartão inativado!", "sucesso")
-                carregar_cartoes()
+                carregar_cartoes(inicial=False)
             except Exception as ex:
                 mostrar_feedback(page, f"Erro: {ex}", "erro")
 
@@ -255,15 +286,13 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
             title=ft.Text("Inativar Cartão", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
             content=ft.Text(f"Deseja inativar o cartão '{cartao.get('nome')}'? As faturas existentes serão mantidas.", color=T.TEXT_MUTED, size=14),
             actions=[
-                ft.TextButton(content=ft.Text("Cancelar", color=T.TEXT_MUTED), on_click=lambda _: (setattr(dialog, "open", False), page.update())),
+                ft.TextButton(content=ft.Text("Cancelar", color=T.TEXT_MUTED), on_click=lambda _: fechar_dialogo(page, dialog)),
                 ft.FilledButton(content=ft.Text("Inativar", color=ft.Colors.WHITE), style=ft.ButtonStyle(bgcolor=T.DESPESA), on_click=_executar),
             ],
         )
-        page.overlay.append(dialog)
-        dialog.open = True
-        page.update()
+        abrir_dialogo(page, dialog)
 
-    # ── Renderizar Cards dos Cartões ──────────────────────────────────────────
+    # ── Renderizar Cards dos Cartões (Drill-down para /cartoes/:cartao_id) ────
     def renderizar_cards():
         grid_cartoes.controls.clear()
 
@@ -299,6 +328,7 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
             return
 
         for cartao in cartoes_lista:
+            cid = str(cartao.get("id") or "")
             cor_cartao = cartao.get("cor") or "#1E293B"
             lim_total = float(cartao.get("limite_total", 0) or 0)
             lim_disp  = float(cartao.get("limite_disponivel", lim_total) or 0)
@@ -307,14 +337,18 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
 
             fech = cartao.get("dia_fechamento", 1)
             venc = cartao.get("dia_vencimento", 10)
-            bandeira = cartao.get("bandeira", "Mastercard")
+            bandeira_key = db.normalizar_bandeira_cartao(cartao.get("bandeira"))
+            bandeira = LABELS_BANDEIRAS.get(bandeira_key, "Mastercard")
 
-            card = ft.Container(
-                col={"xs": 12, "sm": 6, "md": 4},
-                padding=pad(all_=20),
-                bgcolor=T.SURFACE,
-                border_radius=16,
-                border=borda(),
+            def _ir_extrato_cartao(_=None, cartao_id_alvo=cid):
+                if cartao_id_alvo:
+                    ir_cartao(page, cartao_id_alvo)
+
+            # Área superior clicável (Plástico + Limites)
+            corpo_clicavel = ft.Container(
+                on_click=_ir_extrato_cartao,
+                ink=True,
+                border_radius=12,
                 content=ft.Column(
                     spacing=14,
                     controls=[
@@ -329,16 +363,16 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
                                     ft.Row(
                                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                         controls=[
-                                            ft.Icon(ft.Icons.CONTACTLESS_ROUNDED, color=ft.Colors.WHITE70, size=24),
+                                            ft.Icon(ft.Icons.CONTACTLESS_ROUNDED, color=ft.Colors.WHITE_70, size=24),
                                             ft.Text(bandeira.upper(), color=ft.Colors.WHITE, size=12, weight=ft.FontWeight.BOLD),
                                         ],
                                     ),
-                                    ft.Container(height=8),
+                                    ft.Container(height=6),
                                     ft.Text(cartao.get("nome", "Cartão"), color=ft.Colors.WHITE, size=16, weight=ft.FontWeight.BOLD),
                                     ft.Row(
                                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                         controls=[
-                                            ft.Text(f"Fecha dia {fech}", color=ft.Colors.WHITE70, size=11),
+                                            ft.Text(f"Fecha dia {fech}", color=ft.Colors.WHITE_70, size=11),
                                             ft.Text(f"Vence dia {venc}", color=ft.Colors.WHITE, size=11, weight=ft.FontWeight.BOLD),
                                         ],
                                     ),
@@ -366,18 +400,56 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
                                 ),
                             ],
                         ),
-                        # Botões de Edição e Ações
+                    ],
+                ),
+            )
+
+            card = ft.Container(
+                col={"xs": 12, "sm": 6, "md": 4},
+                padding=pad(all_=18),
+                bgcolor=T.SURFACE,
+                border_radius=16,
+                border=borda(),
+                content=ft.Column(
+                    spacing=12,
+                    controls=[
+                        corpo_clicavel,
+                        ft.Divider(height=1, color=T.BORDER),
+                        # Barra inferior: Ver Extrato à esquerda, Editar/Inativar à direita
                         ft.Row(
-                            alignment=ft.MainAxisAlignment.END,
-                            spacing=8,
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
                                 ft.TextButton(
-                                    content=ft.Row([ft.Icon(ft.Icons.EDIT_OUTLINED, size=14, color=T.TEXT_MUTED), ft.Text("Editar", color=T.TEXT_MUTED, size=12)]),
-                                    on_click=lambda _, c=cartao: abrir_modal_cartao(c),
+                                    content=ft.Row(
+                                        spacing=4,
+                                        tight=True,
+                                        controls=[
+                                            ft.Icon(ft.Icons.RECEIPT_LONG_ROUNDED, size=15, color=T.PRIMARY),
+                                            ft.Text("Ver Fatura / Extrato", color=T.PRIMARY, size=12, weight=ft.FontWeight.W_600),
+                                        ],
+                                    ),
+                                    on_click=_ir_extrato_cartao,
                                 ),
-                                ft.TextButton(
-                                    content=ft.Row([ft.Icon(ft.Icons.DELETE_OUTLINE, size=14, color=T.DESPESA), ft.Text("Inativar", color=T.DESPESA, size=12)]),
-                                    on_click=lambda _, c=cartao: confirmar_exclusao_cartao(c),
+                                ft.Row(
+                                    spacing=4,
+                                    tight=True,
+                                    controls=[
+                                        ft.IconButton(
+                                            icon=ft.Icons.EDIT_OUTLINED,
+                                            icon_size=16,
+                                            icon_color=T.TEXT_MUTED,
+                                            tooltip="Editar cartão",
+                                            on_click=lambda _, c=cartao: abrir_modal_cartao(c),
+                                        ),
+                                        ft.IconButton(
+                                            icon=ft.Icons.DELETE_OUTLINE,
+                                            icon_size=16,
+                                            icon_color=T.DESPESA,
+                                            tooltip="Inativar cartão",
+                                            on_click=lambda _, c=cartao: confirmar_exclusao_cartao(c),
+                                        ),
+                                    ],
                                 ),
                             ],
                         ),
@@ -386,36 +458,40 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
             )
             grid_cartoes.controls.append(card)
 
-    # ── KPIs Topo ─────────────────────────────────────────────────────────────
-    def _kpi(titulo: str, ref_ctrl: ft.Control, cor: str, icone):
-        return ft.Container(
-            col={"xs": 6, "sm": 3},
-            padding=pad(all_=16),
-            bgcolor=T.SURFACE,
-            border_radius=14,
-            border=borda(),
-            content=ft.Column(
-                spacing=6,
-                controls=[
-                    ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        controls=[
-                            ft.Text(titulo, color=T.TEXT_MUTED, size=12, weight=ft.FontWeight.W_500),
-                            ft.Icon(icone, color=cor, size=18),
-                        ],
-                    ),
-                    ref_ctrl,
-                ],
-            ),
-        )
-
+    # ── KPIs Topo Clicáveis ───────────────────────────────────────────────────
     kpis_topo = ft.ResponsiveRow(
         spacing=12, run_spacing=12,
         controls=[
-            _kpi("Limite Total",        txt_total_limite,     T.TEXT_PRIMARY, ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED),
-            _kpi("Limite Disponível",   txt_total_disponivel, T.PRIMARY,      ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED),
-            _kpi("Faturas Abertas",     txt_total_faturas,    T.WARNING,      ft.Icons.CREDIT_CARD_ROUNDED),
-            _kpi("Cartões Ativos",      txt_qtd_cartoes,      T.INFO,         ft.Icons.PAYMENTS_OUTLINED),
+            kpi_clicavel(
+                titulo="Limite Total",
+                valor_control=txt_total_limite,
+                subtitulo="Soma dos cartões ativos",
+                icone=ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED,
+                cor=T.TEXT_PRIMARY,
+                on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Despesa", forma="Crédito", origem="cartoes"),
+            ),
+            kpi_clicavel(
+                titulo="Limite Disponível",
+                valor_control=txt_total_disponivel,
+                subtitulo="Folga consolidada para compras",
+                icone=ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
+                cor=T.PRIMARY,
+            ),
+            kpi_clicavel(
+                titulo="Faturas Abertas",
+                valor_control=txt_total_faturas,
+                subtitulo="Ver todas as compras no crédito",
+                icone=ft.Icons.CREDIT_CARD_ROUNDED,
+                cor=T.WARNING,
+                on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Despesa", forma="Crédito", origem="cartoes"),
+            ),
+            kpi_clicavel(
+                titulo="Cartões Ativos",
+                valor_control=txt_qtd_cartoes,
+                subtitulo="Toque em um cartão para abrir a fatura",
+                icone=ft.Icons.PAYMENTS_OUTLINED,
+                cor=T.INFO,
+            ),
         ],
     )
 
@@ -431,7 +507,7 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
                         ft.Text("Cartões de Crédito", color=T.TEXT_PRIMARY, size=22, weight=ft.FontWeight.BOLD),
                         spinner,
                     ]),
-                    ft.Text("Controle limites, faturas e parcelamentos em um só lugar", color=T.TEXT_MUTED, size=12),
+                    ft.Text("Toque em qualquer cartão para inspecionar sua fatura e compras por categoria", color=T.TEXT_MUTED, size=12),
                 ],
             ),
             ft.FilledButton(
@@ -456,7 +532,12 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
     def on_mes_ano_change(m: int, a: int):
         mes_sel[0] = m
         ano_sel[0] = a
-        carregar_cartoes()
+        carregar_cartoes(inicial=False)
+
+    def on_periodo_change(d_ini: str, d_fim: str, m: int, a: int):
+        mes_sel[0] = m
+        ano_sel[0] = a
+        carregar_cartoes(inicial=False)
 
     conteudo = ft.Column(
         spacing=0,
@@ -470,6 +551,13 @@ def criar_view_cartoes(page: ft.Page) -> ft.View:
         ],
     )
 
-    carregar_cartoes()
+    carregar_cartoes(inicial=True)
 
-    return criar_shell(page, rota_ativa=ROTA_CARTOES, conteudo=conteudo, on_mes_ano_change=on_mes_ano_change)
+    return criar_shell(
+        page,
+        rota_ativa=ROTA_CARTOES,
+        conteudo=conteudo,
+        on_mes_ano_change=on_mes_ano_change,
+        on_periodo_change=on_periodo_change,
+        on_lancamento_saved=lambda: carregar_cartoes(inicial=False),
+    )

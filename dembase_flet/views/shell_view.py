@@ -17,6 +17,12 @@ from core.router import navegar, ROTA_AUTH
 from core.window_manager import ajustar_janela_login
 from core.responsive import is_mobile, setup_responsive_resize
 from core.constants import session_clear, session_get, session_set, formatar_data_br
+from core.periodo import (
+    calcular_ciclo as _calcular_ciclo,
+    obter_estado_periodo_atual,
+    persistir_estado_periodo as _persistir_estado_periodo,
+)
+from core.nav import voltar
 from core import storage
 import services.supabase_client as db
 
@@ -52,73 +58,6 @@ _MESES_CURTOS = [
 _sidebar_expandida: bool = False
 
 
-def _calcular_ciclo(mes_ref: int, ano_ref: int, dia_inicio: int) -> tuple[date, date]:
-    """
-    Calcula um ciclo personalizado que começa em `dia_inicio` do mês anterior
-    e termina em `dia_inicio - 1` do mês de referência (ex: 20/Set a 19/Out).
-    Se dia_inicio <= 1, retorna o mês fechado normal.
-    """
-    if dia_inicio <= 1:
-        ultimo_dia = calendar.monthrange(ano_ref, mes_ref)[1]
-        return date(ano_ref, mes_ref, 1), date(ano_ref, mes_ref, ultimo_dia)
-
-    if mes_ref == 1:
-        mes_ant, ano_ant = 12, ano_ref - 1
-    else:
-        mes_ant, ano_ant = mes_ref - 1, ano_ref
-
-    max_dia_ant = calendar.monthrange(ano_ant, mes_ant)[1]
-    d_ini = date(ano_ant, mes_ant, min(dia_inicio, max_dia_ant))
-
-    max_dia_atual = calendar.monthrange(ano_ref, mes_ref)[1]
-    d_fim = date(ano_ref, mes_ref, min(dia_inicio, max_dia_atual)) - timedelta(days=1)
-    return d_ini, d_fim
-
-
-def obter_estado_periodo_atual(page: ft.Page) -> dict:
-    """
-    Recupera (ou inicializa) o estado global do filtro de período na sessão.
-    Chaves: modo ('mes' | 'ciclo' | '30d' | 'custom'), data_inicio (date), data_fim (date),
-            mes (int), ano (int), dia_ciclo (int).
-    """
-    hoje_d = date.today()
-    modo = session_get(page, "periodo_modo", "mes") or "mes"
-    mes = int(session_get(page, "periodo_mes", hoje_d.month) or hoje_d.month)
-    ano = int(session_get(page, "periodo_ano", hoje_d.year) or hoje_d.year)
-    dia_ciclo = storage.obter_dia_ciclo_padrao(page)
-
-    ini_str = session_get(page, "periodo_inicio")
-    fim_str = session_get(page, "periodo_fim")
-
-    try:
-        if ini_str and fim_str:
-            d_ini = date.fromisoformat(str(ini_str)[:10])
-            d_fim = date.fromisoformat(str(fim_str)[:10])
-        else:
-            raise ValueError()
-    except Exception:
-        ultimo_dia = calendar.monthrange(ano, mes)[1]
-        d_ini = date(ano, mes, 1)
-        d_fim = date(ano, mes, ultimo_dia)
-
-    return {
-        "modo": modo,
-        "data_inicio": d_ini,
-        "data_fim": d_fim,
-        "mes": mes,
-        "ano": ano,
-        "dia_ciclo": dia_ciclo,
-    }
-
-
-def _persistir_estado_periodo(page: ft.Page, estado: dict) -> None:
-    session_set(page, "periodo_modo", estado["modo"])
-    session_set(page, "periodo_inicio", estado["data_inicio"].isoformat())
-    session_set(page, "periodo_fim", estado["data_fim"].isoformat())
-    session_set(page, "periodo_mes", int(estado["mes"]))
-    session_set(page, "periodo_ano", int(estado["ano"]))
-
-
 def criar_shell(
     page: ft.Page,
     rota_ativa: str = ROTA_DASHBOARD,
@@ -126,8 +65,15 @@ def criar_shell(
     on_mes_ano_change=None,
     on_periodo_change=None,
     on_lancamento_saved=None,
+    rota_view: str | None = None,
+    titulo: str | None = None,
+    mostrar_voltar: bool = False,
+    can_pop: bool | None = None,
 ) -> ft.View:
     global _sidebar_expandida
+
+    rota_efetiva = rota_view or rota_ativa
+    pode_voltar = (rota_efetiva != ROTA_DASHBOARD and rota_efetiva != ROTA_AUTH) if can_pop is None else can_pop
 
     setup_responsive_resize(page)
     mobile = is_mobile(page)
@@ -518,17 +464,37 @@ def criar_shell(
     # -------------------------------------------------------------------------
     if mobile:
         # ================== LAYOUT MOBILE ==================
-        titulo_rota = next((i["label"] for i in _NAV_ITEMS if i["rota"] == rota_ativa), "DemBase")
+        titulo_rota = titulo or next((i["label"] for i in _NAV_ITEMS if i["rota"] == rota_ativa), "DemBase")
+
+        leading_ctrl = (
+            ft.IconButton(
+                icon=ft.Icons.ARROW_BACK_ROUNDED,
+                icon_color=T.TEXT_PRIMARY,
+                tooltip="Voltar",
+                on_click=lambda _: voltar(page),
+            )
+            if mostrar_voltar
+            else None
+        )
 
         appbar = ft.AppBar(
             bgcolor=T.SURFACE,
+            leading=leading_ctrl,
+            automatically_imply_leading=not mostrar_voltar,
             title=ft.GestureDetector(
                 on_tap=lambda _: navegar(page, ROTA_DASHBOARD) if rota_ativa != ROTA_DASHBOARD else None,
                 content=ft.Row(
                     spacing=6,
                     tight=True,
                     controls=[
-                        ft.Text(titulo_rota, size=15, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                        ft.Text(
+                            titulo_rota,
+                            size=15,
+                            weight=ft.FontWeight.BOLD,
+                            color=T.TEXT_PRIMARY,
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
                     ],
                 ),
             ),
@@ -635,11 +601,12 @@ def criar_shell(
         )
 
         return ft.View(
-            route=rota_ativa,
+            route=rota_efetiva,
+            can_pop=pode_voltar,
             bgcolor=T.BG,
             padding=0,
             appbar=appbar,
-            drawer=drawer,
+            drawer=None if mostrar_voltar else drawer,
             bottom_appbar=bottom_appbar,
             floating_action_button=fab,
             floating_action_button_location=ft.FloatingActionButtonLocation.CENTER_DOCKED,
@@ -768,6 +735,30 @@ def criar_shell(
             on_click=_toggle_sidebar,
         )
 
+        titulo_header = titulo or next((i["label"] for i in _NAV_ITEMS if i["rota"] == rota_ativa), "DemBase")
+        controles_esq_header: list[ft.Control] = [
+            btn_toggle,
+            ft.VerticalDivider(width=1, color=T.BORDER),
+        ]
+        if mostrar_voltar:
+            controles_esq_header.append(
+                ft.IconButton(
+                    icon=ft.Icons.ARROW_BACK_ROUNDED,
+                    icon_color=T.PRIMARY,
+                    icon_size=20,
+                    tooltip="Voltar",
+                    on_click=lambda _: voltar(page),
+                )
+            )
+        controles_esq_header.append(
+            ft.Text(
+                titulo_header,
+                color=T.TEXT_PRIMARY,
+                size=16,
+                weight=ft.FontWeight.BOLD,
+            )
+        )
+
         header = ft.Container(
             height=64,
             bgcolor=T.SURFACE,
@@ -777,16 +768,7 @@ def criar_shell(
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
-                    ft.Row(spacing=8, controls=[
-                        btn_toggle,
-                        ft.VerticalDivider(width=1, color=T.BORDER),
-                        ft.Text(
-                            next((i["label"] for i in _NAV_ITEMS if i["rota"] == rota_ativa), "DemBase"),
-                            color=T.TEXT_PRIMARY,
-                            size=16,
-                            weight=ft.FontWeight.BOLD,
-                        ),
-                    ]),
+                    ft.Row(spacing=8, controls=controles_esq_header),
                     ft.Row(spacing=12, controls=[
                         seletor_mes,
                         ft.FilledButton(
@@ -812,7 +794,8 @@ def criar_shell(
         )
 
         return ft.View(
-            route=rota_ativa,
+            route=rota_efetiva,
+            can_pop=pode_voltar,
             bgcolor=T.BG,
             padding=0,
             controls=[

@@ -1,18 +1,32 @@
 """
 =============================================================================
 DemBase v3 — views/contas_view.py  (Flet 1.0.1)
-Gestão de Contas Bancárias e Carteiras.
-Montado DENTRO do Shell (sidebar + header).
+Gestão de Contas Bancárias e Carteiras com Drill-down para Extrato Analítico.
+- Clicar em qualquer conta abre /contas/:conta_id (Extrato e Gráficos da Conta)
+- Menu ⋮ isolado para Editar / Inativar sem conflito de clique
+- Exibe entradas, saídas e qtd de movimentações no período global ativo
 =============================================================================
 """
+from __future__ import annotations
 import flet as ft
 from core import theme as T
-from core.theme import pad, borda, mostrar_feedback
-from core.constants import formatar_moeda
+from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
+from core.constants import formatar_moeda, formatar_data_br
+from core.periodo import obter_estado_periodo_atual
+from core.nav import ir_conta, ir_relatorio_lancamentos
+from core.report_context import ReportContext
 from views.shell_view import criar_shell, ROTA_CONTAS
+from views.widgets.clickable_card import kpi_clicavel
 import services.supabase_client as db
 
-TIPOS_CONTA = ["Conta Corrente", "Conta Poupança", "Carteira / Dinheiro", "Investimento", "Outros"]
+TIPOS_CONTA_OPCOES = [
+    ("corrente", "Conta Corrente"),
+    ("poupanca", "Conta Poupança"),
+    ("dinheiro", "Carteira / Dinheiro"),
+    ("investimento", "Investimento"),
+    ("outro", "Outros"),
+]
+LABELS_TIPOS_CONTA = dict(TIPOS_CONTA_OPCOES)
 
 CORES_PRESET = [
     {"label": "Esmeralda", "hex": "#10B981"},
@@ -25,31 +39,56 @@ CORES_PRESET = [
 ]
 
 
-def criar_view_contas(page: ft.Page) -> ft.View:
-    contas_lista = []
+def criar_view_contas(
+    page: ft.Page,
+    match: dict | None = None,
+    ctx: ReportContext | None = None,
+) -> ft.View:
+    est_p = obter_estado_periodo_atual(page)
+    data_ini_sel = [est_p["data_inicio"].isoformat()]
+    data_fim_sel = [est_p["data_fim"].isoformat()]
+
+    contas_lista: list[dict] = []
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2, visible=False)
 
     txt_total_atual    = ft.Text("R$ 0,00", color=T.PRIMARY, size=20, weight=ft.FontWeight.BOLD)
     txt_total_previsto = ft.Text("R$ 0,00", color=T.TEXT_MUTED, size=20, weight=ft.FontWeight.BOLD)
-    txt_qtd_contas     = ft.Text("0 contas", color=T.TEXT_PRIMARY, size=20, weight=ft.FontWeight.BOLD)
+    txt_qtd_contas     = ft.Text("0 contas", color=T.INFO, size=20, weight=ft.FontWeight.BOLD)
+    txt_sub_periodo    = ft.Text(
+        f"Movimentação no período: {formatar_data_br(data_ini_sel[0])} a {formatar_data_br(data_fim_sel[0])}",
+        color=T.TEXT_MUTED,
+        size=12,
+    )
 
     grid_contas = ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[])
 
+    def _safe_update():
+        try:
+            page.update()
+        except Exception:
+            pass
+
     # ── Carregar Dados ────────────────────────────────────────────────────────
-    def carregar_contas():
-        spinner.visible = True
-        page.update()
+    def carregar_contas(d_ini: str | None = None, d_fim: str | None = None, inicial: bool = False):
+        if d_ini:
+            data_ini_sel[0] = d_ini
+        if d_fim:
+            data_fim_sel[0] = d_fim
+
+        txt_sub_periodo.value = (
+            f"Movimentação no período: {formatar_data_br(data_ini_sel[0])} a {formatar_data_br(data_fim_sel[0])}"
+        )
+
+        if not inicial:
+            spinner.visible = True
+            _safe_update()
+
         nonlocal contas_lista
         try:
-            contas_lista = db.listar_contas()
-            resumo = {}
-            try:
-                resumo = db.obter_resumo_contas()
-            except Exception:
-                pass
-
-            total_atual = resumo.get("saldo_total_atual")
-            total_prev  = resumo.get("saldo_total_previsto")
+            pacote = db.obter_lista_contas_resumo(data_ini_sel[0], data_fim_sel[0])
+            contas_lista = pacote.get("contas") or []
+            total_atual = pacote.get("saldo_total_atual")
+            total_prev  = pacote.get("saldo_total_previsto")
 
             if total_atual is None:
                 total_atual = sum(float(c.get("saldo_atual", c.get("saldo_inicial", 0)) or 0) for c in contas_lista)
@@ -62,13 +101,15 @@ def criar_view_contas(page: ft.Page) -> ft.View:
 
             renderizar_cards()
         except Exception as ex:
-            mostrar_feedback(page, f"Erro ao listar contas: {ex}", "erro")
+            if not inicial:
+                mostrar_feedback(page, f"Erro ao listar contas: {ex}", "erro")
         finally:
             spinner.visible = False
-            page.update()
+            if not inicial:
+                _safe_update()
 
     # ── Modal de Criação / Edição ─────────────────────────────────────────────
-    def abrir_modal_conta(conta_edicao: dict = None):
+    def abrir_modal_conta(conta_edicao: dict | None = None):
         eh_edicao = conta_edicao is not None
         titulo_modal = "Editar Conta" if eh_edicao else "Nova Conta"
 
@@ -79,10 +120,15 @@ def criar_view_contas(page: ft.Page) -> ft.View:
             **T.campo_estilo(),
         )
 
+        tipo_inicial = (
+            db.normalizar_tipo_conta(conta_edicao.get("tipo_conta"))
+            if eh_edicao
+            else "corrente"
+        )
         dd_tipo = ft.Dropdown(
             label="Tipo de Conta *",
-            options=[ft.dropdown.Option(t) for t in TIPOS_CONTA],
-            value=conta_edicao.get("tipo_conta", TIPOS_CONTA[0]) if eh_edicao else TIPOS_CONTA[0],
+            options=[ft.dropdown.Option(key=k, text=lbl) for k, lbl in TIPOS_CONTA_OPCOES],
+            value=tipo_inicial,
             **T.dropdown_estilo(),
         )
 
@@ -108,7 +154,7 @@ def criar_view_contas(page: ft.Page) -> ft.View:
             cor_selecionada[0] = hex_cor
             for c_box in row_cores.controls:
                 c_box.border = borda(2, ft.Colors.WHITE) if c_box.data == hex_cor else borda(1, T.BORDER)
-            page.update()
+            _safe_update()
 
         row_cores = ft.Row(
             spacing=8,
@@ -140,7 +186,7 @@ def criar_view_contas(page: ft.Page) -> ft.View:
 
             dados = {
                 "nome": nome,
-                "tipo_conta": dd_tipo.value,
+                "tipo_conta": db.normalizar_tipo_conta(dd_tipo.value),
                 "banco": txt_banco.value.strip() or None,
                 "saldo_inicial": saldo_ini,
                 "cor": cor_selecionada[0],
@@ -150,21 +196,24 @@ def criar_view_contas(page: ft.Page) -> ft.View:
 
             try:
                 if eh_edicao:
+                    old_ini = float(conta_edicao.get("saldo_inicial", 0) or 0)
+                    diff_ini = saldo_ini - old_ini
+                    dados["saldo_atual"] = float(conta_edicao.get("saldo_atual", old_ini) or 0) + diff_ini
+                    dados["saldo_previsto"] = float(conta_edicao.get("saldo_previsto", old_ini) or 0) + diff_ini
                     db.atualizar_conta(conta_edicao["id"], dados)
-                    mostrar_feedback(page, "Conta atualizada com sucesso!", "sucesso")
+                    msg_ok = "Conta atualizada com sucesso!"
                 else:
                     db.criar_conta(dados)
-                    mostrar_feedback(page, "Conta criada com sucesso!", "sucesso")
+                    msg_ok = "Conta criada com sucesso!"
 
-                modal.open = False
-                page.update()
-                carregar_contas()
+                fechar_dialogo(page, modal)
+                mostrar_feedback(page, msg_ok, "sucesso")
+                carregar_contas(inicial=False)
             except Exception as ex:
                 mostrar_feedback(page, f"Erro ao salvar: {ex}", "erro")
 
         def fechar_modal(_):
-            modal.open = False
-            page.update()
+            fechar_dialogo(page, modal)
 
         modal = ft.AlertDialog(
             title=ft.Text(titulo_modal, color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
@@ -194,18 +243,15 @@ def criar_view_contas(page: ft.Page) -> ft.View:
             actions_alignment=ft.MainAxisAlignment.END,
         )
 
-        page.overlay.append(modal)
-        modal.open = True
-        page.update()
+        abrir_dialogo(page, modal)
 
     def confirmar_exclusao_conta(conta: dict):
         def _executar(_):
-            dialog.open = False
-            page.update()
+            fechar_dialogo(page, dialog)
             try:
                 db.deletar_conta(conta["id"])
                 mostrar_feedback(page, "Conta inativada com sucesso!", "sucesso")
-                carregar_contas()
+                carregar_contas(inicial=False)
             except Exception as ex:
                 mostrar_feedback(page, f"Erro ao excluir: {ex}", "erro")
 
@@ -216,15 +262,13 @@ def criar_view_contas(page: ft.Page) -> ft.View:
                 color=T.TEXT_MUTED, size=14,
             ),
             actions=[
-                ft.TextButton(content=ft.Text("Cancelar", color=T.TEXT_MUTED), on_click=lambda _: (setattr(dialog, "open", False), page.update())),
+                ft.TextButton(content=ft.Text("Cancelar", color=T.TEXT_MUTED), on_click=lambda _: fechar_dialogo(page, dialog)),
                 ft.FilledButton(content=ft.Text("Inativar", color=ft.Colors.WHITE), style=ft.ButtonStyle(bgcolor=T.DESPESA), on_click=_executar),
             ],
         )
-        page.overlay.append(dialog)
-        dialog.open = True
-        page.update()
+        abrir_dialogo(page, dialog)
 
-    # ── Renderizar Cards ──────────────────────────────────────────────────────
+    # ── Renderizar Cards Clicáveis (Drill-down para /contas/:conta_id) ────────
     def renderizar_cards():
         grid_contas.controls.clear()
 
@@ -260,61 +304,91 @@ def criar_view_contas(page: ft.Page) -> ft.View:
             return
 
         for conta in contas_lista:
+            cid = str(conta.get("id") or "")
             cor_conta = conta.get("cor") or T.PRIMARY
             saldo_atual = float(conta.get("saldo_atual", conta.get("saldo_inicial", 0)) or 0)
             saldo_prev  = float(conta.get("saldo_previsto", conta.get("saldo_inicial", 0)) or 0)
+            entradas_p  = float(conta.get("entradas_periodo", 0) or 0)
+            saidas_p    = float(conta.get("saidas_periodo", 0) or 0)
+            qtd_mov     = int(conta.get("qtd_movimentos", 0) or 0)
 
-            card = ft.Container(
-                col={"xs": 12, "sm": 6, "md": 4},
-                padding=pad(all_=18),
-                bgcolor=T.SURFACE,
-                border_radius=14,
-                border=borda(),
-                content=ft.Column(
-                    spacing=12,
+            def _ir_extrato_conta(_=None, conta_id_alvo=cid):
+                if conta_id_alvo:
+                    ir_conta(page, conta_id_alvo)
+
+            # Área superior esquerda clicável (Ícone + Nome da Conta)
+            area_identificacao = ft.Container(
+                expand=True,
+                on_click=_ir_extrato_conta,
+                ink=True,
+                border_radius=10,
+                padding=pad(v=2, h=2),
+                content=ft.Row(
+                    spacing=10,
                     controls=[
-                        # Topo do Card: Ícone colorido + Nome + Menu Ações
-                        ft.Row(
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ft.Container(
+                            content=ft.Icon(ft.Icons.ACCOUNT_BALANCE_ROUNDED, color=cor_conta, size=20),
+                            bgcolor=f"{cor_conta}1A",
+                            border_radius=10,
+                            padding=pad(all_=10),
+                        ),
+                        ft.Column(
+                            spacing=2,
+                            expand=True,
                             controls=[
-                                ft.Row(
-                                    spacing=10,
-                                    controls=[
-                                        ft.Container(
-                                            content=ft.Icon(ft.Icons.ACCOUNT_BALANCE_ROUNDED, color=cor_conta, size=20),
-                                            bgcolor=f"{cor_conta}1A",
-                                            border_radius=10,
-                                            padding=pad(all_=10),
-                                        ),
-                                        ft.Column(
-                                            spacing=2,
-                                            controls=[
-                                                ft.Text(conta.get("nome", "Conta"), color=T.TEXT_PRIMARY, size=15, weight=ft.FontWeight.BOLD),
-                                                ft.Text(conta.get("tipo_conta", "Conta Corrente"), color=T.TEXT_MUTED, size=11),
-                                            ],
-                                        ),
-                                    ],
+                                ft.Text(
+                                    conta.get("nome", "Conta"),
+                                    color=T.TEXT_PRIMARY,
+                                    size=15,
+                                    weight=ft.FontWeight.BOLD,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
                                 ),
-                                ft.PopupMenuButton(
-                                    icon=ft.Icons.MORE_VERT_ROUNDED,
-                                    icon_color=T.TEXT_MUTED,
-                                    icon_size=18,
-                                    items=[
-                                        ft.PopupMenuItem(
-                                            content=ft.Row([ft.Icon(ft.Icons.EDIT_OUTLINED, size=16), ft.Text("Editar")]),
-                                            on_click=lambda _, c=conta: abrir_modal_conta(c),
-                                        ),
-                                        ft.PopupMenuItem(
-                                            content=ft.Row([ft.Icon(ft.Icons.DELETE_OUTLINE, size=16, color=T.DESPESA), ft.Text("Inativar", color=T.DESPESA)]),
-                                            on_click=lambda _, c=conta: confirmar_exclusao_conta(c),
-                                        ),
-                                    ],
+                                ft.Text(
+                                    LABELS_TIPOS_CONTA.get(
+                                        db.normalizar_tipo_conta(conta.get("tipo_conta")),
+                                        "Conta Corrente",
+                                    ),
+                                    color=T.TEXT_MUTED,
+                                    size=11,
                                 ),
                             ],
                         ),
-                        ft.Divider(color=T.BORDER, height=1),
-                        # Saldos
+                    ],
+                ),
+            )
+
+            # Menu ⋮ separado da área de clique principal para evitar propagação acidental
+            menu_acoes = ft.PopupMenuButton(
+                icon=ft.Icons.MORE_VERT_ROUNDED,
+                icon_color=T.TEXT_MUTED,
+                icon_size=18,
+                tooltip="Opções da conta",
+                items=[
+                    ft.PopupMenuItem(
+                        content=ft.Row([ft.Icon(ft.Icons.RECEIPT_LONG_ROUNDED, size=16, color=T.PRIMARY), ft.Text("Ver Extrato da Conta")]),
+                        on_click=_ir_extrato_conta,
+                    ),
+                    ft.PopupMenuItem(
+                        content=ft.Row([ft.Icon(ft.Icons.EDIT_OUTLINED, size=16), ft.Text("Editar Conta")]),
+                        on_click=lambda _, c=conta: abrir_modal_conta(c),
+                    ),
+                    ft.PopupMenuItem(
+                        content=ft.Row([ft.Icon(ft.Icons.DELETE_OUTLINE, size=16, color=T.DESPESA), ft.Text("Inativar", color=T.DESPESA)]),
+                        on_click=lambda _, c=conta: confirmar_exclusao_conta(c),
+                    ),
+                ],
+            )
+
+            # Corpo inferior clicável (Saldos + Resumo de Entradas/Saídas no Período + Call-to-action)
+            corpo_clicavel = ft.Container(
+                on_click=_ir_extrato_conta,
+                ink=True,
+                border_radius=10,
+                padding=pad(v=4, h=2),
+                content=ft.Column(
+                    spacing=10,
+                    controls=[
                         ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             controls=[
@@ -322,7 +396,12 @@ def criar_view_contas(page: ft.Page) -> ft.View:
                                     spacing=2,
                                     controls=[
                                         ft.Text("Saldo Atual", color=T.TEXT_MUTED, size=11),
-                                        ft.Text(formatar_moeda(saldo_atual), color=T.PRIMARY if saldo_atual >= 0 else T.DESPESA, size=16, weight=ft.FontWeight.BOLD),
+                                        ft.Text(
+                                            formatar_moeda(saldo_atual),
+                                            color=T.PRIMARY if saldo_atual >= 0 else T.DESPESA,
+                                            size=17,
+                                            weight=ft.FontWeight.BOLD,
+                                        ),
                                     ],
                                 ),
                                 ft.Column(
@@ -330,45 +409,119 @@ def criar_view_contas(page: ft.Page) -> ft.View:
                                     spacing=2,
                                     controls=[
                                         ft.Text("Saldo Previsto", color=T.TEXT_MUTED, size=11),
-                                        ft.Text(formatar_moeda(saldo_prev), color=T.TEXT_MUTED, size=14, weight=ft.FontWeight.W_500),
+                                        ft.Text(formatar_moeda(saldo_prev), color=T.TEXT_MUTED, size=13.5, weight=ft.FontWeight.W_500),
                                     ],
                                 ),
                             ],
                         ),
+                        # Faixa de movimentação do período selecionado
+                        ft.Container(
+                            padding=pad(h=10, v=7),
+                            bgcolor=T.SURFACE_ALT,
+                            border_radius=10,
+                            content=ft.Row(
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Row(
+                                        spacing=10,
+                                        controls=[
+                                            ft.Text(
+                                                f"↑ {formatar_moeda(entradas_p)}",
+                                                color=T.RECEITA,
+                                                size=11,
+                                                weight=ft.FontWeight.W_600,
+                                            ),
+                                            ft.Text(
+                                                f"↓ {formatar_moeda(saidas_p)}",
+                                                color=T.DESPESA,
+                                                size=11,
+                                                weight=ft.FontWeight.W_600,
+                                            ),
+                                        ],
+                                    ),
+                                    ft.Row(
+                                        spacing=4,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                        controls=[
+                                            ft.Text(
+                                                f"{qtd_mov} mov." if qtd_mov > 0 else "Ver extrato",
+                                                color=cor_conta,
+                                                size=11,
+                                                weight=ft.FontWeight.W_600,
+                                            ),
+                                            ft.Icon(ft.Icons.CHEVRON_RIGHT_ROUNDED, color=cor_conta, size=15),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                        ),
                     ],
                 ),
             )
-            grid_contas.controls.append(card)
 
-    # ── KPIs Topo ─────────────────────────────────────────────────────────────
-    def _kpi(titulo: str, ref_ctrl: ft.Control, cor: str, icone):
-        return ft.Container(
-            col={"xs": 12, "sm": 4},
-            padding=pad(all_=16),
-            bgcolor=T.SURFACE,
-            border_radius=14,
-            border=borda(),
-            content=ft.Column(
-                spacing=6,
-                controls=[
-                    ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        controls=[
-                            ft.Text(titulo, color=T.TEXT_MUTED, size=12, weight=ft.FontWeight.W_500),
-                            ft.Icon(icone, color=cor, size=18),
-                        ],
-                    ),
-                    ref_ctrl,
-                ],
-            ),
-        )
+            card_box = ft.Container(
+                col={"xs": 12, "sm": 6, "md": 4},
+                padding=pad(all_=16),
+                bgcolor=T.SURFACE,
+                border_radius=16,
+                border=borda(1, T.BORDER),
+                animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
+                content=ft.Column(
+                    spacing=10,
+                    controls=[
+                        ft.Row(
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[area_identificacao, menu_acoes],
+                        ),
+                        ft.Divider(color=T.BORDER, height=1),
+                        corpo_clicavel,
+                    ],
+                ),
+            )
 
+            def _on_hover_card(e, box=card_box, cor_h=cor_conta):
+                try:
+                    hovered = str(e.data).lower() == "true" or e.data is True
+                    box.border = borda(1.4, f"{cor_h}80") if hovered else borda(1, T.BORDER)
+                    box.update()
+                except Exception:
+                    pass
+
+            card_box.on_hover = _on_hover_card
+            grid_contas.controls.append(card_box)
+
+    # ── KPIs Topo Clicáveis ───────────────────────────────────────────────────
     kpis_topo = ft.ResponsiveRow(
         spacing=12, run_spacing=12,
         controls=[
-            _kpi("Saldo Total em Contas", txt_total_atual,    T.PRIMARY, ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED),
-            _kpi("Saldo Previsto Total",   txt_total_previsto, T.TEXT_MUTED, ft.Icons.SAVINGS_OUTLINED),
-            _kpi("Contas Cadastradas",     txt_qtd_contas,     T.INFO,    ft.Icons.CREDIT_CARD_ROUNDED),
+            kpi_clicavel(
+                titulo="Saldo Total em Contas",
+                valor_control=txt_total_atual,
+                subtitulo="Ver todas as movimentações",
+                icone=ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED,
+                cor=T.PRIMARY,
+                col={"xs": 12, "sm": 4},
+                on_click=lambda _: ir_relatorio_lancamentos(page, origem="contas"),
+            ),
+            kpi_clicavel(
+                titulo="Saldo Previsto Total",
+                valor_control=txt_total_previsto,
+                subtitulo="Considerando lançamentos pendentes",
+                icone=ft.Icons.SAVINGS_OUTLINED,
+                cor=T.TEXT_MUTED,
+                col={"xs": 12, "sm": 4},
+                on_click=lambda _: ir_relatorio_lancamentos(page, status="Pendente", origem="contas"),
+            ),
+            kpi_clicavel(
+                titulo="Contas Cadastradas",
+                valor_control=txt_qtd_contas,
+                subtitulo="Toque em uma conta abaixo para abrir o extrato",
+                icone=ft.Icons.ACCOUNT_BALANCE_ROUNDED,
+                cor=T.INFO,
+                col={"xs": 12, "sm": 4},
+            ),
         ],
     )
 
@@ -379,12 +532,13 @@ def criar_view_contas(page: ft.Page) -> ft.View:
         controls=[
             ft.Column(
                 spacing=2,
+                expand=True,
                 controls=[
                     ft.Row(spacing=8, controls=[
                         ft.Text("Contas Bancárias", color=T.TEXT_PRIMARY, size=22, weight=ft.FontWeight.BOLD),
                         spinner,
                     ]),
-                    ft.Text("Gerencie seus saldos, instituições e carteiras", color=T.TEXT_MUTED, size=12),
+                    txt_sub_periodo,
                 ],
             ),
             ft.FilledButton(
@@ -406,6 +560,17 @@ def criar_view_contas(page: ft.Page) -> ft.View:
         ],
     )
 
+    def on_periodo(d_ini: str, d_fim: str, m: int, a: int):
+        carregar_contas(d_ini=d_ini, d_fim=d_fim, inicial=False)
+
+    def on_mes_ano(m: int, a: int):
+        est = obter_estado_periodo_atual(page)
+        carregar_contas(
+            d_ini=est["data_inicio"].isoformat(),
+            d_fim=est["data_fim"].isoformat(),
+            inicial=False,
+        )
+
     conteudo = ft.Column(
         spacing=0,
         controls=[
@@ -418,6 +583,13 @@ def criar_view_contas(page: ft.Page) -> ft.View:
         ],
     )
 
-    carregar_contas()
+    carregar_contas(inicial=True)
 
-    return criar_shell(page, rota_ativa=ROTA_CONTAS, conteudo=conteudo)
+    return criar_shell(
+        page,
+        rota_ativa=ROTA_CONTAS,
+        conteudo=conteudo,
+        on_mes_ano_change=on_mes_ano,
+        on_periodo_change=on_periodo,
+        on_lancamento_saved=lambda: carregar_contas(inicial=False),
+    )

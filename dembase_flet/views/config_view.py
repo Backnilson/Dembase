@@ -7,7 +7,7 @@ Montado DENTRO do Shell (sidebar + header).
 """
 import flet as ft
 from core import theme as T
-from core.theme import pad, borda, mostrar_feedback
+from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
 from core.router import ROTA_CONFIG, ROTA_AUTH, navegar
 from core import storage
 from views.shell_view import criar_shell
@@ -255,8 +255,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
                     return
                 try:
                     db.criar_destino(nome)
-                    modal_dest.open = False
-                    page.update()
+                    fechar_dialogo(page, modal_dest)
                     mostrar_feedback(page, "Destino criado com sucesso!", "sucesso")
                     carregar_destinos()
                 except Exception as ex:
@@ -266,13 +265,11 @@ def criar_view_config(page: ft.Page) -> ft.View:
                 title=ft.Text("Novo Destino", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
                 content=ft.Column(spacing=12, tight=True, controls=[txt_nome_dest]),
                 actions=[
-                    ft.TextButton(content=ft.Text("Cancelar", color=T.TEXT_MUTED), on_click=lambda _: (setattr(modal_dest, "open", False), page.update())),
+                    ft.TextButton(content=ft.Text("Cancelar", color=T.TEXT_MUTED), on_click=lambda _: fechar_dialogo(page, modal_dest)),
                     ft.FilledButton(content=ft.Text("Salvar"), style=ft.ButtonStyle(bgcolor=T.PRIMARY), on_click=salvar_dest),
                 ],
             )
-            page.overlay.append(modal_dest)
-            modal_dest.open = True
-            page.update()
+            abrir_dialogo(page, modal_dest)
 
         carregar_destinos()
 

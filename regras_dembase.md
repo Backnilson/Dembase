@@ -57,32 +57,59 @@ A tabela principal `lancamentos` possui:
 ### RPCs (Funções no PostgreSQL):
 - `get_financial_totals(p_data_inicio, p_data_fim)` — Retorna receitas, despesas e saldo
 - `get_regra_50_30_20_summary(p_data_inicio, p_data_fim)` — Retorna o resumo da regra por categoria
+- `get_dashboard_periodo(p_data_inicio, p_data_fim)` — Pacote consolidado do Dashboard com categorias (`categoria_id`), frequência diária e modalidades
+- `get_relatorio_lancamentos(...)` — Relatório geral parametrizado com KPIs, evolução diária, ranking de categorias e paginação
+- `get_lista_contas_resumo(p_data_inicio, p_data_fim)` — Lista de contas com saldo atual, previsto e movimentação no período
+- `get_relatorio_conta(...)` — Extrato analítico individual de conta com saldo inicial/final do período, transferências enviadas/recebidas e evolução diária do saldo
+- `get_relatorio_cartao(...)` — Fatura e extrato analítico individual de cartão de crédito
 
 ## 5. Arquitetura do Projeto Ativo (`dembase_flet/`)
 ```
 dembase_flet/
-├── main.py                    → Ponto de entrada (Flet 1.0.1 async com ft.run(main))
+├── main.py                        → Ponto de entrada (Flet 1.0.1 async com ft.run(main))
 ├── core/
-│   ├── constants.py           → Constantes de negócio, paleta e rotas
-│   ├── lancamento_state.py    → Máquina de estado, cascatas e validação de lançamentos
-│   ├── recorrencia.py         → Lógica pura de datas (clamping) e parcelas (centavos exatos)
-│   ├── responsive.py          → Detecção de breakpoints (Mobile vs Desktop)
-│   ├── router.py              → Roteamento assíncrono Flet
-│   ├── theme.py               → Design tokens premium (cores, estilos, bordas)
-│   └── window_manager.py      → Responsividade e dimensionamento adaptativo de janelas
+│   ├── constants.py               → Constantes de negócio, paleta e rotas
+│   ├── lancamento_state.py        → Máquina de estado, cascatas e validação de lançamentos
+│   ├── nav.py                     → Helpers tipados de navegação e drill-down (push_route)
+│   ├── periodo.py                 → Estado global do período flexível na sessão
+│   ├── recorrencia.py             → Lógica pura de datas (clamping) e parcelas (centavos exatos)
+│   ├── report_context.py          → Dataclass imutável ReportContext (serialização URL/query)
+│   ├── responsive.py              → Detecção de breakpoints (Mobile vs Desktop)
+│   ├── router.py                  → Roteador declarativo com TemplateRoute e pilha page.views
+│   ├── storage.py                 → Persistência local e em memória de preferências
+│   ├── theme.py                   → Design tokens premium (cores, estilos, bordas)
+│   └── window_manager.py          → Responsividade e dimensionamento adaptativo de janelas
 ├── services/
-│   └── supabase_client.py     → ÚNICO ponto de contato com o banco (Auth, CRUD, RPCs)
+│   └── supabase_client.py         → ÚNICO ponto de contato com o banco (Auth, CRUD, RPCs)
 ├── views/
-│   ├── auth_view.py           → Autenticação (Login e Cadastro com validação)
-│   ├── dashboard_view.py      → Dashboard com KPIs, gráficos e regra 50/30/20
-│   ├── lancamento_view.py     → Adaptador de rota /lancamento delegando ao modal
-│   ├── shell_view.py          → Layout shell persistente com sidebar responsiva retrátil
+│   ├── auth_view.py               → Autenticação (Login e Cadastro com validação)
+│   ├── calendario_view.py         → Calendário financeiro interativo
+│   ├── cartoes_view.py            → Gestão de cartões com drill-down para /cartoes/:cartao_id
+│   ├── categorias_view.py         → Gestão de categorias e subcategorias
+│   ├── config_view.py             → Configurações de perfil, ciclo e gráficos do Dashboard
+│   ├── contas_view.py             → Gestão de contas com drill-down para /contas/:conta_id
+│   ├── dashboard_view.py          → Dashboard 100% clicável com KPIs, gráficos e regra 50/30/20
+│   ├── lancamento_view.py         → Adaptador de rota /lancamento delegando ao modal
+│   ├── relatorios_view.py         → Shim delegando para views/relatorios/hub_view.py
+│   ├── shell_view.py              → Layout shell persistente com sidebar, botão voltar e período global
+│   ├── relatorios/
+│   │   ├── registry.py            → Catálogo declarativo de relatórios (RELATORIOS_CATALOGO)
+│   │   ├── hub_view.py            → Central de Relatórios (/relatorios)
+│   │   ├── lancamentos_report.py  → Relatório Geral de Lançamentos (/relatorios/lancamentos)
+│   │   ├── conta_report.py        → Extrato Analítico de Conta (/contas/:conta_id)
+│   │   ├── cartao_report.py       → Fatura e Extrato de Cartão (/cartoes/:cartao_id)
+│   │   ├── categoria_report.py    → Diagnóstico por Categoria (/relatorios/categoria/:cat_id)
+│   │   ├── regra5030_report.py    → Análise por Pilar 50/30/20 (/relatorios/regra/:regra)
+│   │   └── fluxo_mensal_report.py → Fluxo de Caixa e Comparativo 6 Meses (/relatorios/fluxo-mensal)
 │   └── widgets/
-│       ├── lancamento_form.py  → Formulário moderno (chips data rápida, switch status, progressive disclosure)
-│       ├── lancamento_sheet.py → Hospedeiro modal (BottomSheet no mobile, AlertDialog no desktop)
-│       └── regra_5030.py       → Componentes da Regra 50/30/20
-├── migrations/                → Scripts SQL de schema, tabelas e RPCs (001 a 005)
-└── requirements.txt           → Dependências (flet>=1.0.0, supabase, python-dotenv)
+│       ├── clickable_card.py      → Componente reutilizável de card/KPI clicável com hover e ink
+│       ├── dashboard_charts.py    → Catálogo modular de 6 gráficos clicáveis do Dashboard
+│       ├── lancamento_form.py     → Formulário moderno de lançamentos
+│       ├── lancamento_sheet.py    → Hospedeiro modal com pré-seleção contextual (conta/cartão/categoria)
+│       ├── regra_5030.py          → Componentes da Regra 50/30/20
+│       └── report/                → Componentes modulares de relatórios (header, kpi_strip, filter_bar, transaction_list, scaffold, empty_state)
+├── migrations/                    → Scripts SQL de schema, tabelas e RPCs (001 a 008)
+└── requirements.txt               → Dependências (flet>=1.0.0, supabase, python-dotenv)
 ```
 
 ## 6. Diretrizes de Execução & Regras Obrigatórias

@@ -28,6 +28,10 @@ def abrir_lancamento(
     tipo_inicial: Optional[str] = None,
     lancamento: Optional[dict] = None,
     on_saved: Optional[Callable[[], None]] = None,
+    conta_inicial: Optional[str] = None,
+    cartao_inicial: Optional[str] = None,
+    categoria_inicial: Optional[str] = None,
+    regra_inicial: Optional[str] = None,
 ):
     """
     Abre o modal/bottom sheet de criação ou edição de lançamento financeiro.
@@ -68,8 +72,20 @@ def abrir_lancamento(
         # Abre detalhes caso o registro já tenha dados secundários
         if state.subcategoria_id or state.subtipo or state.serie_id or state.recorrente_id:
             state.mais_detalhes_aberto = True
-    elif tipo_inicial:
-        state.mudar_tipo(tipo_inicial)
+    else:
+        if tipo_inicial:
+            state.mudar_tipo(tipo_inicial)
+        if cartao_inicial:
+            state.mudar_tipo("Despesa")
+            state.mudar_forma("Crédito")
+            state.cartao_id = str(cartao_inicial)
+        elif conta_inicial:
+            state.conta_id = str(conta_inicial)
+        if categoria_inicial:
+            state.categoria_id = str(categoria_inicial)
+        if regra_inicial and state.eh_despesa:
+            state.regra = regra_inicial
+            state.mais_detalhes_aberto = True
 
     # 2. Instanciação do formulário
     form = LancamentoForm(page, state)
@@ -212,8 +228,12 @@ def abrir_lancamento(
             }
 
             if is_edicao:
-                if modo_serie == "proximos" and state.serie_id:
-                    db.atualizar_serie(state.serie_id, dados, a_partir_de=str(state.data_selecionada))
+                if modo_serie == "proximos" and (state.serie_id or state.recorrente_id):
+                    db.atualizar_serie(
+                        state.serie_id or state.recorrente_id,
+                        dados,
+                        a_partir_de=str(state.data_selecionada),
+                    )
                 else:
                     db.atualizar_lancamento(state.lancamento_id, dados)
                 mostrar_feedback(page, "Lançamento atualizado com sucesso!", "sucesso")

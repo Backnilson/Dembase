@@ -3,8 +3,8 @@
 DemBase v3 — views/dashboard_view.py  (Flet 1.0.1)
 Dashboard Principal Multiplataforma (Mobile-First PWA + Desktop).
 - Filtro Global de Período Flexível no Topo (tempo real, zero reload)
-- KPIs em Grid 2x2 no Mobile (xs=6) e 1x4 no Desktop (md=3)
-- Grid Modular de Gráficos Dinâmicos (configuráveis pelo usuário)
+- KPIs 100% Clicáveis em Grid 2x2 no Mobile (xs=6) e 1x4 no Desktop (md=3)
+- Grid Modular de Gráficos Dinâmicos e Drill-down Interativo
 =============================================================================
 """
 from __future__ import annotations
@@ -14,8 +14,16 @@ from core import theme as T
 from core.theme import pad, borda, mostrar_feedback
 from core.constants import FRASES_MOTIVACIONAIS, formatar_moeda, formatar_data_br
 from core.responsive import is_mobile
-from core.router import navegar, ROTA_CONFIG
+from core.router import navegar
+from core.nav import (
+    ir_contas,
+    ir_cartoes,
+    ir_hub_relatorios,
+    ir_relatorio_lancamentos,
+)
+from core.report_context import ReportContext
 from core import storage
+from views.widgets.clickable_card import kpi_clicavel
 from views.widgets.dashboard_charts import (
     DASHBOARD_CHARTS_CATALOG,
     GRAFICOS_PADRAO_IDS,
@@ -26,7 +34,11 @@ from views.shell_view import criar_shell, ROTA_DASHBOARD, obter_estado_periodo_a
 import services.supabase_client as db
 
 
-def criar_view_dashboard(page: ft.Page) -> ft.View:
+def criar_view_dashboard(
+    page: ft.Page,
+    match: dict | None = None,
+    ctx: ReportContext | None = None,
+) -> ft.View:
     mobile = is_mobile(page)
     estado_inicial = obter_estado_periodo_atual(page)
 
@@ -94,11 +106,11 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                 pass
 
         try:
-            # 1. Pacote consolidado do período (overview, categorias, frequência, modalidades)
+            # 1. Pacote consolidado do período (overview, categorias com ID, frequência, modalidades)
             pacote_periodo = db.obter_dashboard_periodo(di, df)
             overview = pacote_periodo.get("overview") if isinstance(pacote_periodo, dict) else None
             if not overview:
-                overview = db.obter_overview_dashboard(m, a)
+                overview = db.obter_overview_dashboard(m, a, data_inicio=di, data_fim=df)
 
             rec = float(overview.get("receitas", 0) or 0)
             desp = float(overview.get("despesas", 0) or 0)
@@ -117,22 +129,24 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
 
             ultimo_pacote.clear()
             ultimo_pacote.update({
+                "data_inicio": di,
+                "data_fim": df,
                 "overview": overview,
                 "regra_5030": dados_5030,
                 "despesas_por_categoria": (
                     pacote_periodo.get("despesas_por_categoria")
                     if isinstance(pacote_periodo, dict) and "despesas_por_categoria" in pacote_periodo
-                    else db.obter_despesas_por_categoria(m, a)
+                    else db.obter_despesas_por_categoria(m, a, data_inicio=di, data_fim=df)
                 ),
                 "receitas_por_categoria": (
                     pacote_periodo.get("receitas_por_categoria")
                     if isinstance(pacote_periodo, dict) and "receitas_por_categoria" in pacote_periodo
-                    else db.obter_receitas_por_categoria(m, a)
+                    else db.obter_receitas_por_categoria(m, a, data_inicio=di, data_fim=df)
                 ),
                 "frequencia_diaria": (
                     pacote_periodo.get("frequencia_diaria")
                     if isinstance(pacote_periodo, dict) and "frequencia_diaria" in pacote_periodo
-                    else db.obter_frequencia_gastos(m, a)
+                    else db.obter_frequencia_gastos(m, a, data_inicio=di, data_fim=df)
                 ),
                 "despesas_por_forma": (
                     pacote_periodo.get("despesas_por_forma")
@@ -265,54 +279,48 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
         page.show_dialog(dlg_graf)
 
     # =========================================================================
-    # KPI CARDS — Grid 2x2 no Mobile (xs=6) e 1x4 no Desktop (md=3)
+    # KPI CARDS CLICÁVEIS — Grid 2x2 no Mobile (xs=6) e 1x4 no Desktop (md=3)
     # =========================================================================
-    def _kpi(titulo, ref_txt, cor, icone, sub, on_click=None):
-        return ft.Container(
-            col={"xs": 6, "sm": 6, "md": 3},
-            padding=pad(all_=14 if mobile else 18),
-            bgcolor=T.SURFACE,
-            border_radius=14,
-            border=borda(),
-            on_click=on_click,
-            ink=True if on_click else False,
-            content=ft.Column(
-                spacing=0,
-                controls=[
-                    ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        controls=[
-                            ft.Text(
-                                titulo,
-                                color=T.TEXT_MUTED,
-                                size=11.5 if mobile else 12,
-                                weight=ft.FontWeight.W_500,
-                                max_lines=1,
-                                overflow=ft.TextOverflow.ELLIPSIS,
-                            ),
-                            ft.Container(
-                                content=ft.Icon(icone, color=cor, size=16 if mobile else 18),
-                                bgcolor=f"{cor}1F",
-                                border_radius=8,
-                                padding=pad(all_=6 if mobile else 7),
-                            ),
-                        ],
-                    ),
-                    ft.Container(height=8 if mobile else 10),
-                    ref_txt,
-                    ft.Text(sub, color=T.TEXT_MUTED, size=10.5 if mobile else 11, max_lines=1),
-                ],
-            ),
-        )
-
     kpis = ft.ResponsiveRow(
         spacing=10 if mobile else 14,
         run_spacing=10 if mobile else 14,
         controls=[
-            _kpi("Saldo em Conta",  txt_saldo_contas, T.PRIMARY, ft.Icons.ACCOUNT_BALANCE_ROUNDED, "Total nas contas",   lambda _: navegar(page, "/contas")),
-            _kpi("Receitas",        txt_receitas,     T.RECEITA, ft.Icons.ARROW_UPWARD_ROUNDED,     "No período",         lambda _: navegar(page, "/relatorios?tipo=Receita")),
-            _kpi("Despesas",        txt_despesas,     T.DESPESA, ft.Icons.ARROW_DOWNWARD_ROUNDED,   "No período",         lambda _: navegar(page, "/relatorios?tipo=Despesa")),
-            _kpi("Faturas Abertas", txt_faturas,      T.WARNING, ft.Icons.CREDIT_CARD_ROUNDED,      "Cartões de crédito", lambda _: navegar(page, "/cartoes")),
+            kpi_clicavel(
+                titulo="Saldo em Conta",
+                valor_control=txt_saldo_contas,
+                subtitulo="Ver contas e saldos",
+                icone=ft.Icons.ACCOUNT_BALANCE_ROUNDED,
+                cor=T.PRIMARY,
+                compacto=mobile,
+                on_click=lambda _: ir_contas(page),
+            ),
+            kpi_clicavel(
+                titulo="Receitas",
+                valor_control=txt_receitas,
+                subtitulo="Ver receitas do período",
+                icone=ft.Icons.ARROW_UPWARD_ROUNDED,
+                cor=T.RECEITA,
+                compacto=mobile,
+                on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Receita", origem="dashboard"),
+            ),
+            kpi_clicavel(
+                titulo="Despesas",
+                valor_control=txt_despesas,
+                subtitulo="Ver despesas do período",
+                icone=ft.Icons.ARROW_DOWNWARD_ROUNDED,
+                cor=T.DESPESA,
+                compacto=mobile,
+                on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Despesa", origem="dashboard"),
+            ),
+            kpi_clicavel(
+                titulo="Faturas Abertas",
+                valor_control=txt_faturas,
+                subtitulo="Ver cartões e faturas",
+                icone=ft.Icons.CREDIT_CARD_ROUNDED,
+                cor=T.WARNING,
+                compacto=mobile,
+                on_click=lambda _: ir_cartoes(page),
+            ),
         ],
     )
 
@@ -380,16 +388,32 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                     ),
                 ],
             ),
-            ft.TextButton(
-                content=ft.Row(
-                    spacing=4,
-                    tight=True,
-                    controls=[
-                        ft.Icon(ft.Icons.TUNE_ROUNDED, color=T.PRIMARY, size=14),
-                        ft.Text("Configurar Gráficos", color=T.PRIMARY, size=12, weight=ft.FontWeight.W_600),
-                    ],
-                ),
-                on_click=_abrir_seletor_graficos,
+            ft.Row(
+                spacing=4,
+                controls=[
+                    ft.TextButton(
+                        content=ft.Row(
+                            spacing=4,
+                            tight=True,
+                            controls=[
+                                ft.Icon(ft.Icons.ASSESSMENT_ROUNDED, color=T.TEXT_MUTED, size=14),
+                                ft.Text("Central de Relatórios", color=T.TEXT_MUTED, size=12, weight=ft.FontWeight.W_500),
+                            ],
+                        ),
+                        on_click=lambda _: ir_hub_relatorios(page),
+                    ),
+                    ft.TextButton(
+                        content=ft.Row(
+                            spacing=4,
+                            tight=True,
+                            controls=[
+                                ft.Icon(ft.Icons.TUNE_ROUNDED, color=T.PRIMARY, size=14),
+                                ft.Text("Configurar Gráficos", color=T.PRIMARY, size=12, weight=ft.FontWeight.W_600),
+                            ],
+                        ),
+                        on_click=_abrir_seletor_graficos,
+                    ),
+                ],
             ),
         ],
     )
@@ -435,11 +459,11 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                         ),
                         ft.Container(
                             col={"xs": 6, "sm": 2},
-                            content=T.botao_outline("Contas", icone=ft.Icons.ACCOUNT_BALANCE_ROUNDED, on_click=lambda _: navegar(page, "/contas")),
+                            content=T.botao_outline("Contas", icone=ft.Icons.ACCOUNT_BALANCE_ROUNDED, on_click=lambda _: ir_contas(page)),
                         ),
                         ft.Container(
                             col={"xs": 6, "sm": 2},
-                            content=T.botao_outline("Cartões", icone=ft.Icons.CREDIT_CARD_ROUNDED, on_click=lambda _: navegar(page, "/cartoes")),
+                            content=T.botao_outline("Cartões", icone=ft.Icons.CREDIT_CARD_ROUNDED, on_click=lambda _: ir_cartoes(page)),
                         ),
                         ft.Container(
                             col={"xs": 6, "sm": 2},
@@ -447,7 +471,7 @@ def criar_view_dashboard(page: ft.Page) -> ft.View:
                         ),
                         ft.Container(
                             col={"xs": 6, "sm": 2},
-                            content=T.botao_outline("Relatórios", icone=ft.Icons.BAR_CHART_ROUNDED, on_click=lambda _: navegar(page, "/relatorios")),
+                            content=T.botao_outline("Relatórios", icone=ft.Icons.BAR_CHART_ROUNDED, on_click=lambda _: ir_hub_relatorios(page)),
                         ),
                     ],
                 ),

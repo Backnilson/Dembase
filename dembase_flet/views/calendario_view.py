@@ -8,7 +8,7 @@ Montado DENTRO do Shell (sidebar + header).
 import flet as ft
 from datetime import date, datetime
 from core import theme as T
-from core.theme import pad, borda, mostrar_feedback
+from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
 from core.constants import formatar_moeda, formatar_data_br, hoje, inicio_mes_atual
 from core.router import ROTA_LANCAMENTO, navegar
 from views.widgets.date_filter import DateFilterBar
@@ -77,8 +77,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
 
     def confirmar_exclusao(item: dict):
         def _executar_exclusao(_):
-            dialog.open = False
-            page.update()
+            fechar_dialogo(page, dialog)
             try:
                 db.deletar_lancamento(item["id"])
                 mostrar_feedback(page, "Lançamento excluído com sucesso!", "sucesso")
@@ -87,8 +86,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                 mostrar_feedback(page, f"Erro ao excluir: {ex}", "erro")
 
         def _fechar_dialog(_):
-            dialog.open = False
-            page.update()
+            fechar_dialogo(page, dialog)
 
         dialog = ft.AlertDialog(
             title=ft.Text("Excluir Lançamento", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
@@ -110,9 +108,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
-        page.overlay.append(dialog)
-        dialog.open = True
-        page.update()
+        abrir_dialogo(page, dialog)
 
     # ── Montagem dos Cards de Lançamento ──────────────────────────────────────
     def _card_lancamento(item: dict) -> ft.Container:

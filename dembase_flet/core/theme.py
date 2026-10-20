@@ -286,9 +286,37 @@ def mostrar_feedback(page: ft.Page, mensagem: str, tipo: str = "info"):
         behavior=ft.SnackBarBehavior.FLOATING,
         duration=4000,
     )
+    # Remove SnackBars antigos já fechados para não acumular no overlay
+    page.overlay[:] = [
+        ctrl for ctrl in page.overlay
+        if not (isinstance(ctrl, ft.SnackBar) and not getattr(ctrl, "open", False))
+    ]
     page.overlay.append(snack)
     snack.open = True
     page.update()
+
+
+def abrir_dialogo(page: ft.Page, dialog: ft.Control):
+    """Abre um AlertDialog, DatePicker ou DateRangePicker usando a API oficial do Flet 1.0.1."""
+    page.show_dialog(dialog)
+
+
+def fechar_dialogo(page: ft.Page, dialog: ft.Control = None):
+    """Fecha um diálogo aberto de forma segura no Flet 1.0.1."""
+    try:
+        page.pop_dialog()
+    except Exception:
+        pass
+    if dialog is not None and getattr(dialog, "open", False):
+        dialog.open = False
+        try:
+            dialog.update()
+        except Exception:
+            pass
+    try:
+        page.update()
+    except Exception:
+        pass
 
 
 # =============================================================================

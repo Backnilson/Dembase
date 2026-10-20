@@ -71,9 +71,7 @@ class DateFilterBar(ft.Column):
             last_date=date(2030, 12, 31),
             on_change=on_change,
         )
-        page.overlay.append(picker)
-        picker.open = True
-        page.update()
+        page.show_dialog(picker)
 
     def _rebuild(self):
         label = ft.Text(

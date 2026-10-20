@@ -427,7 +427,7 @@ BEGIN
                 CASE WHEN v_regra IS NOT NULL AND v_regra <> '' THEN v_regra::regra_financeira ELSE NULL END,
                 v_serie_id, v_recorrente_id, 'fixa'
             )
-            ON CONFLICT (recorrente_id, data) DO NOTHING;
+            ON CONFLICT (recorrente_id, data) WHERE (recorrente_id IS NOT NULL) DO NOTHING;
 
             v_criados := v_criados + 1;
             i := i + 1;
@@ -494,7 +494,7 @@ BEGIN
                 CASE WHEN rec.regra IS NOT NULL AND rec.regra <> '' THEN rec.regra::regra_financeira ELSE NULL END,
                 rec.id, 'fixa'
             )
-            ON CONFLICT (recorrente_id, data) DO NOTHING;
+            ON CONFLICT (recorrente_id, data) WHERE (recorrente_id IS NOT NULL) DO NOTHING;
 
             IF FOUND THEN
                 v_inseridos := v_inseridos + 1;

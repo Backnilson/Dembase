@@ -1035,7 +1035,7 @@ class LancamentoForm(ft.Column):
                 mostrar_feedback(self._page, "Informe o nome da conta.", "alerta")
                 return
             try:
-                res = db.criar_conta({"nome": nome, "tipo": "corrente", "cor": T.PRIMARY})
+                res = db.criar_conta({"nome": nome, "tipo_conta": "corrente", "cor": T.PRIMARY})
                 self._fechar_submodal(modal)
                 self.contas = db.listar_contas()
                 if res and res.data:
@@ -1085,7 +1085,7 @@ class LancamentoForm(ft.Column):
             try:
                 res = db.criar_cartao({
                     "nome": nome,
-                    "bandeira": "Mastercard",
+                    "bandeira": "mastercard",
                     "cor": T.PRIMARY,
                     "limite_total": lim,
                     "dia_fechamento": 1,

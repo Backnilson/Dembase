@@ -142,20 +142,62 @@ def listar_contas() -> list:
     return resp.data or []
 
 
+MAPA_TIPOS_CONTA = {
+    "corrente": "corrente",
+    "conta corrente": "corrente",
+    "poupanca": "poupanca",
+    "poupança": "poupanca",
+    "conta poupanca": "poupanca",
+    "conta poupança": "poupanca",
+    "dinheiro": "dinheiro",
+    "carteira": "dinheiro",
+    "carteira / dinheiro": "dinheiro",
+    "investimento": "investimento",
+    "investimentos": "investimento",
+    "outro": "outro",
+    "outros": "outro",
+    "outra": "outro",
+}
+
+
+def normalizar_tipo_conta(tipo: str | None) -> str:
+    """Normaliza o tipo de conta para respeitar a constraint contas_tipo_conta_check."""
+    if not tipo:
+        return "corrente"
+    chave = str(tipo).strip().lower()
+    return MAPA_TIPOS_CONTA.get(chave, "outro")
+
+
 def criar_conta(dados: dict):
     """
     dados deve conter: nome, tipo_conta, banco (opcional), cor, icone,
     saldo_inicial. user_id é injetado pelo RLS.
     """
+    payload = dict(dados)
+    if "tipo" in payload:
+        tipo_legado = payload.pop("tipo")
+        payload.setdefault("tipo_conta", tipo_legado)
+    payload["tipo_conta"] = normalizar_tipo_conta(payload.get("tipo_conta"))
+    saldo_ini = float(payload.get("saldo_inicial", 0) or 0)
+    payload.setdefault("saldo_inicial", saldo_ini)
+    payload.setdefault("saldo_atual", saldo_ini)
+    payload.setdefault("saldo_previsto", saldo_ini)
+
     user = usuario_atual()
     if user:
-        dados["user_id"] = user.id
-        dados["perfil_id"] = user.id
-    return supabase.table("contas").insert(dados).execute()
+        payload["user_id"] = user.id
+        payload["perfil_id"] = user.id
+    return supabase.table("contas").insert(payload).execute()
 
 
 def atualizar_conta(conta_id: str, dados: dict):
-    return supabase.table("contas").update(dados).eq("id", conta_id).execute()
+    payload = dict(dados)
+    if "tipo" in payload:
+        tipo_legado = payload.pop("tipo")
+        payload.setdefault("tipo_conta", tipo_legado)
+    if "tipo_conta" in payload:
+        payload["tipo_conta"] = normalizar_tipo_conta(payload["tipo_conta"])
+    return supabase.table("contas").update(payload).eq("id", conta_id).execute()
 
 
 def deletar_conta(conta_id: str):
@@ -183,17 +225,30 @@ def listar_categorias(tipo: str = None) -> list:
     return resp.data or []
 
 
+def normalizar_tipo_categoria(tipo: str | None) -> str:
+    """Normaliza o tipo de categoria para respeitar a constraint categorias_tipo_check."""
+    if not tipo:
+        return "ambos"
+    chave = str(tipo).strip().lower()
+    return chave if chave in ("receita", "despesa", "ambos") else "ambos"
+
+
 def criar_categoria(dados: dict):
     """dados: nome, tipo, cor, icone"""
+    payload = dict(dados)
+    payload["tipo"] = normalizar_tipo_categoria(payload.get("tipo"))
     user = usuario_atual()
     if user:
-        dados["user_id"] = user.id
-        dados["perfil_id"] = user.id
-    return supabase.table("categorias").insert(dados).execute()
+        payload["user_id"] = user.id
+        payload["perfil_id"] = user.id
+    return supabase.table("categorias").insert(payload).execute()
 
 
 def atualizar_categoria(categoria_id: str, dados: dict):
-    return supabase.table("categorias").update(dados).eq("id", categoria_id).execute()
+    payload = dict(dados)
+    if "tipo" in payload:
+        payload["tipo"] = normalizar_tipo_categoria(payload["tipo"])
+    return supabase.table("categorias").update(payload).eq("id", categoria_id).execute()
 
 
 def deletar_categoria(categoria_id: str):
@@ -311,21 +366,50 @@ def listar_cartoes() -> list:
     return resp.data or []
 
 
+MAPA_BANDEIRAS_CARTAO = {
+    "mastercard": "mastercard",
+    "master": "mastercard",
+    "visa": "visa",
+    "elo": "elo",
+    "amex": "amex",
+    "american express": "amex",
+    "american_express": "amex",
+    "hipercard": "hipercard",
+    "hiper": "hipercard",
+    "outro": "outro",
+    "outra": "outro",
+    "outros": "outro",
+}
+
+
+def normalizar_bandeira_cartao(bandeira: str | None) -> str:
+    """Normaliza a bandeira do cartão para respeitar a constraint cartoes_bandeira_check."""
+    if not bandeira:
+        return "mastercard"
+    chave = str(bandeira).strip().lower()
+    return MAPA_BANDEIRAS_CARTAO.get(chave, "outro")
+
+
 def criar_cartao(dados: dict):
     """
     dados: nome, bandeira, cor, icone, limite_total,
            dia_vencimento, dia_fechamento, conta_debito_id (opcional)
     """
+    payload = dict(dados)
+    payload["bandeira"] = normalizar_bandeira_cartao(payload.get("bandeira"))
     user = usuario_atual()
     if user:
-        dados["user_id"] = user.id
+        payload["user_id"] = user.id
     # limite_disponivel começa igual ao limite_total
-    dados.setdefault("limite_disponivel", dados.get("limite_total", 0))
-    return supabase.table("cartoes").insert(dados).execute()
+    payload.setdefault("limite_disponivel", payload.get("limite_total", 0))
+    return supabase.table("cartoes").insert(payload).execute()
 
 
 def atualizar_cartao(cartao_id: str, dados: dict):
-    return supabase.table("cartoes").update(dados).eq("id", cartao_id).execute()
+    payload = dict(dados)
+    if "bandeira" in payload:
+        payload["bandeira"] = normalizar_bandeira_cartao(payload["bandeira"])
+    return supabase.table("cartoes").update(payload).eq("id", cartao_id).execute()
 
 
 def deletar_cartao(cartao_id: str):
@@ -412,8 +496,7 @@ def listar_lancamentos(
     """
     query = supabase.table("lancamentos").select(
         "*, contas(nome,cor,icone), categorias(nome,cor,icone), "
-        "destinos(nome), cartoes(nome,bandeira,cor), "
-        "subcategorias(nome), faturas(mes,ano,status)"
+        "cartoes(nome,bandeira,cor), subcategorias(nome), faturas(mes,ano,status)"
     )
     if data_inicio:
         query = query.gte("data", data_inicio)
@@ -431,8 +514,7 @@ def obter_lancamento(lancamento_id: str) -> dict | None:
         supabase.table("lancamentos")
         .select(
             "*, contas(nome,cor,icone), categorias(nome,cor,icone), "
-            "destinos(nome), cartoes(nome,bandeira,cor), "
-            "subcategorias(nome), faturas(mes,ano,status)"
+            "cartoes(nome,bandeira,cor), subcategorias(nome), faturas(mes,ano,status)"
         )
         .eq("id", lancamento_id)
         .single()
@@ -749,4 +831,157 @@ def obter_resumo_5030(data_inicio: str = None, data_fim: str = None) -> dict:
         params["p_data_fim"] = str(data_fim)
     resp = supabase.rpc("get_regra_50_30_20_summary", params).execute()
     return resp.data or {}
+
+
+# =============================================================================
+# RELATÓRIOS MODULARES & DRILL-DOWN (RPCs Migração 008)
+# =============================================================================
+def obter_relatorio_lancamentos(
+    data_inicio: str,
+    data_fim: str,
+    filtros: dict | None = None,
+    limite: int = 50,
+    offset: int = 0,
+) -> dict:
+    """
+    Chama 'get_relatorio_lancamentos'.
+    Retorna {totais, por_categoria, por_subcategoria, por_dia, por_forma, lancamentos, total_registros}.
+    """
+    vazio = {
+        "totais": {
+            "receitas": 0.0,
+            "despesas": 0.0,
+            "transferencias": 0.0,
+            "saldo": 0.0,
+            "total_filtrado": 0.0,
+            "pago": 0.0,
+            "pendente": 0.0,
+            "qtd": 0,
+            "media_diaria": 0.0,
+        },
+        "por_categoria": [],
+        "por_subcategoria": [],
+        "por_dia": [],
+        "por_forma": [],
+        "lancamentos": [],
+        "total_registros": 0,
+    }
+    params = {
+        "p_data_inicio": str(data_inicio)[:10],
+        "p_data_fim": str(data_fim)[:10],
+        "p_filtros": filtros or {},
+        "p_limite": int(limite),
+        "p_offset": int(offset),
+    }
+    resp = supabase.rpc("get_relatorio_lancamentos", params).execute()
+    if isinstance(resp.data, dict):
+        return {**vazio, **resp.data}
+    return vazio
+
+
+def obter_lista_contas_resumo(
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+) -> dict:
+    """
+    Chama 'get_lista_contas_resumo'.
+    Retorna {saldo_total_atual, saldo_total_previsto, entradas_periodo_total, saidas_periodo_total, contas: [...]}.
+    """
+    vazio = {
+        "saldo_total_atual": 0.0,
+        "saldo_total_previsto": 0.0,
+        "entradas_periodo_total": 0.0,
+        "saidas_periodo_total": 0.0,
+        "contas": [],
+    }
+    params: dict = {}
+    if data_inicio:
+        params["p_data_inicio"] = str(data_inicio)[:10]
+    if data_fim:
+        params["p_data_fim"] = str(data_fim)[:10]
+    resp = supabase.rpc("get_lista_contas_resumo", params).execute()
+    if isinstance(resp.data, dict):
+        return {**vazio, **resp.data}
+    return vazio
+
+
+def obter_relatorio_conta(
+    conta_id: str,
+    data_inicio: str,
+    data_fim: str,
+    filtros: dict | None = None,
+    limite: int = 50,
+    offset: int = 0,
+) -> dict:
+    """
+    Chama 'get_relatorio_conta'.
+    Retorna {conta, saldo_inicial, entradas, saidas, saldo_final, saldo_previsto_fim, evolucao_saldo, por_categoria, lancamentos, total_registros}.
+    """
+    vazio = {
+        "conta": None,
+        "saldo_inicial": 0.0,
+        "entradas": 0.0,
+        "saidas": 0.0,
+        "entradas_pendentes": 0.0,
+        "saidas_pendentes": 0.0,
+        "saldo_final": 0.0,
+        "saldo_previsto_fim": 0.0,
+        "evolucao_saldo": [],
+        "por_categoria": [],
+        "lancamentos": [],
+        "total_registros": 0,
+    }
+    params = {
+        "p_conta_id": str(conta_id),
+        "p_data_inicio": str(data_inicio)[:10],
+        "p_data_fim": str(data_fim)[:10],
+        "p_filtros": filtros or {},
+        "p_limite": int(limite),
+        "p_offset": int(offset),
+    }
+    resp = supabase.rpc("get_relatorio_conta", params).execute()
+    if isinstance(resp.data, dict):
+        return {**vazio, **resp.data}
+    return vazio
+
+
+def obter_relatorio_cartao(
+    cartao_id: str,
+    data_inicio: str,
+    data_fim: str,
+    filtros: dict | None = None,
+    limite: int = 50,
+    offset: int = 0,
+) -> dict:
+    """
+    Chama 'get_relatorio_cartao'.
+    Retorna {cartao, totais, faturas, por_categoria, lancamentos, total_registros}.
+    """
+    vazio = {
+        "cartao": None,
+        "totais": {
+            "gasto_periodo": 0.0,
+            "qtd_compras": 0,
+            "ticket_medio": 0.0,
+            "total_parcelado": 0.0,
+            "total_avista": 0.0,
+        },
+        "faturas": [],
+        "por_categoria": [],
+        "lancamentos": [],
+        "total_registros": 0,
+    }
+    params = {
+        "p_cartao_id": str(cartao_id),
+        "p_data_inicio": str(data_inicio)[:10],
+        "p_data_fim": str(data_fim)[:10],
+        "p_filtros": filtros or {},
+        "p_limite": int(limite),
+        "p_offset": int(offset),
+    }
+    resp = supabase.rpc("get_relatorio_cartao", params).execute()
+    if isinstance(resp.data, dict):
+        return {**vazio, **resp.data}
+    return vazio
+
 
