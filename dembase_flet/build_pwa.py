@@ -26,6 +26,11 @@ def main():
     print("DEMBASE v3 — INICIANDO BUILD DO PWA ESTÁTICO (FLET 1.0.1)")
     print("==================================================================")
 
+    # Limpeza prévia para evitar recursão no empacotamento
+    for pasta_antiga in [os.path.join(CURRENT_DIR, "dist"), DIST_DIR]:
+        if os.path.exists(pasta_antiga):
+            shutil.rmtree(pasta_antiga, ignore_errors=True)
+
     # 1. Certifica que os ícones foram gerados
     icone_192 = os.path.join(ICONS_DIR, "icon-192.png")
     if not os.path.exists(icone_192):
@@ -38,8 +43,10 @@ def main():
     # 2. Executa o flet publish
     print("\n[2/4] Executando 'flet publish' com WebAssembly e CanvasKit...")
     main_py = os.path.join(CURRENT_DIR, "main.py")
-    cmd = [
-        "flet", "publish", main_py,
+    flet_bin = shutil.which("flet")
+    base_cmd = [flet_bin] if flet_bin else [sys.executable, "-c", "from flet.cli import main; main()"]
+    cmd = base_cmd + [
+        "publish", main_py,
         "--distpath", DIST_DIR,
         "-a", ASSETS_DIR,
         "--app-name", "DemBase Finanças",
