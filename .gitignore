@@ -52,3 +52,7 @@ mobills_dados.xlsx
 *.xlsx
 import_script.sql
 scripts/
+
+import_*.sql
+**/import_*.sql
+**/scripts/
