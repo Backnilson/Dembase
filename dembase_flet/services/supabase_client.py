@@ -13,19 +13,27 @@ import httpx._transports.default
 from dotenv import load_dotenv
 
 # Garante compatibilidade SSL nativa do Windows para httpx e Supabase
-def _criar_ssl_context_nativo(*args, **kwargs):
-    return ssl.create_default_context()
+try:
+    def _criar_ssl_context_nativo(*args, **kwargs):
+        return ssl.create_default_context()
 
-httpx.create_ssl_context = _criar_ssl_context_nativo
-httpx._config.create_ssl_context = _criar_ssl_context_nativo
-httpx._transports.default.create_ssl_context = _criar_ssl_context_nativo
+    httpx.create_ssl_context = _criar_ssl_context_nativo
+    if hasattr(httpx, "_config"):
+        httpx._config.create_ssl_context = _criar_ssl_context_nativo
+    if hasattr(httpx, "_transports") and hasattr(httpx._transports, "default"):
+        httpx._transports.default.create_ssl_context = _criar_ssl_context_nativo
+except Exception:
+    pass
 
 from supabase import create_client, Client
 
 load_dotenv()
 
-_URL = os.environ.get("SUPABASE_URL", "")
-_KEY = os.environ.get("SUPABASE_KEY", "")
+_DEFAULT_URL = "https://ieljnrkxxopqzpnlodfk.supabase.co"
+_DEFAULT_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImllbGpucmt4eG9wcXpwbmxvZGZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyMjUzNjQsImV4cCI6MjEwNTgwMTM2NH0.0mAJi0XgEJmjmLu3TrsDoKjVkejHZ3aof8dBhnZIzV0"
+
+_URL = os.environ.get("SUPABASE_URL") or _DEFAULT_URL
+_KEY = os.environ.get("SUPABASE_KEY") or _DEFAULT_KEY
 
 if not _URL or not _KEY:
     raise EnvironmentError(

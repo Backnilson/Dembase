@@ -56,3 +56,6 @@ scripts/
 import_*.sql
 **/import_*.sql
 **/scripts/
+
+dist/
+dist*/
