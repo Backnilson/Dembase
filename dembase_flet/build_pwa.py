@@ -2,12 +2,12 @@
 =============================================================================
 DemBase v3 — build_pwa.py
 Script oficial de compilação estática do PWA (Flet 1.0.1 + Pyodide/WASM).
-Gera o diretório 'dist/' pronto para publicação no Cloudflare Pages, Vercel
-ou GitHub Pages, com:
+Gera o diretório 'dist/' pronto para publicação no Cloudflare Workers / Pages,
+Vercel ou GitHub Pages, com:
 - Nome configurado como "DemBase Finanças"
 - Ícones personalizados (192, 512, maskable e apple-touch-icon)
 - manifest.json no padrão PWA standalone
-- Arquivo _redirects para SPA routing (evitando erro 404 em recargas)
+- 200.html e 404.html para SPA routing nativo (sem loops de redirecionamento)
 =============================================================================
 """
 import os
@@ -62,8 +62,8 @@ def main():
         print("[ERRO] Falha na compilação do flet publish.")
         sys.exit(1)
 
-    # 3. Injeta ícones customizados e redirects no dist
-    print("\n[3/4] Injetando ícones customizados e arquivo _redirects em dist/...")
+    # 3. Injeta ícones customizados e fallbacks SPA no dist
+    print("\n[3/4] Injetando ícones customizados e fallbacks SPA em dist/...")
     dist_icons = os.path.join(DIST_DIR, "icons")
     os.makedirs(dist_icons, exist_ok=True)
 
@@ -78,22 +78,25 @@ def main():
     if os.path.exists(src_apple):
         shutil.copy2(src_apple, os.path.join(dist_icons, "apple-touch-icon-192.png"))
 
-    # Copiar favicon e _redirects
+    # Copiar favicon
     fav_src = os.path.join(ASSETS_DIR, "favicon.png")
     if os.path.exists(fav_src):
         shutil.copy2(fav_src, os.path.join(DIST_DIR, "favicon.png"))
 
-    red_src = os.path.join(ASSETS_DIR, "_redirects")
-    if os.path.exists(red_src):
-        shutil.copy2(red_src, os.path.join(DIST_DIR, "_redirects"))
+    # Gerar 200.html e 404.html a partir de index.html para fallback SPA nativo (Cloudflare, Vercel, Netlify)
+    idx_src = os.path.join(DIST_DIR, "index.html")
+    if os.path.exists(idx_src):
+        shutil.copy2(idx_src, os.path.join(DIST_DIR, "200.html"))
+        shutil.copy2(idx_src, os.path.join(DIST_DIR, "404.html"))
 
     # 4. Verificação de integridade
     print("\n[4/4] Verificando integridade dos arquivos gerados em dist/:")
     arquivos_obrigatorios = [
         "index.html",
+        "200.html",
+        "404.html",
         "manifest.json",
         "flutter_service_worker.js",
-        "_redirects",
         "app.tar.gz",
         "favicon.png",
         "icons/icon-192.png",
@@ -113,7 +116,7 @@ def main():
         print("\n==================================================================")
         print("BUILD PWA CONCLUÍDO COM 100% DE SUCESSO!")
         print(f"Diretório gerado: {DIST_DIR}")
-        print("Pronto para publicação no Cloudflare Pages, Vercel ou GitHub Pages.")
+        print("Pronto para publicação no Cloudflare Workers / Pages.")
         print("==================================================================")
     else:
         print("\n[AVISO] Alguns arquivos não foram encontrados no dist.")
