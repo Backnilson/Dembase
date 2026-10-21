@@ -15,7 +15,7 @@ import services.supabase_client as db
 
 
 async def main(page: ft.Page):
-    page.title   = "DemBase"
+    page.title   = "DemBase Finanças"
     page.padding = 0
 
     # 1. Configuração do Tema Dinâmico (Automático e Manual)
@@ -51,4 +51,21 @@ async def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main, assets_dir="assets")
+    import os
+
+    _porta_servidor = os.environ.get("PORT")
+    if _porta_servidor:
+        # Modo servidor web (Koyeb / Northflank / Docker): serve o app via HTTP + WebSocket
+        # em 0.0.0.0:PORT, sem abrir janela nem navegador.
+        # Força o modo servidor web do Flet (não abre navegador e escuta em 0.0.0.0).
+        os.environ.setdefault("FLET_FORCE_WEB_SERVER", "true")
+        _assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+        ft.run(
+            main,
+            host="0.0.0.0",
+            port=int(_porta_servidor),
+            view=ft.AppView.WEB_BROWSER,
+            assets_dir=_assets,
+        )
+    else:
+        ft.run(main, assets_dir="assets")

@@ -1,0 +1,17 @@
+.git
+.github
+.env
+**/.env
+dist
+**/dist
+**/__pycache__
+**/*.pyc
+Codigos_antigos
+Codigos_antigos1
+docs
+scripts
+**/scripts
+*.xlsx
+*.sql
+**/Arquivos
+dembase_flet/migrations
