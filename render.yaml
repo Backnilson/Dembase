@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: dembase
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: PYTHONUNBUFFERED
+        value: 1
