@@ -1,8 +1,8 @@
 """
 =============================================================================
-DemBase v3 â€” run_migrations.py
-Script de migraÃ§Ã£o executado directamente via supabase-py (REST/RPC).
-Cria todas as tabelas e RPCs necessÃ¡rias.
+DemBase v3 — run_migrations.py
+Script de migração executado via Supabase Management API ou MCP.
+Cria todas as tabelas e RPCs necessárias.
 Execute: python run_migrations.py
 =============================================================================
 """
@@ -18,31 +18,18 @@ load_dotenv()
 
 import httpx
 
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
-
-# Para migrations, usamos a REST API do PostgREST via endpoint /rest/v1/rpc
-# Mas para DDL (CREATE TABLE, ALTER TABLE), precisamos do endpoint de SQL
-# O Supabase expÃµe isso no Management API ou via pg_net.
-# A forma mais simples Ã© usar o endpoint /rest/v1/ com service_role key
-# OU usar o mÃ³dulo supabase com postgrest
-
-# ---------------------------------------------------------------------------
-# Usamos httpx directo para o endpoint SQL do Supabase
-# O endpoint correcto para SQL raw Ã©: POST /rest/v1/rpc/exec_sql
-# Mas o Supabase Management API Ã© o caminho oficial para DDL
-# ---------------------------------------------------------------------------
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://ieljnrkxxopqzpnlodfk.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+# A Management API (api.supabase.com) exige um Personal Access Token (PAT, sbp_...)
+SUPABASE_ACCESS_TOKEN = os.environ.get("SUPABASE_ACCESS_TOKEN") or os.environ.get("SUPABASE_PAT") or SUPABASE_KEY
 
 def executar_sql_migration(sql_content: str, nome: str):
     """Executa SQL via Supabase Management API."""
-    # Extrair project ref da URL
-    # https://ieljnrkxxopqzpnlodfk.supabase.co -> ieljnrkxxopqzpnlodfk
     project_ref = SUPABASE_URL.replace("https://", "").split(".")[0]
-    
     url = f"https://api.supabase.com/v1/projects/{project_ref}/database/query"
     
     headers = {
-        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Authorization": f"Bearer {SUPABASE_ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
     
@@ -53,6 +40,10 @@ def executar_sql_migration(sql_content: str, nome: str):
         if resp.status_code in (200, 201):
             print(f"  [OK] {nome}")
             return True
+        elif resp.status_code == 401:
+            print(f"  [AVISO 401] {nome}: A API de gerenciamento exige um Personal Access Token (SUPABASE_ACCESS_TOKEN).")
+            print(f"  As migrações podem ser aplicadas via SQL Editor do Supabase ou MCP.")
+            return False
         else:
             print(f"  [ERRO {resp.status_code}] {nome}: {resp.text[:300]}")
             return False
@@ -68,7 +59,7 @@ def ler_migration(nome_arquivo: str) -> str:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("DemBase v3 â€” Executando Migrations")
+    print("DemBase v3 — Executando Migrations")
     print("=" * 60)
     
     migrations = [
