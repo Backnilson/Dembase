@@ -202,11 +202,14 @@ class TransactionList(ft.Column):
     def _abrir_seletor_pote(self, item: dict):
         """
         Abre modal rápido para reclassificar o Pote Financeiro da despesa.
-        Executa UPDATE direto no Supabase e recarrega a lista sem formulário complexo.
+        Se o lançamento fizer parte de uma série/recorrência, pergunta o escopo
+        (somente este ou este e os próximos).
+        Executa UPDATE no Supabase e recarrega a lista sem formulário complexo.
         """
         pote_id_atual = str(item.get("pote_id") or "")
         desc = item.get("descricao") or item.get("categoria_nome") or "Lançamento"
         valor = float(item.get("valor", 0) or 0)
+        tem_serie = bool(item.get("serie_id") or item.get("recorrente_id"))
 
         try:
             potes = db.listar_potes() or []
@@ -215,27 +218,93 @@ class TransactionList(ft.Column):
         if not potes:
             potes = list(POTES_PADRAO)
 
-        def _selecionar(pt: dict):
-            fechar_dialogo(self._page, dlg)
-            pid = pt.get("id")
-            pnome = pt.get("nome", "Pote")
+        def _executar_salvamento(pid: str | None, pnome: str, escopo: str = "individual"):
             try:
-                db.atualizar_lancamento(str(item["id"]), {"pote_id": pid})
-                mostrar_feedback(self._page, f"Classificado no pote '{pnome}'!", "sucesso")
+                if escopo == "proximos" and tem_serie:
+                    sid = str(item.get("serie_id") or item.get("recorrente_id"))
+                    dt = str(item.get("data"))[:10] if item.get("data") else None
+                    db.atualizar_serie(sid, {"pote_id": pid}, a_partir_de=dt)
+                    if pid:
+                        mostrar_feedback(self._page, f"Pote '{pnome}' aplicado a este e aos próximos lançamentos!", "sucesso")
+                    else:
+                        mostrar_feedback(self._page, "Pote desvinculado deste e dos próximos lançamentos!", "info")
+                else:
+                    db.atualizar_lancamento(str(item["id"]), {"pote_id": pid})
+                    if pid:
+                        mostrar_feedback(self._page, f"Classificado no pote '{pnome}'!", "sucesso")
+                    else:
+                        mostrar_feedback(self._page, "Pote desvinculado do lançamento.", "info")
+
                 if callable(self.on_refresh):
                     self.on_refresh()
             except Exception as ex:
                 mostrar_feedback(self._page, f"Erro ao atualizar pote: {ex}", "erro")
 
+        def _perguntar_escopo(pid: str | None, pnome: str):
+            dlg_escopo = None
+
+            def _acao(escopo: str):
+                fechar_dialogo(self._page, dlg_escopo)
+                _executar_salvamento(pid, pnome, escopo)
+
+            if pid:
+                texto_pergunta = (
+                    f"Este lançamento faz parte de uma despesa fixa/recorrente. "
+                    f"Deseja aplicar a alteração do Pote ({pnome}) apenas a este lançamento "
+                    f"ou a todas as despesas da série a partir desta data?"
+                )
+            else:
+                texto_pergunta = (
+                    "Este lançamento faz parte de uma despesa fixa/recorrente. "
+                    "Deseja remover o Pote apenas deste lançamento "
+                    "ou de todas as despesas da série a partir desta data?"
+                )
+
+            dlg_escopo = ft.AlertDialog(
+                title=ft.Row(
+                    spacing=8,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Icon(ft.Icons.UPDATE_ROUNDED, color=T.PRIMARY, size=22),
+                        ft.Text("Atualizar Recorrência", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
+                    ],
+                ),
+                content=ft.Text(
+                    texto_pergunta,
+                    color=T.TEXT_MUTED,
+                    size=13.5,
+                ),
+                actions=[
+                    ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(self._page, dlg_escopo)),
+                    ft.FilledButton(
+                        "Somente este",
+                        style=ft.ButtonStyle(bgcolor=T.SURFACE_ALT, color=T.TEXT_PRIMARY),
+                        on_click=lambda _: _acao("individual"),
+                    ),
+                    ft.FilledButton(
+                        "Este e os próximos",
+                        style=ft.ButtonStyle(bgcolor=T.PRIMARY, color=T.ON_PRIMARY),
+                        on_click=lambda _: _acao("proximos"),
+                    ),
+                ],
+            )
+            abrir_dialogo(self._page, dlg_escopo)
+
+        def _selecionar(pt: dict):
+            fechar_dialogo(self._page, dlg)
+            pid = pt.get("id")
+            pnome = pt.get("nome", "Pote")
+            if tem_serie:
+                _perguntar_escopo(pid, pnome)
+            else:
+                _executar_salvamento(pid, pnome, "individual")
+
         def _desvincular(_=None):
             fechar_dialogo(self._page, dlg)
-            try:
-                db.atualizar_lancamento(str(item["id"]), {"pote_id": None})
-                mostrar_feedback(self._page, "Pote desvinculado do lançamento.", "info")
-                if callable(self.on_refresh):
-                    self.on_refresh()
-            except Exception as ex:
-                mostrar_feedback(self._page, f"Erro ao desvincular pote: {ex}", "erro")
+            if tem_serie:
+                _perguntar_escopo(None, "Sem Pote")
+            else:
+                _executar_salvamento(None, "Sem Pote", "individual")
 
         linhas_potes: list[ft.Control] = []
         for p in potes:

@@ -105,7 +105,13 @@ def persistir_estado_periodo(page: ft.Page | None, estado: dict) -> None:
     session_set(page, "periodo_ano", int(estado.get("ano", d_fim.year)))
 
 
-def atualizar_datas_periodo_global(page: ft.Page | None, data_inicio: date | str, data_fim: date | str) -> dict:
+def atualizar_datas_periodo_global(
+    page: ft.Page | None,
+    data_inicio: date | str,
+    data_fim: date | str,
+    mes: int | None = None,
+    ano: int | None = None,
+) -> dict:
     """
     Atualiza as datas de início e fim na sessão global (mantendo sincronia entre
     Dashboard e Relatórios) e retorna o estado atualizado.
@@ -125,7 +131,7 @@ def atualizar_datas_periodo_global(page: ft.Page | None, data_inicio: date | str
 
     estado["data_inicio"] = d_ini
     estado["data_fim"] = d_fim
-    estado["mes"] = d_fim.month
-    estado["ano"] = d_fim.year
+    estado["mes"] = int(mes) if mes is not None else d_fim.month
+    estado["ano"] = int(ano) if ano is not None else d_fim.year
     persistir_estado_periodo(page, estado)
     return estado

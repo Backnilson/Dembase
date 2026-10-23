@@ -174,10 +174,105 @@ def test_edicao_rapida_pote():
     print("[OK] Edição rápida de pote testada e validada com sucesso.")
 
 
+
+
+def test_atualizar_datas_periodo_global_compatibilidade():
+    print("--- Teste 4: Compatibilidade de Argumentos em atualizar_datas_periodo_global ---")
+    page = mock_page()
+    from core.periodo import atualizar_datas_periodo_global
+
+    # 1. Chamada legada / 3 argumentos (page, d_ini, d_fim)
+    est1 = atualizar_datas_periodo_global(page, "2026-10-01", "2026-10-31")
+    assert est1["mes"] == 10
+    assert est1["ano"] == 2026
+    assert est1["modo"] == "mes"
+
+    # 2. Chamada com 5 argumentos (page, d_ini, d_fim, mes, ano) do shell_view / hub_view
+    est2 = atualizar_datas_periodo_global(page, "2026-11-01", "2026-11-30", 11, 2026)
+    assert est2["mes"] == 11
+    assert est2["ano"] == 2026
+    assert est2["modo"] == "mes"
+
+    print("[OK] atualizar_datas_periodo_global aceita tanto 3 quanto 5 argumentos sem TypeError.")
+
+
+def test_edicao_rapida_pote_recorrencia():
+    print("--- Teste 5: Edição Rápida com Pergunta de Recorrência (Somente este vs Este e próximos) ---")
+    page = mock_page()
+    on_refresh = MagicMock()
+    tl = TransactionList(page=page, on_refresh=on_refresh)
+
+    item_recorrente = {
+        "id": "tx-rec-1",
+        "serie_id": "serie-uuid-123",
+        "recorrente_id": "rec-uuid-123",
+        "tipo": "Despesa",
+        "valor": 120.0,
+        "data": "2026-10-15",
+        "descricao": "Internet Fibra",
+        "pote_id": None,
+        "status": "Pago",
+    }
+
+    # 1. Testa aplicar a "Este e os próximos"
+    with patch("services.supabase_client.listar_potes", return_value=[
+        {"id": "pote-1", "nome": "Custos Fixos", "cor": "#007AFF", "percentual": 35},
+    ]):
+        page.show_dialog.reset_mock()
+        tl._abrir_seletor_pote(item_recorrente)
+        dialog_pote = page.show_dialog.call_args[0][0]
+
+        # Clica no pote Custos Fixos
+        linhas_potes = dialog_pote.content.content.controls[2:]
+        page.show_dialog.reset_mock()
+        linhas_potes[0].on_click(MagicMock())
+
+        # Deve abrir o modal de escopo de recorrência
+        assert page.show_dialog.called
+        dialog_escopo = page.show_dialog.call_args[0][0]
+        assert "Atualizar Recorrência" in dialog_escopo.title.controls[1].value
+        assert len(dialog_escopo.actions) == 3  # Cancelar, Somente este, Este e os próximos
+
+        btn_proximos = dialog_escopo.actions[2]
+        assert (btn_proximos.content == "Este e os próximos" or getattr(btn_proximos.content, "value", None) == "Este e os próximos")
+
+        with patch("services.supabase_client.atualizar_serie") as mock_serie:
+            btn_proximos.on_click(MagicMock())
+            assert mock_serie.called
+            mock_serie.assert_called_with("serie-uuid-123", {"pote_id": "pote-1"}, a_partir_de="2026-10-15")
+            assert on_refresh.called
+
+    # 2. Testa aplicar a "Somente este"
+    on_refresh.reset_mock()
+    with patch("services.supabase_client.listar_potes", return_value=[
+        {"id": "pote-1", "nome": "Custos Fixos", "cor": "#007AFF", "percentual": 35},
+    ]):
+        page.show_dialog.reset_mock()
+        tl._abrir_seletor_pote(item_recorrente)
+        dialog_pote = page.show_dialog.call_args[0][0]
+        linhas_potes = dialog_pote.content.content.controls[2:]
+        page.show_dialog.reset_mock()
+        linhas_potes[0].on_click(MagicMock())
+
+        dialog_escopo = page.show_dialog.call_args[0][0]
+        btn_somente_este = dialog_escopo.actions[1]
+        assert (btn_somente_este.content == "Somente este" or getattr(btn_somente_este.content, "value", None) == "Somente este")
+
+        with patch("services.supabase_client.atualizar_lancamento") as mock_lanc:
+            btn_somente_este.on_click(MagicMock())
+            assert mock_lanc.called
+            mock_lanc.assert_called_with("tx-rec-1", {"pote_id": "pote-1"})
+            assert on_refresh.called
+
+    print("[OK] Edição rápida com recorrência perguntou escopo e atualizou Supabase com perfeição.")
+
+
 if __name__ == "__main__":
     test_filtro_pote_toggle_e_highlight()
     test_categoria_report_sem_tela_branca()
     test_edicao_rapida_pote()
+    test_atualizar_datas_periodo_global_compatibilidade()
+    test_edicao_rapida_pote_recorrencia()
     print("=" * 60)
-    print("TODOS OS 3 TESTES PASSARAM COM SUCESSO!")
+    print("TODOS OS 5 TESTES PASSARAM COM SUCESSO!")
     print("=" * 60)
