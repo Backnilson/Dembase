@@ -71,11 +71,14 @@ def ir_conta(
     page: ft.Page,
     conta_id: str,
     ctx: ReportContext | None = None,
+    replace: bool = False,
     **filtros_extras,
 ) -> None:
     q = ctx.to_query() if ctx else _periodo_base_query(page, None)
     q.pop("conta", None)
-    q.update({k: v for k, v in filtros_extras.items() if v is not None})
+    for k, v in filtros_extras.items():
+        if v is not None and k != "replace":
+            q[k] = str(v)
     navegar(page, montar_url(f"/contas/{conta_id}", q))
 
 
@@ -88,11 +91,16 @@ def ir_cartao(
     cartao_id: str,
     ctx: ReportContext | None = None,
     fatura_id: str | None = None,
+    replace: bool = False,
+    **filtros_extras,
 ) -> None:
     q = ctx.to_query() if ctx else _periodo_base_query(page, None)
     q.pop("cartao", None)
     if fatura_id:
         q["fatura"] = str(fatura_id)
+    for k, v in filtros_extras.items():
+        if v is not None and k != "replace":
+            q[k] = str(v)
     navegar(page, montar_url(f"/cartoes/{cartao_id}", q))
 
 
@@ -143,14 +151,19 @@ def ir_relatorio_lancamentos(
 def ir_relatorio_categoria(
     page: ft.Page,
     categoria_id: str,
-    tipo: str | None = "Despesa",
+    tipo: str | ReportContext | None = "Despesa",
     ctx: ReportContext | None = None,
     origem: str | None = None,
+    replace: bool = False,
+    **kwargs,
 ) -> None:
+    if isinstance(tipo, ReportContext):
+        ctx = tipo
+        tipo = ctx.tipo or "Despesa"
     q = ctx.to_query() if ctx else _periodo_base_query(page, None)
     q.pop("cat", None)
     if tipo:
-        q["tipo"] = tipo
+        q["tipo"] = str(tipo)
     if origem:
         q["origem"] = origem
     navegar(page, montar_url(f"/relatorios/categoria/{categoria_id}", q))
@@ -161,6 +174,8 @@ def ir_relatorio_regra(
     regra: str,
     ctx: ReportContext | None = None,
     origem: str | None = None,
+    replace: bool = False,
+    **kwargs,
 ) -> None:
     slug = regra_para_slug(regra)
     q = ctx.to_query() if ctx else _periodo_base_query(page, None)
@@ -172,10 +187,17 @@ def ir_relatorio_regra(
 
 def ir_relatorio_fluxo(
     page: ft.Page,
+    ctx_ou_meses: ReportContext | int = 6,
     meses: int = 6,
     origem: str | None = None,
+    replace: bool = False,
+    **kwargs,
 ) -> None:
-    q: dict[str, str] = {"meses": str(meses)}
+    if isinstance(ctx_ou_meses, ReportContext):
+        q = ctx_ou_meses.to_query()
+    else:
+        num_meses = ctx_ou_meses if isinstance(ctx_ou_meses, int) else meses
+        q = {"meses": str(num_meses)}
     if origem:
         q["origem"] = origem
     navegar(page, montar_url("/relatorios/fluxo", q))

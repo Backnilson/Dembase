@@ -8,7 +8,8 @@ evolução diária/saldo).
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
+import inspect
 import flet as ft
 
 from core import theme as T
@@ -61,18 +62,84 @@ class ReportScaffold(ft.Column):
             self._dirty.clear()
 
 
+def _invocar_callback_categoria(cb: Callable | None, cat: dict, cat_id: Any) -> None:
+    """Invoca o callback de categoria com tolerância a assinaturas (1 ou 2 parâmetros)."""
+    if not cb:
+        return
+    try:
+        sig = inspect.signature(cb)
+        params = [
+            p for p in sig.parameters.values()
+            if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        if len(params) >= 2:
+            cb(cat_id, cat)
+            return
+        if len(params) == 1:
+            p_name = params[0].name.lower()
+            if p_name in ("cid", "cat_id", "categoria_id", "id"):
+                cb(cat_id)
+            else:
+                cb(cat)
+            return
+    except Exception:
+        pass
+
+    try:
+        cb(cat)
+    except TypeError:
+        try:
+            cb(cat_id, cat)
+        except TypeError:
+            cb(cat_id)
+
+
+def _invocar_callback_pote(cb: Callable | None, pote: dict, pote_id: Any) -> None:
+    """Invoca o callback de pote com tolerância a assinaturas (1 ou 2 parâmetros)."""
+    if not cb:
+        return
+    try:
+        sig = inspect.signature(cb)
+        params = [
+            p for p in sig.parameters.values()
+            if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        if len(params) >= 2:
+            cb(pote_id, pote)
+            return
+        if len(params) == 1:
+            p_name = params[0].name.lower()
+            if p_name in ("pid", "pote_id", "id"):
+                cb(pote_id)
+            else:
+                cb(pote)
+            return
+    except Exception:
+        pass
+
+    try:
+        cb(pote)
+    except TypeError:
+        try:
+            cb(pote_id, pote)
+        except TypeError:
+            cb(pote_id)
+
+
 def construir_card_ranking_categorias(
     categorias: list[dict],
     titulo: str = "Ranking por Categoria",
     subtitulo: str = "Clique em uma categoria para aprofundar a análise",
     cor_padrao: str | None = None,
     on_click_categoria: Callable[[dict], None] | None = None,
+    on_categoria_click: Callable | None = None,
     col: dict | None = None,
 ) -> ft.Container:
     """
     Card analítico que exibe barra segmentada + lista de categorias com percentual,
     valor e clique para drill-down (/relatorios/categoria/<id>).
     """
+    cb_categoria = on_click_categoria or on_categoria_click
     cor_base = cor_padrao or T.PRIMARY
     linhas: list[ft.Control] = []
 
@@ -92,14 +159,14 @@ def construir_card_ranking_categorias(
             perc = float(cat.get("percentual") or 0)
             qtd = int(cat.get("qtd") or 0)
             cat_id = cat.get("categoria_id") or cat.get("id")
-            clicavel = bool(on_click_categoria and cat_id)
+            clicavel = bool(cb_categoria and cat_id)
 
             linhas.append(
                 ft.Container(
                     padding=pad(h=12, v=9),
                     bgcolor=T.SURFACE_ALT,
                     border_radius=10,
-                    on_click=(lambda _, c=cat: on_click_categoria(c)) if clicavel else None,
+                    on_click=(lambda _, c=cat, cid=cat_id: _invocar_callback_categoria(cb_categoria, c, cid)) if clicavel else None,
                     ink=clicavel,
                     tooltip=f"Ver relatório da categoria {nome}" if clicavel else None,
                     content=ft.Column(
@@ -175,8 +242,10 @@ def construir_card_evolucao_diaria(
     subtitulo: str = "Toque em um dia para filtrar os lançamentos daquela data",
     modo_saldo: bool = False,
     on_click_dia: Callable[[str], None] | None = None,
+    on_dia_click: Callable | None = None,
     col: dict | None = None,
 ) -> ft.Container:
+    cb_dia = on_click_dia or on_dia_click
     """
     Histograma / curva de barras interativa dia a dia para relatórios gerais
     ou evolução de saldo de conta bancária.
@@ -204,8 +273,8 @@ def construir_card_evolucao_diaria(
                 barras.append(
                     ft.Container(
                         expand=True,
-                        on_click=(lambda _, dt=dt_iso: on_click_dia(dt)) if on_click_dia and dt_iso else None,
-                        ink=bool(on_click_dia),
+                        on_click=(lambda _, dt=dt_iso: cb_dia(dt)) if cb_dia and dt_iso else None,
+                        ink=bool(cb_dia),
                         tooltip=f"{lbl}: Saldo {formatar_moeda(saldo_v)}",
                         content=ft.Column(
                             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -249,8 +318,8 @@ def construir_card_evolucao_diaria(
                 barras.append(
                     ft.Container(
                         expand=True,
-                        on_click=(lambda _, dt=dt_iso: on_click_dia(dt)) if on_click_dia and dt_iso else None,
-                        ink=bool(on_click_dia),
+                        on_click=(lambda _, dt=dt_iso: cb_dia(dt)) if cb_dia and dt_iso else None,
+                        ink=bool(cb_dia),
                         tooltip=f"{lbl}\nReceitas: {formatar_moeda(rec)}\nDespesas: {formatar_moeda(desp)}",
                         content=ft.Column(
                             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -332,6 +401,7 @@ def construir_card_ranking_potes(
     subtitulo: str = "Toque em um pote para filtrar os lançamentos dele",
     cor_padrao: str | None = None,
     on_click_pote: Callable[[dict], None] | None = None,
+    on_pote_click: Callable | None = None,
     pote_selecionado_id: str | None = None,
     col: dict | None = None,
 ) -> ft.Container:
@@ -340,6 +410,7 @@ def construir_card_ranking_potes(
     Exibe barra de progresso colorida, nome, percentual e valor total gasto/filtrado.
     Destaca visualmente o pote filtrado.
     """
+    cb_pote = on_click_pote or on_pote_click
     cor_base = cor_padrao or T.PRIMARY
     linhas: list[ft.Control] = []
 
@@ -359,7 +430,7 @@ def construir_card_ranking_potes(
             perc = float(p.get("percentual") or 0)
             qtd = int(p.get("qtd") or 0)
             pote_id = p.get("pote_id") or p.get("id")
-            clicavel = bool(on_click_pote and pote_id)
+            clicavel = bool(cb_pote and pote_id)
             pote_id_str = str(pote_id or "")
             sel_id_str = str(pote_selecionado_id or "")
             is_selecionado = bool(sel_id_str and pote_id_str == sel_id_str)
@@ -386,7 +457,7 @@ def construir_card_ranking_potes(
                     bgcolor=f"{cor}18" if is_selecionado else T.SURFACE_ALT,
                     border=borda(1.5, cor) if is_selecionado else borda(1, f"{T.BORDER}40"),
                     border_radius=10,
-                    on_click=(lambda _, pt=p: on_click_pote(pt)) if clicavel else None,
+                    on_click=(lambda _, pt=p, pid=pote_id: _invocar_callback_pote(cb_pote, pt, pid)) if clicavel else None,
                     ink=clicavel,
                     tooltip=f"Pote {nome} selecionado. Toque para remover o filtro" if is_selecionado else (f"Filtrar lançamentos do pote {nome}" if clicavel else None),
                     content=ft.Column(

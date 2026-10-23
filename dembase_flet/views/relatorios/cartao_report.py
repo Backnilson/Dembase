@@ -275,7 +275,7 @@ def criar_view_relatorio_cartao(
                 on_categoria_click=lambda cid, _: ir_relatorio_categoria(
                     page,
                     cid,
-                    c.com(categoria_id=cid, cartao_id=cartao_id, pagina=1),
+                    ctx=c.com(categoria_id=cid, cartao_id=cartao_id, pagina=1),
                 ),
             )
             container_graficos.controls = [card_evolucao, card_ranking]
