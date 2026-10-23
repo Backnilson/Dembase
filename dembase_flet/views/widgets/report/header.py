@@ -17,21 +17,46 @@ from core.nav import navegar, voltar
 
 def criar_report_header(
     page: ft.Page,
-    titulo_ctrl: ft.Text,
-    subtitulo_ctrl: ft.Text,
-    spinner: ft.ProgressRing,
+    titulo_ctrl: ft.Text | str | None = None,
+    subtitulo_ctrl: ft.Text | str | None = None,
+    spinner: ft.ProgressRing | None = None,
     breadcrumbs: list[tuple[str, str | None]] | None = None,
     icone=ft.Icons.ASSESSMENT_ROUNDED,
     cor_icone: str | None = None,
     acoes_header: list[ft.Control] | None = None,
     mobile: bool = False,
     on_voltar: Callable | None = None,
+    titulo: str | None = None,
+    subtitulo: str | None = None,
 ) -> ft.Column:
     """
     Constrói o topo do relatório:
     - Breadcrumb clicável no Desktop: ex: [('Dashboard', '/dashboard'), ('Contas', '/contas'), ('Nubank', None)]
     - Linha principal com botão voltar, ícone colorido, título dinâmico, spinner e ações.
+    Suporta tanto ft.Text em titulo_ctrl/subtitulo_ctrl quanto strings em titulo/subtitulo.
     """
+    if titulo_ctrl is None:
+        titulo_ctrl = titulo or "Relatório"
+    if isinstance(titulo_ctrl, str):
+        titulo_ctrl = ft.Text(
+            titulo_ctrl,
+            color=T.TEXT_PRIMARY,
+            size=18 if mobile else 20,
+            weight=ft.FontWeight.BOLD,
+        )
+
+    if subtitulo_ctrl is None:
+        subtitulo_ctrl = subtitulo or ""
+    if isinstance(subtitulo_ctrl, str):
+        subtitulo_ctrl = ft.Text(
+            subtitulo_ctrl,
+            color=T.TEXT_MUTED,
+            size=11.5,
+        )
+
+    if spinner is None:
+        spinner = ft.ProgressRing(width=16, height=16, visible=False, color=T.PRIMARY)
+
     cor_ic = cor_icone or T.PRIMARY
     linhas_topo: list[ft.Control] = []
 

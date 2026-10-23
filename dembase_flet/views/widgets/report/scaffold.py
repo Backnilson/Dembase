@@ -332,11 +332,13 @@ def construir_card_ranking_potes(
     subtitulo: str = "Toque em um pote para filtrar os lançamentos dele",
     cor_padrao: str | None = None,
     on_click_pote: Callable[[dict], None] | None = None,
+    pote_selecionado_id: str | None = None,
     col: dict | None = None,
 ) -> ft.Container:
     """
     Card analítico dos 6 Potes Financeiros:
     Exibe barra de progresso colorida, nome, percentual e valor total gasto/filtrado.
+    Destaca visualmente o pote filtrado.
     """
     cor_base = cor_padrao or T.PRIMARY
     linhas: list[ft.Control] = []
@@ -358,15 +360,35 @@ def construir_card_ranking_potes(
             qtd = int(p.get("qtd") or 0)
             pote_id = p.get("pote_id") or p.get("id")
             clicavel = bool(on_click_pote and pote_id)
+            pote_id_str = str(pote_id or "")
+            sel_id_str = str(pote_selecionado_id or "")
+            is_selecionado = bool(sel_id_str and pote_id_str == sel_id_str)
+
+            controles_badge: list[ft.Control] = [
+                ft.Container(width=10, height=10, bgcolor=cor, border_radius=5),
+                ft.Text(nome, color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.BOLD if is_selecionado else ft.FontWeight.W_600),
+            ]
+            if qtd > 0:
+                controles_badge.append(ft.Text(f"({qtd})", color=T.TEXT_MUTED, size=11))
+            if is_selecionado:
+                controles_badge.append(
+                    ft.Container(
+                        padding=pad(h=6, v=2),
+                        bgcolor=f"{cor}30",
+                        border_radius=6,
+                        content=ft.Text("Filtrado ✕", size=10, color=cor, weight=ft.FontWeight.BOLD),
+                    )
+                )
 
             linhas.append(
                 ft.Container(
                     padding=pad(h=12, v=9),
-                    bgcolor=T.SURFACE_ALT,
+                    bgcolor=f"{cor}18" if is_selecionado else T.SURFACE_ALT,
+                    border=borda(1.5, cor) if is_selecionado else borda(1, f"{T.BORDER}40"),
                     border_radius=10,
                     on_click=(lambda _, pt=p: on_click_pote(pt)) if clicavel else None,
                     ink=clicavel,
-                    tooltip=f"Filtrar lançamentos do pote {nome}" if clicavel else None,
+                    tooltip=f"Pote {nome} selecionado. Toque para remover o filtro" if is_selecionado else (f"Filtrar lançamentos do pote {nome}" if clicavel else None),
                     content=ft.Column(
                         spacing=5,
                         controls=[
@@ -375,18 +397,18 @@ def construir_card_ranking_potes(
                                 controls=[
                                     ft.Row(
                                         spacing=8,
-                                        controls=[
-                                            ft.Container(width=10, height=10, bgcolor=cor, border_radius=5),
-                                            ft.Text(nome, color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_600),
-                                            ft.Text(f"({qtd})", color=T.TEXT_MUTED, size=11) if qtd > 0 else ft.Container(),
-                                        ],
+                                        controls=controles_badge,
                                     ),
                                     ft.Row(
                                         spacing=6,
                                         controls=[
                                             ft.Text(f"{perc:.1f}%", color=T.TEXT_MUTED, size=11),
                                             ft.Text(formatar_moeda(total), color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.BOLD),
-                                            ft.Icon(ft.Icons.CHEVRON_RIGHT_ROUNDED, size=15, color=T.TEXT_MUTED)
+                                            ft.Icon(
+                                                ft.Icons.CHECK_CIRCLE_ROUNDED if is_selecionado else ft.Icons.CHEVRON_RIGHT_ROUNDED,
+                                                size=15,
+                                                color=cor if is_selecionado else T.TEXT_MUTED,
+                                            )
                                             if clicavel
                                             else ft.Container(),
                                         ],

@@ -1,149 +1,130 @@
 """
 =============================================================================
 DemBase v3 — views/relatorios/categoria_report.py  (Flet 1.0.1)
-Relatório Analítico por Categoria (/relatorios/categoria/:cat_id).
+Diagnóstico e Relatório Analítico por Categoria (/relatorios/categoria/:cat_id).
 Exibe:
-- Header com Breadcrumbs + Seletor Rápido para trocar de Categoria
-- 4 KPIs: Total na Categoria, Média por Lançamento, Maior Valor, Qtd. Registros
-- Gráficos: Evolução Diária na Categoria + Composição por Subcategoria/Modalidade
-- FilterBar + TransactionList
-- Botão "+ Lançar nesta categoria" pré-selecionando a categoria
+- Header com Breadcrumbs + botão rápido "+ Lançar nesta categoria"
+- Seletor rápido de Categorias em chips horizontais
+- 4 KPIs do Período: Total na Categoria, Pagos, Pendentes, Média Diária
+- Barra de Filtros (FilterBar) com fixar_categoria=True
+- Gráficos analíticos: Subcategorias, Participação por Pote e Evolução Diária
+- Lista de Transações (TransactionList) com edição rápida de Pote e Status
 =============================================================================
 """
 from __future__ import annotations
+
 import flet as ft
+
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback
 from core.constants import formatar_moeda, formatar_data_br
 from core.responsive import is_mobile
-from core.periodo import obter_estado_periodo_atual, atualizar_datas_periodo_global
 from core.report_context import ReportContext
-from core.nav import ir_relatorio_categoria, ir_relatorio_regra
+from core.router import RouteMatch
+from core.nav import ir_relatorio_categoria
 from views.shell_view import criar_shell, ROTA_RELATORIOS
 from views.widgets.lancamento_sheet import abrir_lancamento
 from views.widgets.report import (
+    ReportScaffold,
+    FilterBar,
+    TransactionList,
     criar_report_header,
     criar_kpi_strip,
-    criar_filter_bar,
-    criar_transaction_list,
-    construir_card_evolucao_diaria,
     construir_card_ranking_categorias,
+    construir_card_ranking_potes,
+    construir_card_evolucao_diaria,
 )
 import services.supabase_client as db
+
+LIMITE_PAGINA = 50
 
 
 def criar_view_relatorio_categoria(
     page: ft.Page,
-    match: dict | None = None,
+    match: RouteMatch | dict | None = None,
     ctx: ReportContext | None = None,
 ) -> ft.View:
     mobile = is_mobile(page)
-    params = match or {}
-    cat_id = str(params.get("cat_id") or (ctx.categoria_id if ctx else "") or "")
 
-    est_p = obter_estado_periodo_atual(page)
-    contexto_inicial = ctx or ReportContext.from_query(page, None, params)
-    contexto_atual: list[ReportContext] = [
-        contexto_inicial.com(
-            categoria_id=cat_id,
-            data_inicio=contexto_inicial.data_inicio or est_p["data_inicio"],
-            data_fim=contexto_inicial.data_fim or est_p["data_fim"],
-        )
-    ]
+    # Extrai o ID da categoria com resiliência total a RouteMatch ou dict
+    if hasattr(match, "params_path") and match.params_path:
+        cat_id = str(match.params_path.get("categoria_id") or match.params_path.get("cat_id") or "")
+    elif isinstance(match, dict):
+        cat_id = str(match.get("categoria_id") or match.get("cat_id") or "")
+    else:
+        cat_id = ""
 
-    spinner = ft.ProgressRing(color=T.PRIMARY, width=18, height=18, stroke_width=2.2, visible=False)
+    if not cat_id and ctx and ctx.categoria_id:
+        cat_id = str(ctx.categoria_id)
 
-    # Lista de categorias para seletor rápido e metadados
+    # Carrega metadados de todas as categorias para o seletor horizontal
     try:
-        todas_categorias = db.listar_categorias()
+        todas_categorias = db.listar_categorias() or []
     except Exception:
         todas_categorias = []
 
     cat_map = {str(c.get("id")): c for c in todas_categorias if c.get("id")}
+
+    if not cat_id and todas_categorias:
+        cat_id = str(todas_categorias[0].get("id"))
+
     cat_meta = cat_map.get(cat_id) or {}
+    nome_cat_inicial = cat_meta.get("nome") or "Categoria"
+    cor_cat_inicial = cat_meta.get("cor") or T.PRIMARY
 
-    nome_cat_ref = [cat_meta.get("nome") or "Categoria"]
-    cor_cat_ref = [cat_meta.get("cor") or T.PRIMARY]
-    tipo_cat_ref = [cat_meta.get("tipo") or contexto_atual[0].tipo or "Despesa"]
-    regra_cat_ref = [cat_meta.get("regra_5030") or ""]
-
-    container_header = ft.Container()
-    container_seletor_cat = ft.Container()
-    container_kpis = ft.Container()
-    container_graficos = ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[])
-    container_filter_bar = ft.Container()
-    container_lista = ft.Container()
-
-    def _safe_update():
-        try:
-            page.update()
-        except Exception:
-            pass
-
-    def _aplicar_novo_contexto(novo_ctx: ReportContext):
-        ir_relatorio_categoria(page, cat_id, novo_ctx.com(categoria_id=cat_id), replace=True)
-
-    def _ao_mudar_pagina(nova_pag: int):
-        c = contexto_atual[0].com(pagina=nova_pag)
-        contexto_atual[0] = c
-        carregar(inicial=False)
-
-    def _abrir_novo_lancamento_cat(_=None):
-        tipo_padrao = tipo_cat_ref[0] if tipo_cat_ref[0] in ("Receita", "Despesa") else "Despesa"
-        abrir_lancamento(
-            page,
-            tipo_inicial=tipo_padrao,
-            categoria_inicial=cat_id,
-            regra_inicial=regra_cat_ref[0] or None,
-            on_saved=lambda: carregar(inicial=False),
+    contexto_inicial = ctx or ReportContext.from_query(page, match)
+    ctx_atual = [
+        contexto_inicial.com(
+            categoria_id=cat_id,
+            tipo=contexto_inicial.tipo or cat_meta.get("tipo") or "Despesa",
         )
+    ]
+    limite_atual = [LIMITE_PAGINA]
 
-    btn_lancar_cat = ft.FilledButton(
-        content=ft.Row(
-            spacing=6,
-            tight=True,
-            controls=[
-                ft.Icon(ft.Icons.ADD_ROUNDED, color=ft.Colors.WHITE, size=16),
-                ft.Text(
-                    "Lançar" if mobile else "Lançar nesta categoria",
-                    color=ft.Colors.WHITE,
-                    size=12,
-                    weight=ft.FontWeight.W_600,
-                ),
-            ],
-        ),
-        style=ft.ButtonStyle(
-            bgcolor=T.PRIMARY,
-            shape=ft.RoundedRectangleBorder(radius=10),
-            padding=pad(h=12 if mobile else 14, v=8),
-        ),
-        on_click=_abrir_novo_lancamento_cat,
+    spinner = ft.ProgressRing(color=cor_cat_inicial, width=18, height=18, stroke_width=2, visible=False)
+    tam_kpi = 17 if mobile else 20
+
+    txt_titulo = ft.Text(
+        f"Categoria · {nome_cat_inicial}",
+        color=T.TEXT_PRIMARY,
+        size=20 if mobile else 22,
+        weight=ft.FontWeight.BOLD,
     )
+    txt_subtitulo = ft.Text("", color=T.TEXT_MUTED, size=12)
 
-    # Seletor rápido de categorias em chips horizontais
-    def _construir_seletor_categorias() -> ft.Control:
+    txt_kpi_total    = ft.Text("R$ 0,00", color=cor_cat_inicial, size=tam_kpi, weight=ft.FontWeight.BOLD)
+    txt_kpi_pago     = ft.Text("R$ 0,00", color=T.RECEITA, size=tam_kpi, weight=ft.FontWeight.BOLD)
+    txt_kpi_pendente = ft.Text("R$ 0,00", color=T.WARNING, size=tam_kpi, weight=ft.FontWeight.BOLD)
+    txt_kpi_media    = ft.Text("R$ 0,00", color=T.INFO,    size=tam_kpi, weight=ft.FontWeight.BOLD)
+
+    kpi_container = ft.Container()
+    graficos_row = ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[])
+
+    def _construir_seletor_categorias() -> ft.Container:
+        """Chips horizontais para navegar com 1 toque entre qualquer categoria."""
         if not todas_categorias:
             return ft.Container()
-        chips = []
-        for cat_item in todas_categorias:
-            cid_it = str(cat_item.get("id") or "")
-            nome_it = cat_item.get("nome") or "Categoria"
-            cor_it = cat_item.get("cor") or T.PRIMARY
-            selecionada = (cid_it == cat_id)
+
+        chips: list[ft.Control] = []
+        for c in todas_categorias:
+            cid = str(c.get("id") or "")
+            cnome = c.get("nome") or "Categoria"
+            ccor = c.get("cor") or T.PRIMARY
+            selecionada = (cid == cat_id)
 
             chips.append(
                 ft.Container(
                     padding=pad(h=12, v=6),
-                    bgcolor=cor_it if selecionada else T.SURFACE_ALT,
-                    border=borda(1, cor_it if selecionada else T.BORDER),
+                    bgcolor=f"{ccor}22" if selecionada else T.SURFACE_ALT,
+                    border=borda(1.5, ccor) if selecionada else borda(1, f"{T.BORDER}40"),
                     border_radius=20,
-                    on_click=lambda _, c_alvo=cid_it: ir_relatorio_categoria(
-                        page,
-                        c_alvo,
-                        contexto_atual[0].com(categoria_id=c_alvo, pagina=1),
-                        replace=True,
-                    ),
                     ink=True,
+                    on_click=(
+                        (lambda _, cid_alvo=cid: ir_relatorio_categoria(page, cid_alvo, tipo=ctx_atual[0].tipo, ctx=ctx_atual[0]))
+                        if not selecionada
+                        else None
+                    ),
+                    tooltip=f"Ver lançamentos de {cnome}" if not selecionada else "Categoria atual",
                     content=ft.Row(
                         spacing=6,
                         tight=True,
@@ -151,19 +132,20 @@ def criar_view_relatorio_categoria(
                             ft.Container(
                                 width=8,
                                 height=8,
-                                bgcolor=ft.Colors.WHITE if selecionada else cor_it,
+                                bgcolor=ccor,
                                 border_radius=4,
                             ),
                             ft.Text(
-                                nome_it,
-                                color=ft.Colors.WHITE if selecionada else T.TEXT_PRIMARY,
-                                size=11.5,
+                                cnome,
+                                color=ccor if selecionada else T.TEXT_PRIMARY,
+                                size=12,
                                 weight=ft.FontWeight.BOLD if selecionada else ft.FontWeight.W_500,
                             ),
                         ],
                     ),
                 )
             )
+
         return ft.Container(
             padding=pad(h=14, v=10),
             bgcolor=T.SURFACE,
@@ -176,192 +158,164 @@ def criar_view_relatorio_categoria(
             ),
         )
 
+    def _ao_clicar_subcategoria(sub: dict):
+        sid = sub.get("subcategoria_id")
+        novo_sid = None if str(ctx_atual[0].subcategoria_id or "") == str(sid or "") else str(sid or "")
+        filter_bar.atualizar_contexto(ctx_atual[0].com(subcategoria_id=novo_sid), emitir=True)
+
+    def _ao_clicar_pote(pt: dict):
+        pid = pt.get("pote_id") or pt.get("id")
+        if pid:
+            novo_pid = None if str(ctx_atual[0].pote_id or "") == str(pid or "") else str(pid or "")
+            filter_bar.atualizar_contexto(ctx_atual[0].com(pote_id=novo_pid), emitir=True)
+
+    def _ao_clicar_dia(dt_iso: str):
+        novo = ctx_atual[0].com(data_inicio=dt_iso, data_fim=dt_iso)
+        filter_bar.atualizar_contexto(novo, emitir=True)
+
     def carregar(inicial: bool = False):
-        c = contexto_atual[0]
-        di_str = c.data_inicio.isoformat()
-        df_str = c.data_fim.isoformat()
+        c = ctx_atual[0]
+        meta = cat_map.get(cat_id) or {}
+        nome_c = meta.get("nome") or "Categoria"
+        cor_c = meta.get("cor") or T.PRIMARY
+
+        txt_titulo.value = f"Categoria · {nome_c}"
+        txt_subtitulo.value = f"Período: {formatar_data_br(c.data_inicio)} a {formatar_data_br(c.data_fim)}"
+        txt_kpi_total.color = cor_c
 
         if not inicial:
             spinner.visible = True
-            _safe_update()
+            try:
+                page.update()
+            except Exception:
+                pass
 
         try:
             pacote = db.obter_relatorio_lancamentos(
-                data_inicio=di_str,
-                data_fim=df_str,
+                data_inicio=c.data_inicio.isoformat(),
+                data_fim=c.data_fim.isoformat(),
                 filtros=c.to_rpc_filtros(),
-                incluir_transferencias=True,
+                limite=limite_atual[0],
+                offset=0,
             )
-            kpis = pacote.get("kpis") or {}
-            evolucao = pacote.get("evolucao_diaria") or []
-            itens = pacote.get("itens") or []
-            total_reg = int(pacote.get("total_registros", len(itens)) or 0)
+            totais = pacote.get("totais") or {}
+            tot_val = float(totais.get("total_filtrado", 0) or 0)
+            pago_val = float(totais.get("pago", 0) or 0)
+            pend_val = float(totais.get("pendente", 0) or 0)
+            med_val = float(totais.get("media_diaria", 0) or 0)
+            qtd_reg = int(pacote.get("total_registros", 0) or 0)
 
-            # Atualiza metadados caso algum item traga a categoria
-            if itens and not cat_meta:
-                primeiro = itens[0]
-                if primeiro.get("categoria_nome"):
-                    nome_cat_ref[0] = primeiro["categoria_nome"]
-                if primeiro.get("categoria_cor"):
-                    cor_cat_ref[0] = primeiro["categoria_cor"]
-                if primeiro.get("regra_5030"):
-                    regra_cat_ref[0] = primeiro["regra_5030"]
+            txt_kpi_total.value    = formatar_moeda(tot_val)
+            txt_kpi_pago.value     = formatar_moeda(pago_val)
+            txt_kpi_pendente.value = formatar_moeda(pend_val)
+            txt_kpi_media.value    = formatar_moeda(med_val)
 
-            nome_cat = nome_cat_ref[0]
-            cor_cat = cor_cat_ref[0]
-            regra_cat = regra_cat_ref[0]
-
-            total_rec = float(kpis.get("total_receitas", 0) or 0)
-            total_desp = float(kpis.get("total_despesas", 0) or 0)
-            total_cat_val = total_desp if total_desp >= total_rec else total_rec
-            cor_principal = T.DESPESA if total_desp >= total_rec else T.RECEITA
-
-            media_val = (total_cat_val / total_reg) if total_reg > 0 else 0.0
-            maior_val = max([float(i.get("valor", 0) or 0) for i in itens] + [0.0])
-
-            # Agrupamento por Subcategoria ou Forma de Movimentação nos itens carregados
-            agrup_sub: dict[str, float] = {}
-            for it in itens:
-                chave_sub = (
-                    it.get("subcategoria_nome")
-                    or it.get("subtipo")
-                    or it.get("forma_movimentacao")
-                    or "Geral"
-                )
-                agrup_sub[chave_sub] = agrup_sub.get(chave_sub, 0.0) + float(it.get("valor", 0) or 0)
-
-            soma_sub = sum(agrup_sub.values()) or 1.0
-            lista_sub = [
-                {
-                    "categoria": k,
-                    "valor": v,
-                    "cor": cor_cat,
-                    "percentual": round((v / soma_sub) * 100.0, 1),
-                }
-                for k, v in sorted(agrup_sub.items(), key=lambda x: x[1], reverse=True)
-            ]
-
-            breadcrumbs = [
-                ("Dashboard", "/dashboard") if c.origem == "dashboard" else ("Relatórios", "/relatorios"),
-                ("Categorias", "/relatorios"),
-                (nome_cat, None),
-            ]
-
-            acoes_h = [spinner]
-            if regra_cat:
-                acoes_h.append(
-                    ft.Container(
-                        padding=pad(h=10, v=5),
-                        bgcolor=f"{T.PRIMARY}1A",
-                        border_radius=12,
-                        on_click=lambda _: ir_relatorio_regra(page, regra_cat),
-                        ink=True,
-                        content=ft.Row(
-                            spacing=4,
-                            tight=True,
-                            controls=[
-                                ft.Icon(ft.Icons.PIE_CHART_ROUNDED, color=T.PRIMARY, size=14),
-                                ft.Text(regra_cat, color=T.PRIMARY, size=11.5, weight=ft.FontWeight.BOLD),
-                            ],
-                        ),
-                    )
-                )
-            acoes_h.append(btn_lancar_cat)
-
-            # 1. Header
-            container_header.content = criar_report_header(
-                page,
-                titulo=f"Categoria · {nome_cat}",
-                subtitulo=(
-                    f"Período de {formatar_data_br(di_str)} a {formatar_data_br(df_str)} "
-                    f"· {total_reg} lançamento{'s' if total_reg != 1 else ''}"
-                ),
-                icone=ft.Icons.CATEGORY_ROUNDED,
-                cor_icone=cor_cat,
-                breadcrumbs=breadcrumbs,
-                acoes_header=acoes_h,
-            )
-
-            # 2. Seletor Rápido de Categorias
-            container_seletor_cat.content = _construir_seletor_categorias()
-
-            # 3. KPIs
-            container_kpis.content = criar_kpi_strip(
-                page,
+            lbl_pago = "Recebido" if c.tipo == "Receita" else "Pago / Realizado"
+            kpi_container.content = criar_kpi_strip(
                 [
                     {
-                        "titulo": f"Total em {nome_cat}",
-                        "valor": formatar_moeda(total_cat_val),
-                        "subtitulo": "No período selecionado",
-                        "cor": cor_principal,
+                        "titulo": f"Total em {nome_c}",
+                        "valor_ctrl": txt_kpi_total,
+                        "cor": cor_c,
                         "icone": ft.Icons.DONUT_LARGE_ROUNDED,
+                        "subtitulo": f"{qtd_reg} lançamento(s)",
+                        "ativo": c.status is None,
+                        "on_click": lambda _: filter_bar.atualizar_contexto(c.com(status=None)),
                     },
                     {
-                        "titulo": "Ticket Médio",
-                        "valor": formatar_moeda(media_val),
-                        "subtitulo": "Valor médio por lançamento",
-                        "cor": T.INFO,
-                        "icone": ft.Icons.EQUALIZER_ROUNDED,
+                        "titulo": lbl_pago,
+                        "valor_ctrl": txt_kpi_pago,
+                        "cor": T.RECEITA,
+                        "icone": ft.Icons.CHECK_CIRCLE_ROUNDED,
+                        "subtitulo": "Clique para filtrar pagos",
+                        "ativo": c.status == "Pago",
+                        "on_click": lambda _: filter_bar.atualizar_contexto(
+                            c.com(status=None if c.status == "Pago" else "Pago")
+                        ),
                     },
                     {
-                        "titulo": "Maior Lançamento",
-                        "valor": formatar_moeda(maior_val),
-                        "subtitulo": "Pico individual na categoria",
+                        "titulo": "Pendente / Previsto",
+                        "valor_ctrl": txt_kpi_pendente,
                         "cor": T.WARNING,
-                        "icone": ft.Icons.TRENDING_UP_ROUNDED,
+                        "icone": ft.Icons.SCHEDULE_ROUNDED,
+                        "subtitulo": "Clique para filtrar pendentes",
+                        "ativo": c.status == "Pendente",
+                        "on_click": lambda _: filter_bar.atualizar_contexto(
+                            c.com(status=None if c.status == "Pendente" else "Pendente")
+                        ),
                     },
                     {
-                        "titulo": "Volume de Registros",
-                        "valor": f"{total_reg} item{'s' if total_reg != 1 else ''}",
-                        "subtitulo": f"Pilar: {regra_cat or 'Não classificado'}",
-                        "cor": cor_cat,
-                        "icone": ft.Icons.RECEIPT_LONG_ROUNDED,
+                        "titulo": "Média Diária",
+                        "valor_ctrl": txt_kpi_media,
+                        "cor": T.INFO,
+                        "icone": ft.Icons.TIMELINE_ROUNDED,
+                        "subtitulo": "Gasto diário médio",
                     },
                 ],
+                mobile=mobile,
             )
 
-            # 4. Gráficos Analíticos
-            card_evolucao = construir_card_evolucao_diaria(
-                evolucao,
-                titulo=f"Ritmo Diário · {nome_cat}",
-                subtitulo="Movimentação dia a dia nesta categoria",
-                modo_saldo=False,
-            )
-            card_sub = construir_card_ranking_categorias(
-                lista_sub,
-                titulo="Detalhamento por Subcategoria / Forma",
-                subtitulo="Divisão interna dos lançamentos desta categoria",
-                cor_padrao=cor_cat,
-            )
-            container_graficos.controls = [card_evolucao, card_sub]
+            por_subcat = pacote.get("por_subcategoria") or []
+            por_pote = pacote.get("por_pote") or []
+            por_dia = pacote.get("por_dia") or []
 
-            # 5. Barra de Filtros
-            container_filter_bar.content = criar_filter_bar(
-                page,
-                ctx=c,
-                on_change=_aplicar_novo_contexto,
-                mostrar_chips_tipo=True,
-                mostrar_filtro_conta=True,
-                mostrar_filtro_cartao=True,
-                mostrar_filtro_categoria=False,
-                mostrar_filtro_regra=False,
-                mostrar_filtro_forma=True,
-            )
+            cards_graficos = []
 
-            # 6. Lista de Transações
-            container_lista.content = criar_transaction_list(
-                page,
-                itens=itens,
-                total_registros=total_reg,
-                pagina_atual=c.pagina,
-                page_size=c.page_size,
-                on_page_change=_ao_mudar_pagina,
-                on_refresh=lambda: carregar(inicial=False),
-                mostrar_transferencias_padrao=True,
-                titulo_vazio=f"Nenhum lançamento em '{nome_cat}' neste período",
-                subtitulo_vazio="Experimente ampliar o período ou registrar um novo lançamento nesta categoria.",
-                label_cta_vazio=f"+ Lançar em {nome_cat}",
-                on_cta_vazio=_abrir_novo_lancamento_cat,
+            # 1. Ranking de Subcategorias desta categoria
+            if por_subcat:
+                subcat_formatadas = [
+                    {
+                        "nome": s.get("nome") or "Geral",
+                        "cor": cor_c,
+                        "total": float(s.get("total", 0) or 0),
+                        "percentual": float(s.get("percentual", 0) or 0),
+                        "qtd": int(s.get("qtd", 0) or 0),
+                        "subcategoria_id": s.get("subcategoria_id"),
+                    }
+                    for s in por_subcat
+                ]
+                cards_graficos.append(
+                    construir_card_ranking_categorias(
+                        categorias=subcat_formatadas,
+                        titulo="Subcategorias",
+                        subtitulo="Toque em uma subcategoria para filtrar",
+                        cor_padrao=cor_c,
+                        on_click_categoria=_ao_clicar_subcategoria,
+                        col={"xs": 12, "md": 4},
+                    )
+                )
+
+            # 2. Potes Financeiros desta categoria
+            potes_com_dados = [p for p in por_pote if p.get("pote_id") is not None]
+            if potes_com_dados and c.tipo != "Receita":
+                cards_graficos.append(
+                    construir_card_ranking_potes(
+                        potes=potes_com_dados,
+                        titulo="Participação por Pote",
+                        subtitulo="Toque em um pote para filtrar",
+                        cor_padrao=cor_c,
+                        on_click_pote=_ao_clicar_pote,
+                        pote_selecionado_id=c.pote_id,
+                        col={"xs": 12, "md": 4 if por_subcat else 6},
+                    )
+                )
+
+            # 3. Evolução Diária
+            cards_graficos.append(
+                construir_card_evolucao_diaria(
+                    por_dia=por_dia,
+                    titulo="Movimentação Dia a Dia",
+                    subtitulo="Toque em uma coluna para focar naquele dia",
+                    modo_saldo=False,
+                    on_click_dia=_ao_clicar_dia,
+                    col={"xs": 12, "md": 4 if por_subcat and potes_com_dados else 6},
+                )
+            )
+            graficos_row.controls = cards_graficos
+
+            lista_tx.renderizar(
+                lancamentos=pacote.get("lancamentos") or [],
+                total_registros=qtd_reg,
             )
 
         except Exception as ex:
@@ -370,50 +324,105 @@ def criar_view_relatorio_categoria(
         finally:
             spinner.visible = False
             if not inicial:
-                _safe_update()
+                try:
+                    page.update()
+                except Exception:
+                    pass
 
-    def on_periodo(d_ini: str, d_fim: str, m: int, a: int):
-        est = atualizar_datas_periodo_global(page, d_ini, d_fim, m, a)
-        contexto_atual[0] = contexto_atual[0].com(
-            data_inicio=est["data_inicio"],
-            data_fim=est["data_fim"],
-            pagina=1,
-        )
+    def _ao_mudar_filtro(novo_ctx: ReportContext):
+        ctx_atual[0] = novo_ctx.com(categoria_id=cat_id)
+        limite_atual[0] = LIMITE_PAGINA
         carregar(inicial=False)
 
-    def on_mes_ano(m: int, a: int):
-        est = obter_estado_periodo_atual(page)
-        contexto_atual[0] = contexto_atual[0].com(
-            data_inicio=est["data_inicio"],
-            data_fim=est["data_fim"],
-            pagina=1,
-        )
+    def _carregar_mais():
+        limite_atual[0] += LIMITE_PAGINA
         carregar(inicial=False)
 
-    conteudo = ft.Column(
-        spacing=14 if mobile else 16,
-        controls=[
-            container_header,
-            container_seletor_cat,
-            container_kpis,
-            container_graficos,
-            container_filter_bar,
-            container_lista,
-            ft.Container(height=28),
-        ],
+    def _abrir_novo(_=None):
+        abrir_lancamento(
+            page,
+            tipo_inicial=ctx_atual[0].tipo or "Despesa",
+            categoria_inicial=cat_id,
+            conta_inicial=ctx_atual[0].conta_id,
+            cartao_inicial=ctx_atual[0].cartao_id,
+            pote_inicial=ctx_atual[0].pote_id,
+            on_saved=lambda: carregar(inicial=False),
+        )
+
+    filter_bar = FilterBar(
+        page=page,
+        ctx=ctx_atual[0],
+        on_change=_ao_mudar_filtro,
+        mostrar_chips_tipo=True,
+        fixar_categoria=True,
     )
+
+    lista_tx = TransactionList(
+        page=page,
+        on_refresh=lambda: carregar(inicial=False),
+        on_carregar_mais=_carregar_mais,
+        on_novo_lancamento=_abrir_novo,
+    )
+
+    breadcrumbs = [
+        ("Dashboard", "/dashboard"),
+        ("Relatórios", "/relatorios"),
+        (f"Categoria: {nome_cat_inicial}", None),
+    ]
+
+    btn_lancar_header = ft.FilledButton(
+        content=ft.Row(
+            spacing=6,
+            tight=True,
+            controls=[
+                ft.Icon(ft.Icons.ADD_ROUNDED, color=ft.Colors.WHITE, size=16),
+                ft.Text("Lançar", color=ft.Colors.WHITE, size=12.5, weight=ft.FontWeight.W_600),
+            ],
+        ),
+        on_click=_abrir_novo,
+        style=ft.ButtonStyle(
+            bgcolor=cor_cat_inicial,
+            shape=ft.RoundedRectangleBorder(radius=10),
+            padding=pad(h=14, v=10),
+        ),
+    )
+
+    header = criar_report_header(
+        page=page,
+        titulo_ctrl=txt_titulo,
+        subtitulo_ctrl=txt_subtitulo,
+        spinner=spinner,
+        breadcrumbs=breadcrumbs,
+        icone=ft.Icons.CATEGORY_ROUNDED,
+        cor_icone=cor_cat_inicial,
+        acoes_header=[btn_lancar_header],
+        mobile=mobile,
+    )
+
+    scaffold = ReportScaffold(
+        header=header,
+        filter_bar=filter_bar,
+        kpi_strip=kpi_container,
+        secao_extra=_construir_seletor_categorias(),
+        graficos_row=graficos_row,
+        transaction_list=lista_tx,
+    )
+
+    def _on_periodo_shell(d_ini: str, d_fim: str, _m: int, _a: int):
+        ctx_atual[0] = ctx_atual[0].com(data_inicio=d_ini, data_fim=d_fim, categoria_id=cat_id)
+        filter_bar.ctx = ctx_atual[0]
+        carregar(inicial=False)
 
     carregar(inicial=True)
 
-    url_rota = f"/relatorios/categoria/{cat_id}{contexto_atual[0].to_query()}"
+    rota_view_url = getattr(match, "rota_completa", None) or f"/relatorios/categoria/{cat_id}"
     return criar_shell(
-        page,
+        page=page,
         rota_ativa=ROTA_RELATORIOS,
-        conteudo=conteudo,
-        rota_view=url_rota,
-        titulo=f"Categoria · {nome_cat_ref[0]}",
+        rota_view=rota_view_url,
+        titulo=f"Categoria · {nome_cat_inicial}",
         mostrar_voltar=True,
-        on_mes_ano_change=on_mes_ano,
-        on_periodo_change=on_periodo,
+        conteudo=scaffold,
+        on_periodo_change=_on_periodo_shell,
         on_lancamento_saved=lambda: carregar(inicial=False),
     )

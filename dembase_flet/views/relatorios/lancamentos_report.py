@@ -82,7 +82,8 @@ def criar_view_relatorio_lancamentos(
     def _ao_clicar_pote(pt: dict):
         pid = pt.get("pote_id") or pt.get("id")
         if pid:
-            filter_bar.atualizar_contexto(ctx_atual[0].com(pote_id=str(pid)), emitir=True)
+            novo_pid = None if str(ctx_atual[0].pote_id or "") == str(pid) else str(pid)
+            filter_bar.atualizar_contexto(ctx_atual[0].com(pote_id=novo_pid), emitir=True)
 
     def _ao_clicar_dia(dt_iso: str):
         novo = ctx_atual[0].com(data_inicio=dt_iso, data_fim=dt_iso)
@@ -182,6 +183,7 @@ def criar_view_relatorio_lancamentos(
                         subtitulo="Toque em um pote para filtrar os lançamentos dele",
                         cor_padrao=T.PRIMARY,
                         on_click_pote=_ao_clicar_pote,
+                        pote_selecionado_id=c.pote_id,
                         col={"xs": 12, "md": 6 if not por_cat else 4},
                     )
                 )

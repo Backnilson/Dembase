@@ -2,7 +2,8 @@
 =============================================================================
 DemBase v3 — views/widgets/report/transaction_list.py  (Flet 1.0.1)
 Lista responsiva de lançamentos agrupada por dia, com paginação ("Carregar mais"),
-clique na linha para edição no modal oficial e exclusão com suporte a séries.
+clique na linha para edição no modal oficial, exclusão com suporte a séries e
+edição rápida de Pote Financeiro in-line.
 =============================================================================
 """
 from __future__ import annotations
@@ -21,14 +22,29 @@ import services.supabase_client as db
 
 _DIAS_SEMANA_CURTOS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 
+POTES_PADRAO = [
+    {"id": "2df4dd2f-4353-42cc-a5c9-8983085a5301", "nome": "Custos Fixos", "cor": "#007AFF", "percentual": 35},
+    {"id": "da6e1d2b-c611-481d-b48d-065cc5d584b4", "nome": "Custos Semi Fixos", "cor": "#FF69B4", "percentual": 15},
+    {"id": "986da9e8-3042-4562-b1df-c1f5cf0138b9", "nome": "Metas", "cor": "#800080", "percentual": 15},
+    {"id": "c82b0736-fb01-419f-8155-923ebfec82b2", "nome": "Prazeres", "cor": "#FF7A00", "percentual": 10},
+    {"id": "1f1f7449-d985-4c2a-b807-0570a5526614", "nome": "Conhecimento", "cor": "#FFD60A", "percentual": 5},
+    {"id": "34a47be1-9879-46bd-96b1-4082703bf388", "nome": "Liberdade Financeira", "cor": "#6C5CE7", "percentual": 20},
+]
+
 
 def _cabecalho_dia(data_iso: str, total_dia: float) -> ft.Container:
-    try:
-        dt = datetime.strptime(str(data_iso)[:10], "%Y-%m-%d").date()
-        dia_sem = _DIAS_SEMANA_CURTOS[dt.weekday()]
-        lbl_data = f"{dia_sem}, {formatar_data_br(dt)}"
-    except Exception:
-        lbl_data = formatar_data_br(data_iso)
+    if not data_iso:
+        lbl_data = "Sem data"
+    else:
+        try:
+            dt = datetime.strptime(str(data_iso)[:10], "%Y-%m-%d").date()
+            dia_sem = _DIAS_SEMANA_CURTOS[dt.weekday()]
+            lbl_data = f"{dia_sem}, {formatar_data_br(dt)}"
+        except Exception:
+            try:
+                lbl_data = formatar_data_br(data_iso)
+            except Exception:
+                lbl_data = str(data_iso)
 
     sinal = "+" if total_dia > 0 else ("-" if total_dia < 0 else "")
     cor_tot = T.RECEITA if total_dia > 0 else (T.DESPESA if total_dia < 0 else T.TEXT_MUTED)
@@ -61,7 +77,7 @@ def _cabecalho_dia(data_iso: str, total_dia: float) -> ft.Container:
 class TransactionList(ft.Column):
     """
     Lista agrupada por data com edição ao clicar no item, toggle rápido de status,
-    exclusão segura e paginação incremental ("Carregar mais").
+    edição rápida de Pote Financeiro, exclusão segura e paginação incremental ("Carregar mais").
     """
 
     def __init__(
@@ -182,6 +198,134 @@ class TransactionList(ft.Column):
                 self.on_refresh()
         except Exception as ex:
             mostrar_feedback(self._page, f"Erro ao alterar status: {ex}", "erro")
+
+    def _abrir_seletor_pote(self, item: dict):
+        """
+        Abre modal rápido para reclassificar o Pote Financeiro da despesa.
+        Executa UPDATE direto no Supabase e recarrega a lista sem formulário complexo.
+        """
+        pote_id_atual = str(item.get("pote_id") or "")
+        desc = item.get("descricao") or item.get("categoria_nome") or "Lançamento"
+        valor = float(item.get("valor", 0) or 0)
+
+        try:
+            potes = db.listar_potes() or []
+        except Exception:
+            potes = []
+        if not potes:
+            potes = list(POTES_PADRAO)
+
+        def _selecionar(pt: dict):
+            fechar_dialogo(self._page, dlg)
+            pid = pt.get("id")
+            pnome = pt.get("nome", "Pote")
+            try:
+                db.atualizar_lancamento(str(item["id"]), {"pote_id": pid})
+                mostrar_feedback(self._page, f"Classificado no pote '{pnome}'!", "sucesso")
+                if callable(self.on_refresh):
+                    self.on_refresh()
+            except Exception as ex:
+                mostrar_feedback(self._page, f"Erro ao atualizar pote: {ex}", "erro")
+
+        def _desvincular(_=None):
+            fechar_dialogo(self._page, dlg)
+            try:
+                db.atualizar_lancamento(str(item["id"]), {"pote_id": None})
+                mostrar_feedback(self._page, "Pote desvinculado do lançamento.", "info")
+                if callable(self.on_refresh):
+                    self.on_refresh()
+            except Exception as ex:
+                mostrar_feedback(self._page, f"Erro ao desvincular pote: {ex}", "erro")
+
+        linhas_potes: list[ft.Control] = []
+        for p in potes:
+            pid = str(p.get("id") or "")
+            pnome = p.get("nome") or "Pote"
+            pcor = p.get("cor") or T.PRIMARY
+            perc = p.get("percentual") or 0
+            selecionado = bool(pid and pid == pote_id_atual)
+
+            linhas_potes.append(
+                ft.Container(
+                    padding=pad(h=12, v=10),
+                    bgcolor=f"{pcor}1A" if selecionado else T.SURFACE_ALT,
+                    border=borda(1.5, pcor) if selecionado else borda(1, T.BORDER),
+                    border_radius=12,
+                    ink=True,
+                    on_click=lambda _, pt=p: _selecionar(pt),
+                    content=ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Row(
+                                spacing=10,
+                                controls=[
+                                    ft.Container(width=12, height=12, border_radius=6, bgcolor=pcor),
+                                    ft.Column(
+                                        spacing=1,
+                                        controls=[
+                                            ft.Text(
+                                                pnome,
+                                                color=T.TEXT_PRIMARY,
+                                                size=13.5,
+                                                weight=ft.FontWeight.BOLD if selecionado else ft.FontWeight.W_500,
+                                            ),
+                                            ft.Text(f"Orçamento sugerido: {float(perc):.0f}%", color=T.TEXT_MUTED, size=11),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED, color=pcor, size=18)
+                            if selecionado
+                            else ft.Icon(ft.Icons.CHEVRON_RIGHT_ROUNDED, color=T.TEXT_MUTED, size=16),
+                        ],
+                    ),
+                )
+            )
+
+        acoes_dlg = [
+            ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(self._page, dlg)),
+        ]
+        if pote_id_atual:
+            acoes_dlg.insert(
+                0,
+                ft.TextButton(
+                    content=ft.Row(
+                        spacing=5,
+                        tight=True,
+                        controls=[
+                            ft.Icon(ft.Icons.CLEAR_ROUNDED, size=14, color=T.DESPESA),
+                            ft.Text("Remover do Pote", color=T.DESPESA, size=12),
+                        ],
+                    ),
+                    on_click=_desvincular,
+                ),
+            )
+
+        dlg = ft.AlertDialog(
+            title=ft.Row(
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Icon(ft.Icons.SAVINGS_ROUNDED, color=T.PRIMARY, size=20),
+                    ft.Text("Classificar Pote Financeiro", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
+                ],
+            ),
+            content=ft.Container(
+                width=380,
+                content=ft.Column(
+                    tight=True,
+                    spacing=8,
+                    controls=[
+                        ft.Text(f"{desc} · {formatar_moeda(valor)}", color=T.TEXT_MUTED, size=12.5),
+                        ft.Divider(height=1, color=T.BORDER),
+                        *linhas_potes,
+                    ],
+                ),
+            ),
+            actions=acoes_dlg,
+        )
+        abrir_dialogo(self._page, dlg)
 
     def _confirmar_exclusao(self, item: dict):
         tem_serie = bool(item.get("serie_id") or item.get("recorrente_id"))
@@ -329,15 +473,42 @@ class TransactionList(ft.Column):
         if pote_nome:
             badges.append(
                 ft.Container(
-                    padding=pad(h=6, v=2),
-                    bgcolor=f"{pote_cor}18",
-                    border_radius=6,
+                    padding=pad(h=7, v=3),
+                    bgcolor=f"{pote_cor}20",
+                    border_radius=8,
+                    border=borda(1, f"{pote_cor}45"),
+                    on_click=lambda _, it=item: self._abrir_seletor_pote(it),
+                    ink=True,
+                    tooltip=f"Pote: {pote_nome}. Clique para reclassificar rapidamente",
                     content=ft.Row(
-                        spacing=3,
+                        spacing=4,
                         tight=True,
                         controls=[
-                            ft.Container(width=6, height=6, border_radius=3, bgcolor=pote_cor),
-                            ft.Text(pote_nome, size=10, color=pote_cor, weight=ft.FontWeight.BOLD),
+                            ft.Container(width=7, height=7, border_radius=3.5, bgcolor=pote_cor),
+                            ft.Text(pote_nome, size=10.5, color=pote_cor, weight=ft.FontWeight.BOLD),
+                            ft.Icon(ft.Icons.ARROW_DROP_DOWN_ROUNDED, size=14, color=pote_cor),
+                        ],
+                    ),
+                )
+            )
+        elif not eh_transf and not eh_rec:
+            # Despesa sem pote -> badge de ação rápida chamando a atenção
+            badges.append(
+                ft.Container(
+                    padding=pad(h=7, v=3),
+                    bgcolor=f"{T.WARNING}1A",
+                    border_radius=8,
+                    border=borda(1, f"{T.WARNING}50"),
+                    on_click=lambda _, it=item: self._abrir_seletor_pote(it),
+                    ink=True,
+                    tooltip="Despesa sem Pote Financeiro! Clique para classificar",
+                    content=ft.Row(
+                        spacing=4,
+                        tight=True,
+                        controls=[
+                            ft.Icon(ft.Icons.SAVINGS_OUTLINED, size=12, color=T.WARNING),
+                            ft.Text("Definir Pote", size=10, color=T.WARNING, weight=ft.FontWeight.BOLD),
+                            ft.Icon(ft.Icons.ARROW_DROP_DOWN_ROUNDED, size=14, color=T.WARNING),
                         ],
                     ),
                 )
@@ -425,6 +596,28 @@ class TransactionList(ft.Column):
             ),
         )
 
+        acoes_direita: list[ft.Control] = []
+        if not eh_transf and not eh_rec:
+            acoes_direita.append(
+                ft.IconButton(
+                    icon=ft.Icons.SAVINGS_ROUNDED,
+                    icon_color=pote_cor if pote_nome else T.WARNING,
+                    icon_size=18,
+                    tooltip=f"Pote: {pote_nome or 'Não classificado'} (toque para alterar rapidamente)",
+                    on_click=lambda _, it=item: self._abrir_seletor_pote(it),
+                )
+            )
+        acoes_direita.append(badge_status)
+        acoes_direita.append(
+            ft.IconButton(
+                icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
+                icon_color=T.TEXT_MUTED,
+                icon_size=18,
+                tooltip="Excluir lançamento",
+                on_click=lambda _, it=item: self._confirmar_exclusao(it),
+            )
+        )
+
         return ft.Container(
             padding=pad(h=14, v=10),
             bgcolor=T.SURFACE,
@@ -436,14 +629,7 @@ class TransactionList(ft.Column):
                 spacing=8,
                 controls=[
                     area_clicavel_edicao,
-                    badge_status,
-                    ft.IconButton(
-                        icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
-                        icon_color=T.TEXT_MUTED,
-                        icon_size=18,
-                        tooltip="Excluir lançamento",
-                        on_click=lambda _, it=item: self._confirmar_exclusao(it),
-                    ),
+                    *acoes_direita,
                 ],
             ),
         )
@@ -489,4 +675,3 @@ def criar_transaction_list(
 
     tl.renderizar(itens_processados, total_registros)
     return tl
-

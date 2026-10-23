@@ -228,8 +228,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- Totais agregados sobre o conjunto filtrado
-    -- Decisão aprovada: se v_tipo IS NULL, Transferências ficam ocultas por padrão
+    -- Totais agregados sobre o conjunto filtrado (inclui v_pote_id)
     SELECT
         COALESCE(SUM(CASE WHEN l.tipo = 'Receita' THEN l.valor ELSE 0 END), 0),
         COALESCE(SUM(CASE WHEN l.tipo = 'Despesa' THEN l.valor ELSE 0 END), 0),
@@ -268,7 +267,7 @@ BEGIN
         ELSE (v_receitas + v_despesas)
     END;
 
-    -- Ranking por Categoria
+    -- Ranking por Categoria (filtrado por v_pote_id)
     SELECT COALESCE(JSONB_AGG(row ORDER BY row.total DESC), '[]'::jsonb) INTO v_por_cat
     FROM (
         SELECT
@@ -291,6 +290,7 @@ BEGIN
           AND (v_cartao_id IS NULL OR l.cartao_id = v_cartao_id)
           AND (v_categoria_id IS NULL OR l.categoria_id = v_categoria_id)
           AND (v_subcat_id IS NULL OR l.subcategoria_id = v_subcat_id)
+          AND (v_pote_id IS NULL OR l.pote_id = v_pote_id)
           AND (v_regra IS NULL OR l.regra::text = v_regra)
           AND (v_status IS NULL OR l.status::text = v_status)
           AND (v_forma IS NULL OR lower(l.forma_movimentacao) = lower(v_forma))
@@ -303,7 +303,7 @@ BEGIN
         GROUP BY cat.id, cat.nome, cat.cor, cat.icone
     ) row;
 
-    -- Ranking por Subcategoria (útil para drill-down de Categoria)
+    -- Ranking por Subcategoria (filtrado por v_pote_id)
     SELECT COALESCE(JSONB_AGG(row ORDER BY row.total DESC), '[]'::jsonb) INTO v_por_subcat
     FROM (
         SELECT
@@ -325,6 +325,7 @@ BEGIN
           AND (v_cartao_id IS NULL OR l.cartao_id = v_cartao_id)
           AND (v_categoria_id IS NULL OR l.categoria_id = v_categoria_id)
           AND (v_subcat_id IS NULL OR l.subcategoria_id = v_subcat_id)
+          AND (v_pote_id IS NULL OR l.pote_id = v_pote_id)
           AND (v_regra IS NULL OR l.regra::text = v_regra)
           AND (v_status IS NULL OR l.status::text = v_status)
           AND (v_forma IS NULL OR lower(l.forma_movimentacao) = lower(v_forma))
@@ -337,7 +338,7 @@ BEGIN
         GROUP BY sub.id, sub.nome
     ) row;
 
-    -- Ranking por Pote Financeiro
+    -- Ranking por Pote Financeiro (NÃO filtra por v_pote_id para que todos os potes continuem visíveis e alternáveis)
     SELECT COALESCE(JSONB_AGG(row ORDER BY row.posicao), '[]'::jsonb) INTO v_por_pote
     FROM (
         SELECT
@@ -361,7 +362,6 @@ BEGIN
           AND (v_cartao_id IS NULL OR l.cartao_id = v_cartao_id)
           AND (v_categoria_id IS NULL OR l.categoria_id = v_categoria_id)
           AND (v_subcat_id IS NULL OR l.subcategoria_id = v_subcat_id)
-          AND (v_pote_id IS NULL OR l.pote_id = v_pote_id)
           AND (v_regra IS NULL OR l.regra::text = v_regra)
           AND (v_status IS NULL OR l.status::text = v_status)
           AND (v_forma IS NULL OR lower(l.forma_movimentacao) = lower(v_forma))
@@ -374,7 +374,7 @@ BEGIN
         GROUP BY pot.id, pot.posicao, pot.nome, pot.cor
     ) row;
 
-    -- Evolução por Dia
+    -- Evolução por Dia (filtrado por v_pote_id)
     SELECT COALESCE(JSONB_AGG(row ORDER BY row.data), '[]'::jsonb) INTO v_por_dia
     FROM (
         SELECT
@@ -395,6 +395,7 @@ BEGIN
           AND (v_cartao_id IS NULL OR l.cartao_id = v_cartao_id)
           AND (v_categoria_id IS NULL OR l.categoria_id = v_categoria_id)
           AND (v_subcat_id IS NULL OR l.subcategoria_id = v_subcat_id)
+          AND (v_pote_id IS NULL OR l.pote_id = v_pote_id)
           AND (v_regra IS NULL OR l.regra::text = v_regra)
           AND (v_status IS NULL OR l.status::text = v_status)
           AND (v_forma IS NULL OR lower(l.forma_movimentacao) = lower(v_forma))
@@ -407,7 +408,7 @@ BEGIN
         GROUP BY l.data
     ) row;
 
-    -- Distribuição por Forma de Movimentação
+    -- Distribuição por Forma de Movimentação (filtrado por v_pote_id)
     SELECT COALESCE(JSONB_AGG(row ORDER BY row.total DESC), '[]'::jsonb) INTO v_por_forma
     FROM (
         SELECT
@@ -427,6 +428,7 @@ BEGIN
           AND (v_cartao_id IS NULL OR l.cartao_id = v_cartao_id)
           AND (v_categoria_id IS NULL OR l.categoria_id = v_categoria_id)
           AND (v_subcat_id IS NULL OR l.subcategoria_id = v_subcat_id)
+          AND (v_pote_id IS NULL OR l.pote_id = v_pote_id)
           AND (v_regra IS NULL OR l.regra::text = v_regra)
           AND (v_status IS NULL OR l.status::text = v_status)
           AND (v_forma IS NULL OR lower(l.forma_movimentacao) = lower(v_forma))
@@ -439,7 +441,7 @@ BEGIN
         GROUP BY l.forma_movimentacao
     ) row;
 
-    -- Lista paginada de lançamentos enriquecidos
+    -- Lista paginada de lançamentos enriquecidos com Pote (CRÍTICO: filtrado por v_pote_id!)
     SELECT COALESCE(JSONB_AGG(row), '[]'::jsonb) INTO v_lancamentos
     FROM (
         SELECT
@@ -491,6 +493,7 @@ BEGIN
           AND (v_cartao_id IS NULL OR l.cartao_id = v_cartao_id)
           AND (v_categoria_id IS NULL OR l.categoria_id = v_categoria_id)
           AND (v_subcat_id IS NULL OR l.subcategoria_id = v_subcat_id)
+          AND (v_pote_id IS NULL OR l.pote_id = v_pote_id)
           AND (v_regra IS NULL OR l.regra::text = v_regra)
           AND (v_status IS NULL OR l.status::text = v_status)
           AND (v_forma IS NULL OR lower(l.forma_movimentacao) = lower(v_forma))
