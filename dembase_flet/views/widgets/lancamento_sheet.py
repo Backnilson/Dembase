@@ -72,6 +72,9 @@ def abrir_lancamento(
         elif isinstance(d_raw, (date, datetime)):
             state.data_selecionada = d_raw if isinstance(d_raw, date) else d_raw.date()
 
+        if lancamento.get("tipo_recorrencia") == "fixa" or bool(lancamento.get("recorrente_id")):
+            state.is_fixa = True
+
         # Abre detalhes caso o registro já tenha dados secundários
         if state.subcategoria_id or state.subtipo or state.serie_id or state.recorrente_id:
             state.mais_detalhes_aberto = True
@@ -252,7 +255,7 @@ def abrir_lancamento(
                 mostrar_feedback(page, "Lançamento atualizado com sucesso!", "sucesso")
             else:
                 modo = state.modo_recorrencia()
-                valor_modo = "parcelado" if state.eh_credito else "repetido"
+                valor_modo = "parcelado" if (state.eh_credito and modo == "parcelada") else "repetido"
                 res = db.criar_lancamento_recorrente(
                     dados=dados,
                     modo=modo,

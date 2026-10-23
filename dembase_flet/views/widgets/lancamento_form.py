@@ -7,6 +7,7 @@ chips de data rápida, switch de status, progressive disclosure e regras de neg�
 """
 from __future__ import annotations
 
+import re
 import unicodedata
 import uuid
 from datetime import date, datetime, timedelta
@@ -67,6 +68,17 @@ def _botao_add_verde(on_click, tooltip: str) -> ft.IconButton:
             shape=ft.RoundedRectangleBorder(radius=10),
         ),
     )
+
+
+def formatar_moeda_input(valor: float) -> str:
+    """
+    Formata valor numérico para exibição brasileira de moeda sem o prefixo R$
+    (ex: 0.0 -> '0,00', 0.01 -> '0,01', 1.23 -> '1,23', 1234.56 -> '1.234,56').
+    """
+    centavos = int(round((valor or 0.0) * 100))
+    inteiro = centavos // 100
+    resto = centavos % 100
+    return f"{inteiro:,}".replace(",", ".") + f",{resto:02d}"
 
 
 class LancamentoForm(ft.Column):
@@ -211,7 +223,7 @@ class LancamentoForm(ft.Column):
             if self.state.eh_despesa
             else (T.RECEITA if self.state.eh_receita else T.PRIMARY)
         )
-        str_val = f"{self.state.valor:.2f}".replace(".", ",") if self.state.valor > 0 else "0,00"
+        str_val = formatar_moeda_input(self.state.valor)
         self.txt_valor = ft.TextField(
             label="Valor da transação",
             value=str_val,
@@ -335,7 +347,27 @@ class LancamentoForm(ft.Column):
             visible=self.state.eh_transferencia,
         )
 
-        # 9. Parcelas (Só Crédito - Decisão 2)
+        # 9. Modalidade no Cartão de Crédito: Parcelas vs Recorrência Contínua
+        self.seg_credito_tipo = ft.SegmentedButton(
+            segments=[
+                ft.Segment(
+                    value="parcelado",
+                    label=ft.Text("Parcelas", size=12.5, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.PAYMENTS_ROUNDED, size=16),
+                ),
+                ft.Segment(
+                    value="recorrente",
+                    label=ft.Text("Recorrência", size=12.5, weight=ft.FontWeight.W_600),
+                    icon=ft.Icon(ft.Icons.ALL_INCLUSIVE_ROUNDED, size=16),
+                ),
+            ],
+            selected=["recorrente" if self.state.is_fixa else "parcelado"],
+            on_change=self._ao_mudar_credito_tipo,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=10),
+            ),
+        )
+
         self.dd_parcelas = ft.Dropdown(
             label="Número de Parcelas *",
             value=str(self.state.quantidade if self.state.quantidade > 1 else 1),
@@ -350,11 +382,51 @@ class LancamentoForm(ft.Column):
             weight=ft.FontWeight.W_500,
             color=T.TEXT_MUTED,
         )
-        self.row_parcelas = ft.Row(
+        self.row_detalhe_parcelas = ft.Row(
             controls=[self.dd_parcelas, self.lbl_resumo_parcelas],
             alignment=ft.MainAxisAlignment.START,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=12,
+            visible=(not self.state.is_fixa),
+        )
+        self.card_credito_recorrente_info = ft.Container(
+            padding=pad(h=12, v=8),
+            bgcolor=f"{T.PRIMARY}14",
+            border_radius=10,
+            border=borda(1, f"{T.PRIMARY}40"),
+            content=ft.Row(
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Icon(ft.Icons.AUTORENEW_ROUNDED, color=T.PRIMARY, size=18),
+                    ft.Column(
+                        spacing=1,
+                        tight=True,
+                        controls=[
+                            ft.Text(
+                                "Assinatura / Cobrança Fixa Contínua",
+                                color=T.PRIMARY,
+                                size=12.5,
+                                weight=ft.FontWeight.BOLD,
+                            ),
+                            ft.Text(
+                                "Cobrada mensalmente na fatura sem término de parcelas.",
+                                color=T.TEXT_MUTED,
+                                size=11,
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            visible=self.state.is_fixa,
+        )
+        self.row_parcelas = ft.Column(
+            controls=[
+                self.seg_credito_tipo,
+                self.row_detalhe_parcelas,
+                self.card_credito_recorrente_info,
+            ],
+            spacing=8,
             visible=False,
         )
 
@@ -427,10 +499,26 @@ class LancamentoForm(ft.Column):
             potes_usuario = []
 
         if potes_usuario:
-            opcoes_regra = [ft.dropdown.Option(key=str(p.id), text=f"{p.nome} ({float(p.percentual):g}%)") for p in potes_usuario]
-            val_pote = str(self.state.pote_id) if self.state.pote_id else (str(potes_usuario[0].id) if potes_usuario else None)
+            def _p_id(p):
+                val = getattr(p, "id", None)
+                if val is None and isinstance(p, dict): val = p.get("id")
+                return str(val) if val is not None else ""
+
+            def _p_nome(p):
+                val = getattr(p, "nome", None)
+                if val is None and isinstance(p, dict): val = p.get("nome")
+                return str(val) if val is not None else "Pote"
+
+            def _p_perc(p):
+                val = getattr(p, "percentual", None)
+                if val is None and isinstance(p, dict): val = p.get("percentual")
+                try: return float(val) if val is not None else 0.0
+                except Exception: return 0.0
+
+            opcoes_regra = [ft.dropdown.Option(key=_p_id(p), text=f"{_p_nome(p)} ({_p_perc(p):g}%)") for p in potes_usuario]
+            val_pote = str(self.state.pote_id) if self.state.pote_id else (_p_id(potes_usuario[0]) if potes_usuario else None)
             if not self.state.pote_id and potes_usuario:
-                self.state.pote_id = str(potes_usuario[0].id)
+                self.state.pote_id = _p_id(potes_usuario[0])
         else:
             opcoes_regra = [ft.dropdown.Option(key=r, text=r) for r in REGRAS_5030]
             val_pote = self.state.regra or "Essencial"
@@ -722,7 +810,7 @@ class LancamentoForm(ft.Column):
         self.row_parcelas.visible = is_credito
         self.dd_regra.visible = self.state.eh_despesa
 
-        # Switches Fixa e Repetir: Ocultos em Transferência e em Despesa+Crédito (Decisão 2 e 3)
+        # Switches Fixa e Repetir: Ocultos em Transferência e em Despesa+Crédito (já que crédito usa o seletor dedicado)
         self.row_switches_recorrencia.visible = (not is_transf and not is_credito)
         self.switch_fixa.label = "Receita Fixa" if self.state.eh_receita else "Despesa Fixa"
 
@@ -730,7 +818,10 @@ class LancamentoForm(ft.Column):
         if self.state.is_fixa:
             self.col_opcoes_recorrencia.visible = True
             self.txt_repetir_qtd.visible = False
-            self.lbl_resumo_repetir.value = "Lançamento agendado e materializado para os próximos 12 meses."
+            if is_credito:
+                self.lbl_resumo_repetir.value = "Assinatura contínua agendada e materializada na fatura do cartão para os próximos 12 meses."
+            else:
+                self.lbl_resumo_repetir.value = "Lançamento agendado e materializado para os próximos 12 meses."
             self.lbl_resumo_repetir.color = T.PRIMARY
         elif self.state.is_repetir:
             self.col_opcoes_recorrencia.visible = True
@@ -740,6 +831,9 @@ class LancamentoForm(ft.Column):
             self.col_opcoes_recorrencia.visible = False
 
         if is_credito:
+            self.seg_credito_tipo.selected = ["recorrente" if self.state.is_fixa else "parcelado"]
+            self.row_detalhe_parcelas.visible = not self.state.is_fixa
+            self.card_credito_recorrente_info.visible = self.state.is_fixa
             self._atualizar_resumo_parcelas(atualizar_ui=False)
 
     def _atualizar_opcoes_forma(self, atualizar_ui: bool = True):
@@ -851,14 +945,22 @@ class LancamentoForm(ft.Column):
             self._safe_update(self.dd_subtipo)
 
     def _atualizar_resumo_parcelas(self, atualizar_ui: bool = True):
-        res = resumo_parcelas(
-            self.state.valor,
-            self.state.quantidade,
-            modo="parcelado",
-            frequencia="mensal",
-            data_inicio=self.state.data_selecionada,
-        )
-        self.lbl_resumo_parcelas.value = res
+        if not self.state.eh_credito:
+            return
+        if self.state.is_fixa:
+            self.lbl_resumo_parcelas.value = "Cobrança contínua todo mês na fatura do cartão."
+            self.lbl_resumo_parcelas.color = T.PRIMARY
+        else:
+            res = resumo_parcelas(
+                self.state.valor,
+                self.state.quantidade,
+                modo="parcelado",
+                frequencia="mensal",
+                data_inicio=self.state.data_selecionada,
+            )
+            self.lbl_resumo_parcelas.value = res or "À vista na fatura atual."
+            self.lbl_resumo_parcelas.color = T.TEXT_MUTED if not res else T.PRIMARY
+
         if atualizar_ui:
             self._safe_update(self.lbl_resumo_parcelas)
 
@@ -901,17 +1003,32 @@ class LancamentoForm(ft.Column):
         self._notificar_mudanca()
 
     def _ao_mudar_valor(self, e):
-        texto = (e.control.value or "").replace("R$", "").strip().replace(".", "").replace(",", ".")
-        try:
-            val = float(texto)
-            self.state.valor = max(0.0, val)
-        except ValueError:
-            self.state.valor = 0.0
+        if getattr(self, "_formatando_valor", False):
+            return
+
+        raw = e.control.value or ""
+        digits = re.sub(r"\D", "", raw).lstrip("0")
+        if len(digits) > 11:
+            digits = digits[:11]
+
+        centavos = int(digits) if digits else 0
+        valor = centavos / 100.0
+        self.state.valor = valor
+
+        formatado = formatar_moeda_input(valor)
+        if self.txt_valor.value != formatado:
+            self._formatando_valor = True
+            try:
+                self.txt_valor.value = formatado
+                self._safe_update(self.txt_valor)
+            finally:
+                self._formatando_valor = False
 
         if self.state.eh_credito:
             self._atualizar_resumo_parcelas()
         elif self.state.is_repetir:
             self._atualizar_resumo_repetir()
+        self._notificar_mudanca()
 
     def _selecionar_data_rapida(self, dt: date):
         self.state.atualizar_data(dt)
@@ -960,6 +1077,30 @@ class LancamentoForm(ft.Column):
     def _ao_mudar_destino(self, e):
         val = e.data or e.control.value
         self.state.destino_id = self._obter_conta_id(val)
+        self._notificar_mudanca()
+
+    def _ao_mudar_credito_tipo(self, e):
+        sel = e.control.selected
+        if isinstance(sel, (list, set, tuple)) and len(sel) > 0:
+            tipo_escolhido = list(sel)[0]
+        else:
+            tipo_escolhido = "parcelado"
+        e.control.selected = [tipo_escolhido]
+
+        if tipo_escolhido == "recorrente":
+            self.state.is_fixa = True
+            self.state.is_repetir = False
+            self.state.quantidade = 1
+        else:
+            self.state.is_fixa = False
+            try:
+                self.state.quantidade = int(str(self.dd_parcelas.value or 1).replace("x", "").strip())
+            except Exception:
+                self.state.quantidade = 1
+
+        self._sincronizar_estado_com_ui()
+        self._safe_update(self.row_parcelas)
+        self._safe_update(self.col_detalhes)
         self._notificar_mudanca()
 
     def _ao_mudar_parcelas(self, e):

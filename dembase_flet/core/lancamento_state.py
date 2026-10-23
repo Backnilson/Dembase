@@ -132,12 +132,12 @@ class LancamentoFormState:
     def mudar_forma(self, nova_forma: str):
         self.forma_movimentacao = nova_forma
         if is_credito_str(nova_forma):
-            # Decisão 2: Crédito só tem Parcelado, sem Fixa/Repetir
-            self.is_fixa = False
+            # Crédito suporta compras parceladas e recorrência contínua (assinaturas).
+            # Repetições avulsas com término não se aplicam a cartão.
             self.is_repetir = False
         else:
             self.cartao_id = None
-            if not self.is_repetir:
+            if not self.is_repetir and not self.is_fixa:
                 self.quantidade = 1
 
     def mudar_categoria(self, nova_cat_id: Optional[str]):
@@ -148,6 +148,8 @@ class LancamentoFormState:
         self.is_fixa = ativo
         if ativo:
             self.is_repetir = False
+            if self.eh_credito:
+                self.quantidade = 1
 
     def alternar_repetir(self, ativo: bool):
         self.is_repetir = ativo
@@ -163,6 +165,8 @@ class LancamentoFormState:
         if self.eh_transferencia:
             return "unica"
         if self.eh_credito:
+            if self.is_fixa:
+                return "fixa"
             return "parcelada" if self.quantidade > 1 else "unica"
         if self.is_fixa:
             return "fixa"
