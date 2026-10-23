@@ -1,8 +1,8 @@
 """
 =============================================================================
 DemBase v3 — views/widgets/potes_cards.py  (Flet 1.0.1)
-Cards do Dashboard: Gasto vs Previsto de cada um dos 6 potes.
-Apenas apresentação — recebe o dict de db.obter_resumo_potes().
+Cards do Dashboard: Gasto Real vs Limite (Receita Real) dos 6 potes.
+Apresentação puramente reativa — consome o dict de db.obter_resumo_potes().
 =============================================================================
 """
 import flet as ft
@@ -47,30 +47,42 @@ def card_pote(pote: dict, on_click=None) -> ft.Container:
     restante = previsto - gasto
     qtd = int(pote.get("qtd_transacoes") or 0)
     cor_pote = pote.get("cor") or T.PRIMARY
+    perc_pote = float(pote.get("percentual") or 0)
 
-    excedido = gasto > previsto
+    excedido = gasto > previsto and previsto > 0
     sem_gastos = gasto == 0
-    pct = (gasto / previsto * 100) if previsto > 0 else (100.0 if gasto > 0 else 0.0)
+    sem_receita = previsto == 0
 
-    if excedido:
+    if sem_receita:
+        pct = 100.0 if gasto > 0 else 0.0
+        if gasto > 0:
+            cor_barra, cor_valor = COR_EXCEDIDO, COR_EXCEDIDO
+            badge = _badge("Sem receita", COR_EXCEDIDO)
+            borda_card = borda(color=f"{COR_EXCEDIDO}80")
+            txt_restante = ft.Text(f"{formatar_moeda(gasto)} sem receita no período", color=COR_EXCEDIDO, size=11)
+        else:
+            cor_barra, cor_valor = cor_pote, T.TEXT_PRIMARY
+            badge = _badge("Sem receita", T.TEXT_MUTED, bg=T.SURFACE_ALT)
+            borda_card = borda()
+            txt_restante = ft.Text("Sem movimentação", color=T.TEXT_MUTED, size=11)
+    elif excedido:
+        pct = (gasto / previsto * 100) if previsto > 0 else 0.0
         cor_barra, cor_valor = COR_EXCEDIDO, COR_EXCEDIDO
         badge = _badge("Excedido", COR_EXCEDIDO)
         borda_card = borda(color=f"{COR_EXCEDIDO}80")
+        txt_restante = ft.Text(f"{formatar_moeda(abs(restante))} acima do limite", color=COR_EXCEDIDO, size=11)
     elif sem_gastos:
+        pct = 0.0
         cor_barra, cor_valor = cor_pote, T.TEXT_PRIMARY
         badge = _badge("Sem gastos", T.TEXT_MUTED, bg=T.SURFACE_ALT)
         borda_card = borda()
+        txt_restante = ft.Text(f"+{formatar_moeda(restante)} disponível", color=T.RECEITA, size=11)
     else:
+        pct = (gasto / previsto * 100) if previsto > 0 else 0.0
         cor_barra, cor_valor = cor_pote, T.TEXT_PRIMARY
         badge = _badge(_pct_br(pct), T.TEXT_PRIMARY, bg=T.SURFACE_ALT)
         borda_card = borda()
-
-    if restante > 0:
-        txt_restante = ft.Text(f"+{formatar_moeda(restante)} restante", color=T.RECEITA, size=11)
-    elif excedido:
-        txt_restante = ft.Text(f"{formatar_moeda(abs(restante))} acima", color=COR_EXCEDIDO, size=11)
-    else:
-        txt_restante = ft.Text(f"{formatar_moeda(0)} restante", color=T.TEXT_MUTED, size=11)
+        txt_restante = ft.Text(f"+{formatar_moeda(restante)} disponível", color=T.RECEITA, size=11)
 
     rotulo_qtd = "transação" if qtd == 1 else "transações"
 
@@ -103,8 +115,8 @@ def card_pote(pote: dict, on_click=None) -> ft.Container:
                 border_radius=4,
             ),
             ft.Row(spacing=10, controls=[
-                _caixa_valor("GASTO", gasto, cor_valor),
-                _caixa_valor("PREVISTO", previsto, T.TEXT_PRIMARY),
+                _caixa_valor("GASTO REAL", gasto, cor_valor),
+                _caixa_valor(f"LIMITE ({perc_pote:.0f}%)", previsto, T.TEXT_PRIMARY),
             ]),
             ft.Row(
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -121,17 +133,28 @@ def card_pote(pote: dict, on_click=None) -> ft.Container:
 
 
 def secao_potes(resumo: dict, nav_func=None, on_ajustar=None) -> ft.Column:
-    """Seção 'Metas financeiras' com os cards dos 6 potes."""
+    """Seção 'Metas financeiras (6 Potes)' baseada na receita real do período."""
     potes = resumo.get("potes") or []
     sem_pote = resumo.get("sem_pote") or {}
+    renda = float(resumo.get("renda") or 0)
+
+    if renda > 0:
+        subtitulo = f"Limite calculado sobre a receita real do período ({formatar_moeda(renda)})"
+        badge_header = _badge(f"Receita: {formatar_moeda(renda)}", T.PRIMARY)
+    else:
+        subtitulo = "Sem receitas registradas no período selecionado — orçamentos zerados"
+        badge_header = _badge("0 Receitas", T.WARNING)
 
     cabecalho = ft.Row(
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         vertical_alignment=ft.CrossAxisAlignment.END,
         controls=[
-            ft.Column(spacing=2, controls=[
-                ft.Text("Metas financeiras", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
-                ft.Text("Distribuição da sua renda mensal por pote", color=T.TEXT_MUTED, size=12),
+            ft.Column(spacing=3, controls=[
+                ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                    ft.Text("Metas Financeiras (6 Potes)", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
+                    badge_header,
+                ]),
+                ft.Text(subtitulo, color=T.TEXT_MUTED, size=12),
             ]),
             ft.TextButton(
                 content=ft.Text("Ajustar metas ›", color=T.WARNING, size=12, weight=ft.FontWeight.W_600),
@@ -162,7 +185,7 @@ def secao_potes(resumo: dict, nav_func=None, on_ajustar=None) -> ft.Column:
                 content=ft.Row(spacing=10, controls=[
                     ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=T.WARNING, size=18),
                     ft.Text(
-                        f"{qtd_sem} despesa(s) sem pote — {formatar_moeda(float(sem_pote.get('total') or 0))}",
+                        f"{qtd_sem} despesa(s) sem pote no período — {formatar_moeda(float(sem_pote.get('total') or 0))}",
                         color=T.TEXT_PRIMARY, size=12, expand=True,
                     ),
                 ]),

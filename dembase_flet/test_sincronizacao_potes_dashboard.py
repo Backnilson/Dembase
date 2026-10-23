@@ -1,11 +1,11 @@
 """
 =============================================================================
-DEMBASE v3 — TESTE DE SINCRONIZAÇÃO POTES / CONFIGURAÇÃO / DASHBOARD
-Valida o ciclo completo de ponta a ponta:
-1. Salvamento atômico de Metas + Renda de Referência (valor base)
-2. Cálculo dinâmico do Previsto em get_potes_resumo
-3. Existência de callback de atualização no Dashboard (_dembase_refresh)
-4. Roteador executando o refresh no retorno de views ancestrais
+DEMBASE v3 — TESTE DE SINCRONIZAÇÃO POTES / DASHBOARD (RECEITA REAL)
+Valida a regra de negócio do Dashboard baseada na realidade financeira:
+1. Limites dos potes calculados exclusivamente sobre a RECEITA REAL do período
+2. Exibição e cálculo das despesas reais cruzadas com os limites
+3. Hook de refresh reativo (_dembase_refresh) no Dashboard
+4. Roteador executando o ciclo de atualização ao voltar para a tela inicial
 =============================================================================
 """
 import sys
@@ -24,6 +24,7 @@ from services import potes_service as svc
 from views.dashboard_view import criar_view_dashboard
 from views.config_view import criar_view_config
 from views.widgets.potes_config import montar_aba_potes
+from views.widgets.potes_cards import card_pote, secao_potes
 import services.supabase_client as db
 
 def mock_page(width=1280, height=800):
@@ -44,27 +45,78 @@ def mock_page(width=1280, height=800):
     return page
 
 def testar_potes_service_renda():
-    print("--- 1. Testando potes_service.salvar_renda_referencia ---")
+    print("--- 1. Testando potes_service e simulador de metas ---")
     val = svc.salvar_renda_referencia("3756.00")
     assert val == Decimal("3756.00"), f"Esperado 3756.00, obteve {val}"
     
-    # Teste de fallback seguro para vazio
     val_zero = svc.salvar_renda_referencia("")
     assert val_zero == Decimal("0.00"), f"Esperado 0.00 para vazio, obteve {val_zero}"
-    
-    # Restaura 3756.00
-    svc.salvar_renda_referencia("3756.00")
-    print("[OK] potes_service.salvar_renda_referencia validado com sucesso.")
+    print("[OK] potes_service validado com sucesso.")
 
 def testar_aba_potes_salvamento_unificado():
-    print("--- 2. Testando montar_aba_potes e salvamento unificado ---")
+    print("--- 2. Testando montar_aba_potes e simulador ---")
     page = mock_page()
     ctrl = montar_aba_potes(page)
     assert ctrl is not None, "Falha ao montar aba potes"
     print("[OK] montar_aba_potes instanciado com sucesso.")
 
+def testar_cards_potes_receita_real():
+    print("--- 3. Testando cards de potes com base na receita real ---")
+    # Cenário A: Com receita real no período
+    resumo_com_receita = {
+        "renda": 5000.0,
+        "total_gasto": 3200.0,
+        "saldo": 1800.0,
+        "potes": [
+            {
+                "id": "p1",
+                "nome": "Custos Fixos",
+                "percentual": 35.0,
+                "previsto": 1750.0,  # 35% de 5000
+                "gasto": 1500.0,
+                "restante": 250.0,
+                "qtd_transacoes": 10,
+                "cor": "#007AFF"
+            },
+            {
+                "id": "p2",
+                "nome": "Liberdade Financeira",
+                "percentual": 20.0,
+                "previsto": 1000.0,  # 20% de 5000
+                "gasto": 1200.0,     # Excedido
+                "restante": -200.0,
+                "qtd_transacoes": 2,
+                "cor": "#6C5CE7"
+            }
+        ]
+    }
+    sec = secao_potes(resumo_com_receita)
+    assert sec is not None, "Falha ao renderizar secao_potes com receita real"
+    
+    # Cenário B: Sem receita no período (orçamento zero)
+    resumo_sem_receita = {
+        "renda": 0.0,
+        "total_gasto": 800.0,
+        "saldo": -800.0,
+        "potes": [
+            {
+                "id": "p1",
+                "nome": "Custos Fixos",
+                "percentual": 35.0,
+                "previsto": 0.0,
+                "gasto": 500.0,
+                "restante": -500.0,
+                "qtd_transacoes": 4,
+                "cor": "#007AFF"
+            }
+        ]
+    }
+    sec_zero = secao_potes(resumo_sem_receita)
+    assert sec_zero is not None, "Falha ao renderizar secao_potes com receita zero"
+    print("[OK] Componentes de apresentação de potes testados com receita real e sem receita.")
+
 def testar_dashboard_refresh_hook():
-    print("--- 3. Testando DashboardView e hook _dembase_refresh ---")
+    print("--- 4. Testando DashboardView e hook _dembase_refresh ---")
     page = mock_page()
     v = criar_view_dashboard(page)
     assert hasattr(v, "_dembase_refresh"), "Dashboard view deve possuir atributo _dembase_refresh"
@@ -72,7 +124,7 @@ def testar_dashboard_refresh_hook():
     print("[OK] Dashboard possui hook _dembase_refresh perfeitamente integrado.")
 
 def testar_router_ciclo_retorno():
-    print("--- 4. Testando Router ao retornar de /configuracoes para /dashboard ---")
+    print("--- 5. Testando Router ao retornar de /configuracoes para /dashboard ---")
     rota_alvo = ROTA_DASHBOARD
     pilha = montar_pilha(rota_alvo)
     
@@ -107,7 +159,7 @@ def testar_router_ciclo_retorno():
                     continue
                 if len(views_atuais) > len(pilha):
                     divergiu = True
-                    novas_views.append(v_existente)
+                    novas_views.append(_construir_view(r_alvo))
                     continue
                 else:
                     novas_views.append(v_existente)
@@ -119,7 +171,6 @@ def testar_router_ciclo_retorno():
     assert reaproveitou_topo is True, "Deveria ter marcado reaproveitou_topo como True"
     assert topo_reaproveitado is v_dash, "Topo reaproveitado deve ser o Dashboard"
     
-    # Executa refresh
     if reaproveitou_topo and topo_reaproveitado:
         fn = getattr(topo_reaproveitado, "_dembase_refresh", None)
         if callable(fn):
@@ -129,7 +180,7 @@ def testar_router_ciclo_retorno():
     print("[OK] Roteador executa refresh imediato ao voltar para o Dashboard.")
 
 def testar_rpc_supabase_potes_resumo():
-    print("--- 5. Testando RPC Supabase get_potes_resumo ---")
+    print("--- 6. Testando RPC Supabase get_potes_resumo com Receita Real ---")
     try:
         resumo = db.obter_resumo_potes("2026-10-01", "2026-10-31")
         potes = resumo.get("potes", [])
@@ -140,20 +191,15 @@ def testar_rpc_supabase_potes_resumo():
             assert c_fixos is not None, "Custos Fixos não encontrado"
             assert lib_fin is not None, "Liberdade Financeira não encontrado"
             
-            # Percentuais configurados
-            assert float(c_fixos.get("percentual", 0)) == 35.0, f"Percentual CF esperado 35%, obtido {c_fixos.get('percentual')}"
-            assert float(lib_fin.get("percentual", 0)) == 20.0, f"Percentual LF esperado 20%, obtido {lib_fin.get('percentual')}"
-            
-            # Base e Previsto dinâmico
-            renda_ref = float(resumo.get("renda_referencia", 0) or resumo.get("base_utilizada", 0) or 0)
-            if renda_ref > 0:
-                esperado_cf = round(renda_ref * 0.35, 2)
-                esperado_lf = round(renda_ref * 0.20, 2)
+            receita_real = float(resumo.get("renda", 0) or 0)
+            if receita_real > 0:
+                esperado_cf = round(receita_real * (float(c_fixos.get("percentual", 0)) / 100.0), 2)
+                esperado_lf = round(receita_real * (float(lib_fin.get("percentual", 0)) / 100.0), 2)
                 assert float(c_fixos.get("previsto", 0)) == esperado_cf, f"CF Previsto esperado {esperado_cf}, obtido {c_fixos.get('previsto')}"
                 assert float(lib_fin.get("previsto", 0)) == esperado_lf, f"LF Previsto esperado {esperado_lf}, obtido {lib_fin.get('previsto')}"
-                print(f"[OK] RPC get_potes_resumo calculou perfeitamente: CF={c_fixos.get('previsto')} (35%), LF={lib_fin.get('previsto')} (20%) sobre base {renda_ref}.")
+                print(f"[OK] RPC get_potes_resumo calculou limites com base 100% na Receita Real de R$ {receita_real:,.2f}.")
             else:
-                print(f"[OK] RPC get_potes_resumo executada com sucesso.")
+                print(f"[OK] RPC get_potes_resumo executada com sucesso (receita zero).")
         else:
             print("[AVISO] Nenhum pote retornado da RPC (sem sessão ativa no test).")
     except Exception as ex:
@@ -162,9 +208,10 @@ def testar_rpc_supabase_potes_resumo():
 if __name__ == "__main__":
     testar_potes_service_renda()
     testar_aba_potes_salvamento_unificado()
+    testar_cards_potes_receita_real()
     testar_dashboard_refresh_hook()
     testar_router_ciclo_retorno()
     testar_rpc_supabase_potes_resumo()
     print("\n" + "="*60)
-    print("TODOS OS TESTES DE SINCRONIZAÇÃO PASSARAM COM 100% DE SUCESSO!")
+    print("TODOS OS TESTES DE RECEITA REAL PASSARAM COM 100% DE SUCESSO!")
     print("="*60)

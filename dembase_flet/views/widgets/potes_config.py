@@ -56,7 +56,7 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         **T.campo_estilo(),
     )
     btn_renda = ft.FilledButton(
-        content="Salvar renda",
+        content="Simular",
         style=ft.ButtonStyle(bgcolor=T.PRIMARY, color=ft.Colors.WHITE,
                              shape=ft.RoundedRectangleBorder(radius=10), padding=pad(h=24, v=14)),
     )
@@ -258,15 +258,15 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=20, run_spacing=12,
             controls=[
                 ft.Column(col={"xs": 12, "md": 5}, spacing=6, controls=[
-                    ft.Text("RENDA DE REFERÊNCIA MENSAL", size=10, color=T.TEXT_MUTED,
+                    ft.Text("SIMULADOR DE DISTRIBUIÇÃO (R$)", size=10, color=T.TEXT_MUTED,
                             weight=ft.FontWeight.W_600),
                     txt_renda,
-                    ft.Text("Ao salvar, os valores em R$ dos potes são recalculados.",
+                    ft.Text("Digite um valor para simular a distribuição das porcentagens.",
                             size=11, color=T.TEXT_MUTED),
                 ]),
                 ft.Text(
-                    "Use este valor como base para planejar e distribuir suas metas financeiras. "
-                    "Ele não representa suas receitas reais e não cria lançamentos.",
+                    "Use este valor como simulador para pré-visualizar as metas em R$. "
+                    "No Dashboard, os limites são calculados automaticamente em cima da receita real do período.",
                     col={"xs": 12, "md": 4}, size=12, color=T.TEXT_MUTED,
                 ),
                 ft.Container(col={"xs": 12, "md": 3}, alignment=ft.Alignment(1, 0), content=btn_renda),
@@ -318,11 +318,11 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
     nota = ft.Container(
         padding=pad(h=16, v=12), bgcolor=T.SURFACE, border_radius=12, border=borda(),
         content=ft.Row(spacing=10, controls=[
-            ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED, size=16, color=T.TEXT_MUTED),
+            ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED, size=16, color=T.PRIMARY),
             ft.Text(
-                "Planejamento, não lançamento. Alterações valem para novas receitas; "
-                "distribuições passadas mantêm o percentual aplicado na época.",
-                size=11, color=T.TEXT_MUTED, expand=True,
+                "Regra do Dashboard: Os limites dos 6 potes são calculados aplicando as porcentagens "
+                "configuradas diretamente sobre o dinheiro que realmente entrou na conta no período filtrado.",
+                size=11, color=T.TEXT_PRIMARY, expand=True,
             ),
         ]),
     )
