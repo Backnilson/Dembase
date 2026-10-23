@@ -40,10 +40,19 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
     linhas: list[dict] = []                   # uma por pote (controles + estado)
 
     # ── Renda de referência ──────────────────────────────────────────────────
+    def _ao_alterar_renda(e):
+        try:
+            val = P.para_decimal(txt_renda.value, default=Decimal("0"))
+            renda_ref[0] = max(Decimal("0"), val)
+        except Exception:
+            pass
+        _atualizar_tela()
+
     txt_renda = ft.TextField(
         value=formatar_moeda(float(renda)),
         keyboard_type=ft.KeyboardType.NUMBER,
         text_style=ft.TextStyle(size=16, weight=ft.FontWeight.BOLD),
+        on_change=_ao_alterar_renda,
         **T.campo_estilo(),
     )
     btn_renda = ft.FilledButton(
@@ -201,6 +210,9 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
     def _salvar_metas(_):
         itens = _itens()
         try:
+            nova = svc.salvar_renda_referencia(txt_renda.value)
+            renda_ref[0] = nova
+            txt_renda.value = formatar_moeda(float(nova))
             salvos = svc.salvar_configuracao(itens)   # revalida soma == 100
         except P.ErroPotes as ex:
             mostrar_feedback(page, " ".join(ex.erros), "alerta")
@@ -210,7 +222,7 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             return
         for l, novo in zip(linhas, salvos):
             l["pote"] = novo
-        mostrar_feedback(page, "Metas salvas com sucesso!", "sucesso")
+        mostrar_feedback(page, "Metas e valor base salvos com sucesso!", "sucesso")
         _atualizar_tela()
 
     def _resetar(_):

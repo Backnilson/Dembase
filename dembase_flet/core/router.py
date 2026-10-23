@@ -192,7 +192,7 @@ def _build_calendario(page: ft.Page, match: RouteMatch) -> ft.View:
 
 def _build_config(page: ft.Page, match: RouteMatch) -> ft.View:
     from views.config_view import criar_view_config
-    v = criar_view_config(page)
+    v = criar_view_config(page, match=match)
     v.route = match.rota_completa
     return v
 
@@ -448,6 +448,8 @@ def configurar_rotas(page: ft.Page):
         # Reaproveita views ancestrais já instanciadas na pilha para voltar instantâneo
         novas_views: list[ft.View] = []
         divergiu = False
+        reaproveitou_topo = False
+        topo_reaproveitado: ft.View | None = None
 
         for idx, r_alvo in enumerate(pilha):
             eh_topo = (idx == len(pilha) - 1)
@@ -457,10 +459,25 @@ def configurar_rotas(page: ft.Page):
                 path_v, _ = separar_rota(rota_v)
                 path_alvo, _ = separar_rota(r_alvo)
 
-                # Se for view ancestral com mesmo path, ou topo idêntico (caso de pop/voltar), reaproveita!
-                if (not eh_topo and path_v == path_alvo) or (eh_topo and rota_v == r_alvo and len(views_atuais) >= len(pilha)):
+                # Se for view ancestral com mesmo path, reaproveita
+                if not eh_topo and path_v == path_alvo:
                     novas_views.append(v_existente)
                     continue
+
+                # Topo idêntico (caso de pop/voltar ou navegar para rota já no topo):
+                if eh_topo and rota_v == r_alvo and len(views_atuais) >= len(pilha):
+                    if hasattr(v_existente, "_dembase_refresh"):
+                        novas_views.append(v_existente)
+                        reaproveitou_topo = True
+                        topo_reaproveitado = v_existente
+                        continue
+                    if len(views_atuais) > len(pilha):
+                        divergiu = True
+                        novas_views.append(_construir_view(r_alvo))
+                        continue
+                    else:
+                        novas_views.append(v_existente)
+                        continue
 
             divergiu = True
             novas_views.append(_construir_view(r_alvo))
@@ -470,6 +487,14 @@ def configurar_rotas(page: ft.Page):
             page.views.append(v)
 
         page.update()
+
+        if reaproveitou_topo and topo_reaproveitado:
+            refresh_fn = getattr(topo_reaproveitado, "_dembase_refresh", None)
+            if callable(refresh_fn):
+                try:
+                    refresh_fn()
+                except Exception:
+                    pass
 
     def on_view_pop(e: ft.ViewPopEvent):
         if len(page.views) > 1:

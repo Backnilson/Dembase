@@ -92,7 +92,7 @@ def ler_renda_referencia() -> Decimal:
 
 
 def salvar_renda_referencia(valor) -> Decimal:
-    renda = P.para_decimal(valor)
+    renda = P.para_decimal(valor, default=Decimal("0"))
     if renda < 0:
         raise P.ErroPotes(["A renda de referência não pode ser negativa."])
     renda = renda.quantize(P.CENTAVO)

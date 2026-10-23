@@ -173,7 +173,7 @@ def criar_view_dashboard(
                 area_potes.controls = [secao_potes(
                     resumo_potes,
                     nav_func=_abrir_extrato_pote,
-                    on_ajustar=lambda _: navegar(page, "/configuracoes"),
+                    on_ajustar=lambda _: navegar(page, "/configuracoes?aba=metas"),
                 )]
             except Exception:
                 area_potes.controls = []
@@ -521,7 +521,7 @@ def criar_view_dashboard(
     # Carrega dados iniciais
     carregar(inicial=True)
 
-    return criar_shell(
+    v = criar_shell(
         page,
         rota_ativa=ROTA_DASHBOARD,
         conteudo=conteudo,
@@ -529,3 +529,5 @@ def criar_view_dashboard(
         on_periodo_change=on_periodo,
         on_lancamento_saved=lambda: carregar(inicial=False),
     )
+    v._dembase_refresh = lambda: carregar(inicial=False)
+    return v

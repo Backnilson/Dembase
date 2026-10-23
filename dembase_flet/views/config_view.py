@@ -30,8 +30,12 @@ CATEGORIAS_PADRAO = [
 DESTINOS_PADRAO = ["Eu", "Casa", "Moto", "Carro", "DJ", "Família", "Outros"]
 
 
-def criar_view_config(page: ft.Page) -> ft.View:
-    aba_ativa = [0]  # 0: Perfil, 1: Categorias, 2: Destinos, 3: Metas (potes)
+def criar_view_config(page: ft.Page, match=None) -> ft.View:
+    aba_inicial = 0
+    if match and getattr(match, "query", None):
+        if match.query.get("aba") in ("metas", "potes"):
+            aba_inicial = 1
+    aba_ativa = [aba_inicial]  # 0: Perfil, 1: Metas (potes), 2: Tema, 3: Gráficos, 4: Categorias, 5: Destinos
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2, visible=False)
 
     area_conteudo = ft.Column(spacing=16, controls=[])
@@ -569,7 +573,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
     btn_perfil = ft.Container(
         content=ft.Row([ft.Icon(ft.Icons.PERSON_OUTLINED, size=16), ft.Text("Meu Perfil", size=13, weight=ft.FontWeight.W_600)], tight=True),
         padding=pad(h=14, v=10),
-        bgcolor=f"{T.PRIMARY}18",
+        bgcolor=f"{T.PRIMARY}18" if aba_inicial == 0 else "transparent",
         border_radius=10,
         on_click=lambda _: _trocar_aba(0),
     )
@@ -577,7 +581,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
     btn_metas = ft.Container(
         content=ft.Row([ft.Icon(ft.Icons.DONUT_LARGE_ROUNDED, size=16), ft.Text("Metas (Potes)", size=13, weight=ft.FontWeight.W_600)], tight=True),
         padding=pad(h=14, v=10),
-        bgcolor="transparent",
+        bgcolor=f"{T.PRIMARY}18" if aba_inicial == 1 else "transparent",
         border_radius=10,
         on_click=lambda _: _trocar_aba(1),
     )
