@@ -11,6 +11,7 @@ from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialo
 from core.router import ROTA_CONFIG, ROTA_AUTH, navegar
 from core import storage
 from views.shell_view import criar_shell
+from views.widgets.potes_config import montar_aba_potes
 import services.supabase_client as db
 
 CATEGORIAS_PADRAO = [
@@ -30,7 +31,7 @@ DESTINOS_PADRAO = ["Eu", "Casa", "Moto", "Carro", "DJ", "Família", "Outros"]
 
 
 def criar_view_config(page: ft.Page) -> ft.View:
-    aba_ativa = [0]  # 0: Perfil, 1: Categorias, 2: Destinos
+    aba_ativa = [0]  # 0: Perfil, 1: Categorias, 2: Destinos, 3: Metas (potes)
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2, visible=False)
 
     area_conteudo = ft.Column(spacing=16, controls=[])
@@ -544,10 +545,12 @@ def criar_view_config(page: ft.Page) -> ft.View:
         if aba_ativa[0] == 0:
             area_conteudo.controls.append(_montar_aba_perfil())
         elif aba_ativa[0] == 1:
-            area_conteudo.controls.append(_montar_aba_tema())
+            area_conteudo.controls.append(montar_aba_potes(page))
         elif aba_ativa[0] == 2:
-            area_conteudo.controls.append(_montar_aba_graficos())
+            area_conteudo.controls.append(_montar_aba_tema())
         elif aba_ativa[0] == 3:
+            area_conteudo.controls.append(_montar_aba_graficos())
+        elif aba_ativa[0] == 4:
             area_conteudo.controls.append(_montar_aba_categorias())
         else:
             area_conteudo.controls.append(_montar_aba_destinos())
@@ -556,10 +559,11 @@ def criar_view_config(page: ft.Page) -> ft.View:
     def _trocar_aba(idx: int):
         aba_ativa[0] = idx
         btn_perfil.bgcolor     = f"{T.PRIMARY}18" if idx == 0 else "transparent"
-        btn_tema.bgcolor       = f"{T.PRIMARY}18" if idx == 1 else "transparent"
-        btn_graficos.bgcolor   = f"{T.PRIMARY}18" if idx == 2 else "transparent"
-        btn_categorias.bgcolor = f"{T.PRIMARY}18" if idx == 3 else "transparent"
-        btn_destinos.bgcolor   = f"{T.PRIMARY}18" if idx == 4 else "transparent"
+        btn_metas.bgcolor      = f"{T.PRIMARY}18" if idx == 1 else "transparent"
+        btn_tema.bgcolor       = f"{T.PRIMARY}18" if idx == 2 else "transparent"
+        btn_graficos.bgcolor   = f"{T.PRIMARY}18" if idx == 3 else "transparent"
+        btn_categorias.bgcolor = f"{T.PRIMARY}18" if idx == 4 else "transparent"
+        btn_destinos.bgcolor   = f"{T.PRIMARY}18" if idx == 5 else "transparent"
         renderizar_aba()
 
     btn_perfil = ft.Container(
@@ -570,12 +574,20 @@ def criar_view_config(page: ft.Page) -> ft.View:
         on_click=lambda _: _trocar_aba(0),
     )
 
+    btn_metas = ft.Container(
+        content=ft.Row([ft.Icon(ft.Icons.DONUT_LARGE_ROUNDED, size=16), ft.Text("Metas (Potes)", size=13, weight=ft.FontWeight.W_600)], tight=True),
+        padding=pad(h=14, v=10),
+        bgcolor="transparent",
+        border_radius=10,
+        on_click=lambda _: _trocar_aba(1),
+    )
+
     btn_tema = ft.Container(
         content=ft.Row([ft.Icon(ft.Icons.PALETTE_OUTLINED, size=16), ft.Text("Aparência & Tema", size=13, weight=ft.FontWeight.W_600)], tight=True),
         padding=pad(h=14, v=10),
         bgcolor="transparent",
         border_radius=10,
-        on_click=lambda _: _trocar_aba(1),
+        on_click=lambda _: _trocar_aba(2),
     )
 
     btn_graficos = ft.Container(
@@ -583,7 +595,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
         padding=pad(h=14, v=10),
         bgcolor="transparent",
         border_radius=10,
-        on_click=lambda _: _trocar_aba(2),
+        on_click=lambda _: _trocar_aba(3),
     )
 
     btn_categorias = ft.Container(
@@ -591,7 +603,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
         padding=pad(h=14, v=10),
         bgcolor="transparent",
         border_radius=10,
-        on_click=lambda _: _trocar_aba(3),
+        on_click=lambda _: _trocar_aba(4),
     )
 
     btn_destinos = ft.Container(
@@ -599,7 +611,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
         padding=pad(h=14, v=10),
         bgcolor="transparent",
         border_radius=10,
-        on_click=lambda _: _trocar_aba(4),
+        on_click=lambda _: _trocar_aba(5),
     )
 
     seletor_abas = ft.Container(
@@ -607,7 +619,7 @@ def criar_view_config(page: ft.Page) -> ft.View:
         bgcolor=T.SURFACE,
         border_radius=12,
         border=borda(),
-        content=ft.Row(spacing=4, tight=True, scroll=ft.ScrollMode.ADAPTIVE, controls=[btn_perfil, btn_tema, btn_graficos, btn_categorias, btn_destinos]),
+        content=ft.Row(spacing=4, tight=True, scroll=ft.ScrollMode.ADAPTIVE, controls=[btn_perfil, btn_metas, btn_tema, btn_graficos, btn_categorias, btn_destinos]),
     )
 
     cabecalho = ft.Row(

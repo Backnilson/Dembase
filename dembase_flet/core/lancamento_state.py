@@ -53,6 +53,7 @@ class LancamentoFormState:
     subcategoria_id: Optional[str] = None
     subtipo: Optional[str] = None
     regra: Optional[str] = "Essencial"  # Apenas para Despesa
+    pote_id: Optional[str] = None       # Sistema dinâmico de 6 potes
     is_fixa: bool = False
     is_repetir: bool = False
     frequencia: str = "mensal"
@@ -188,8 +189,8 @@ class LancamentoFormState:
                 return False, "Selecione o cartão de crédito."
             if not self.categoria_id:
                 return False, "Selecione uma categoria."
-            if not self.regra:
-                return False, "Classifique a despesa na regra 50/30/20."
+            if not (self.pote_id or self.regra):
+                return False, "Selecione o pote da despesa."
             return True, None
 
         if not self.conta_id:
@@ -198,8 +199,8 @@ class LancamentoFormState:
         if not self.categoria_id:
             return False, "Selecione uma categoria."
 
-        if self.eh_despesa and not self.regra:
-            return False, "Classifique a despesa na regra 50/30/20."
+        if self.eh_despesa and not (self.pote_id or self.regra):
+            return False, "Selecione o pote da despesa."
 
         if self.is_repetir and self.quantidade < 2:
             return False, "Informe no mínimo 2 repetições."

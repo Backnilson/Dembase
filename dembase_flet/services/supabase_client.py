@@ -993,3 +993,62 @@ def obter_relatorio_cartao(
     return vazio
 
 
+# =============================================================================
+# POTES FINANCEIROS (6 potes fixos — migração 009)
+# =============================================================================
+def garantir_potes() -> None:
+    """Auto-cura: cria os 6 potes padrão caso o usuário ainda não os possua."""
+    supabase.rpc("garantir_potes", {}).execute()
+
+
+def listar_potes() -> list:
+    """Retorna os 6 potes do usuário ordenados por posição (cria se ausentes)."""
+    resp = supabase.table("potes").select("*").order("posicao").execute()
+    if not resp.data:
+        garantir_potes()
+        resp = supabase.table("potes").select("*").order("posicao").execute()
+    return resp.data or []
+
+
+def salvar_potes(itens: list[dict]) -> list:
+    """
+    Atualiza nome/percentual dos 6 potes de forma atômica.
+    itens: [{"id", "nome", "percentual"}]. O banco revalida a soma == 100.
+    """
+    resp = supabase.rpc("salvar_potes", {"p_potes": itens}).execute()
+    return resp.data or []
+
+
+def ler_renda_referencia() -> float:
+    perfil = ler_perfil() or {}
+    return float(perfil.get("renda_referencia") or 0)
+
+
+def salvar_renda_referencia(valor: float):
+    return atualizar_perfil({"renda_referencia": valor})
+
+
+def registrar_distribuicao_receita(lancamento_id: str, itens: list[dict]) -> int:
+    """Grava a distribuição (1 linha por pote) de uma receita já inserida."""
+    resp = supabase.rpc(
+        "registrar_distribuicao_receita",
+        {"p_lancamento_id": lancamento_id, "p_itens": itens},
+    ).execute()
+    return resp.data or 0
+
+
+def obter_resumo_potes(data_inicio: str, data_fim: str) -> dict:
+    """
+    Chama 'get_potes_resumo'. Retorna:
+    {renda, total_gasto, saldo, percentual_renda_usado, sem_pote:{qtd,total},
+     potes:[{id, posicao, nome, cor, percentual, previsto, gasto,
+             qtd_transacoes, restante, percentual_usado}]}
+    """
+    resp = supabase.rpc(
+        "get_potes_resumo",
+        {"p_data_inicio": data_inicio, "p_data_fim": data_fim},
+    ).execute()
+    return resp.data or {"renda": 0, "total_gasto": 0, "saldo": 0,
+                         "percentual_renda_usado": 0, "potes": [],
+                         "sem_pote": {"qtd": 0, "total": 0}}
+

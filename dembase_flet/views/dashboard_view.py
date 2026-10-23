@@ -9,12 +9,13 @@ Dashboard Principal Multiplataforma (Mobile-First PWA + Desktop).
 """
 from __future__ import annotations
 import random
+from calendar import monthrange
 import flet as ft
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback
-from core.constants import FRASES_MOTIVACIONAIS, formatar_moeda, formatar_data_br
+from core.constants import session_set, FRASES_MOTIVACIONAIS, formatar_moeda, formatar_data_br, inicio_mes_atual, hoje
 from core.responsive import is_mobile
-from core.router import navegar
+from core.router import ROTA_LANCAMENTO, navegar
 from core.nav import (
     ir_contas,
     ir_cartoes,
@@ -30,6 +31,7 @@ from views.widgets.dashboard_charts import (
     construir_grid_graficos,
 )
 from views.widgets.lancamento_sheet import abrir_lancamento
+from views.widgets.potes_cards import secao_potes
 from views.shell_view import criar_shell, ROTA_DASHBOARD, obter_estado_periodo_atual
 import services.supabase_client as db
 
@@ -70,6 +72,12 @@ def criar_view_dashboard(
 
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2.2, visible=False)
     grid_graficos = ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[])
+
+    area_potes = ft.Column(spacing=0, controls=[])
+
+    def _abrir_extrato_pote(pote_id):
+        session_set(page, "filtro_pote_id", pote_id)
+        ir_relatorio_lancamentos(page, filtros={"pote_id": pote_id})
 
     # Cache do último pacote de dados para re-renderizar instantaneamente ao ligar/desligar gráficos
     ultimo_pacote: dict = {}
@@ -159,6 +167,16 @@ def criar_view_dashboard(
 
             _renderizar_graficos_atuais()
 
+            # Potes financeiros — Gasto vs Previsto do período selecionado
+            try:
+                resumo_potes = db.obter_resumo_potes(di, df)
+                area_potes.controls = [secao_potes(
+                    resumo_potes,
+                    nav_func=_abrir_extrato_pote,
+                    on_ajustar=lambda _: navegar(page, "/configuracoes"),
+                )]
+            except Exception:
+                area_potes.controls = []
         except Exception as ex:
             if not inicial:
                 mostrar_feedback(page, f"Erro ao atualizar dashboard: {ex}", "erro")
@@ -488,6 +506,8 @@ def criar_view_dashboard(
             boas_vindas,
             ft.Container(height=14 if mobile else 18),
             kpis,
+            ft.Container(height=16 if mobile else 20),
+            area_potes,
             ft.Container(height=16 if mobile else 20),
             barra_titulo_graficos,
             ft.Container(height=8),

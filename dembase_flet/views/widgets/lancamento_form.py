@@ -33,6 +33,7 @@ from views.widgets.custom_date_picker import (
     formatar_data_curta_amigavel,
 )
 import services.supabase_client as db
+import services.potes_service as potes_svc
 
 
 def _norm(texto: Optional[str]) -> str:
@@ -419,11 +420,25 @@ class LancamentoForm(ft.Column):
             spacing=10,
         )
 
-        # Regra 50/30/20 (Obrigatória em Despesa)
+        # Potes Financeiros (Obrigatório em Despesa)
+        try:
+            potes_usuario = potes_svc.carregar_potes()
+        except Exception:
+            potes_usuario = []
+
+        if potes_usuario:
+            opcoes_regra = [ft.dropdown.Option(key=str(p.id), text=f"{p.nome} ({float(p.percentual):g}%)") for p in potes_usuario]
+            val_pote = str(self.state.pote_id) if self.state.pote_id else (str(potes_usuario[0].id) if potes_usuario else None)
+            if not self.state.pote_id and potes_usuario:
+                self.state.pote_id = str(potes_usuario[0].id)
+        else:
+            opcoes_regra = [ft.dropdown.Option(key=r, text=r) for r in REGRAS_5030]
+            val_pote = self.state.regra or "Essencial"
+
         self.dd_regra = ft.Dropdown(
-            label="Classificação Orçamentária (Regra 50/30/20) *",
-            value=self.state.regra or "Essencial",
-            options=[ft.dropdown.Option(key=r, text=r) for r in REGRAS_5030],
+            label="Pote Financeiro *",
+            value=val_pote,
+            options=opcoes_regra,
             expand=True,
             on_select=self._ao_mudar_regra,
             **T.dropdown_estilo(),
@@ -976,6 +991,7 @@ class LancamentoForm(ft.Column):
 
     def _ao_mudar_regra(self, e):
         val = e.data or e.control.value
+        self.state.pote_id = val
         self.state.regra = val
         self._notificar_mudanca()
 

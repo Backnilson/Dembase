@@ -1,8 +1,8 @@
 """
 =============================================================================
-DemBase v3 — run_migrations.py
-Script de migração executado directamente via supabase-py (REST/RPC).
-Cria todas as tabelas e RPCs necessárias.
+DemBase v3 â€” run_migrations.py
+Script de migraÃ§Ã£o executado directamente via supabase-py (REST/RPC).
+Cria todas as tabelas e RPCs necessÃ¡rias.
 Execute: python run_migrations.py
 =============================================================================
 """
@@ -23,14 +23,14 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
 # Para migrations, usamos a REST API do PostgREST via endpoint /rest/v1/rpc
 # Mas para DDL (CREATE TABLE, ALTER TABLE), precisamos do endpoint de SQL
-# O Supabase expõe isso no Management API ou via pg_net.
-# A forma mais simples é usar o endpoint /rest/v1/ com service_role key
-# OU usar o módulo supabase com postgrest
+# O Supabase expÃµe isso no Management API ou via pg_net.
+# A forma mais simples Ã© usar o endpoint /rest/v1/ com service_role key
+# OU usar o mÃ³dulo supabase com postgrest
 
 # ---------------------------------------------------------------------------
 # Usamos httpx directo para o endpoint SQL do Supabase
-# O endpoint correcto para SQL raw é: POST /rest/v1/rpc/exec_sql
-# Mas o Supabase Management API é o caminho oficial para DDL
+# O endpoint correcto para SQL raw Ã©: POST /rest/v1/rpc/exec_sql
+# Mas o Supabase Management API Ã© o caminho oficial para DDL
 # ---------------------------------------------------------------------------
 
 def executar_sql_migration(sql_content: str, nome: str):
@@ -68,13 +68,19 @@ def ler_migration(nome_arquivo: str) -> str:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("DemBase v3 — Executando Migrations")
+    print("DemBase v3 â€” Executando Migrations")
     print("=" * 60)
     
     migrations = [
         "001_alter_contas_categorias_lancamentos.sql",
         "002_create_cartoes_faturas_recorrentes_objetivos.sql",
         "003_rpcs_dashboard_graficos.sql",
+        "004_fix_rls_categorias_subcategorias.sql",
+        "005_recorrencia_lancamentos.sql",
+        "006_periodo_flexivel_dashboard.sql",
+        "007_fix_recorrencia_e_sincronizacao_saldos.sql",
+        "008_rpcs_relatorios.sql",
+        "009_potes_financeiros.sql",
     ]
     
     for m in migrations:

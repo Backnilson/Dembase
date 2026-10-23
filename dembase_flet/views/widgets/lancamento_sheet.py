@@ -20,6 +20,7 @@ from core.responsive import is_mobile
 import core.theme as T
 from core.theme import pad, mostrar_feedback
 import services.supabase_client as db
+import services.potes_service as potes_svc
 from views.widgets.lancamento_form import LancamentoForm
 
 
@@ -56,6 +57,7 @@ def abrir_lancamento(
         state.subcategoria_id = str(lancamento.get("subcategoria_id")) if lancamento.get("subcategoria_id") else None
         state.destino_id = str(lancamento.get("destino_id")) if lancamento.get("destino_id") else None
         state.regra = lancamento.get("regra", "Essencial")
+        state.pote_id = str(lancamento.get("pote_id")) if lancamento.get("pote_id") else None
         state.hora = int(lancamento.get("hora", 12)) if lancamento.get("hora") is not None else 12
         state.status_pago = (lancamento.get("status") == "Pago")
         state.status_manual = True  # Em edição, status gravado tem prioridade absoluta
@@ -225,6 +227,7 @@ def abrir_lancamento(
                 "subcategoria_id": subcat_id_final,
                 "destino_id": destino_id_final,
                 "regra": state.regra if state.eh_despesa else None,
+                "pote_id": state.pote_id if state.eh_despesa else None,
             }
 
             if is_edicao:
@@ -236,6 +239,13 @@ def abrir_lancamento(
                     )
                 else:
                     db.atualizar_lancamento(state.lancamento_id, dados)
+
+                if state.eh_receita:
+                    try:
+                        potes_svc.redistribuir_receita(state.lancamento_id, dados["valor"])
+                    except Exception:
+                        pass
+
                 mostrar_feedback(page, "Lançamento atualizado com sucesso!", "sucesso")
             else:
                 modo = state.modo_recorrencia()
@@ -249,6 +259,17 @@ def abrir_lancamento(
                 )
                 if not res.get("sucesso", True):
                     raise RuntimeError(res.get("erro", "Falha ao gravar lançamento."))
+
+                if state.eh_receita:
+                    try:
+                        lanc_id = res.get("id") or (res.get("lancamento", {}).get("id") if isinstance(res.get("lancamento"), dict) else None)
+                        if lanc_id:
+                            potes = potes_svc.carregar_potes()
+                            dist = potes_svc.P.distribuir_valor(dados["valor"], potes)
+                            db.registrar_distribuicao_receita(lanc_id, dist)
+                    except Exception:
+                        pass
+
                 mostrar_feedback(page, "Lançamento salvo com sucesso!", "sucesso")
 
             fechar_dialog()
