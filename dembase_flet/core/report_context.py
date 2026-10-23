@@ -93,6 +93,7 @@ class ReportContext:
     cartao_id: str | None = None
     categoria_id: str | None = None
     subcategoria_id: str | None = None
+    pote_id: str | None = None
     regra: str | None = None         # 'Essencial' | 'Estilo de Vida' | 'Investimento'
     status: str | None = None        # 'Pago' | 'Pendente'
     forma: str | None = None         # 'Pix' | 'Crédito' | 'Débito' | 'Dinheiro'
@@ -189,6 +190,7 @@ class ReportContext:
             cartao_id=_validar_uuid(raw_params.get("cartao") or raw_params.get("cartao_id")),
             categoria_id=_validar_uuid(raw_params.get("cat") or raw_params.get("categoria_id")),
             subcategoria_id=_validar_uuid(raw_params.get("sub") or raw_params.get("subcategoria_id")),
+            pote_id=_validar_uuid(raw_params.get("pote") or raw_params.get("pote_id")),
             regra=regra_val,
             status=status_val,
             forma=forma_val,
@@ -214,6 +216,8 @@ class ReportContext:
             q["cat"] = self.categoria_id
         if self.subcategoria_id:
             q["sub"] = self.subcategoria_id
+        if self.pote_id:
+            q["pote"] = self.pote_id
         if self.regra:
             q["regra"] = regra_para_slug(self.regra)
         if self.status:
@@ -259,6 +263,8 @@ class ReportContext:
             f["categoria_id"] = self.categoria_id
         if self.subcategoria_id:
             f["subcategoria_id"] = self.subcategoria_id
+        if self.pote_id:
+            f["pote_id"] = self.pote_id
         if self.regra:
             f["regra"] = self.regra
         if self.status:
@@ -278,6 +284,7 @@ class ReportContext:
                 self.cartao_id,
                 self.categoria_id,
                 self.subcategoria_id,
+                self.pote_id,
                 self.regra,
                 self.status,
                 self.forma,

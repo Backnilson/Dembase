@@ -324,3 +324,111 @@ def construir_card_evolucao_diaria(
             ],
         ),
     )
+
+
+def construir_card_ranking_potes(
+    potes: list[dict],
+    titulo: str = "Participação por Pote",
+    subtitulo: str = "Toque em um pote para filtrar os lançamentos dele",
+    cor_padrao: str | None = None,
+    on_click_pote: Callable[[dict], None] | None = None,
+    col: dict | None = None,
+) -> ft.Container:
+    """
+    Card analítico dos 6 Potes Financeiros:
+    Exibe barra de progresso colorida, nome, percentual e valor total gasto/filtrado.
+    """
+    cor_base = cor_padrao or T.PRIMARY
+    linhas: list[ft.Control] = []
+
+    if not potes:
+        linhas.append(
+            ft.Container(
+                padding=pad(v=24, h=12),
+                alignment=ft.Alignment(0, 0),
+                content=ft.Text("Sem movimentações por pote no período.", color=T.TEXT_MUTED, size=12.5),
+            )
+        )
+    else:
+        for p in potes:
+            nome = p.get("nome") or "Sem Pote"
+            cor = p.get("cor") or cor_base
+            total = float(p.get("total") or 0)
+            perc = float(p.get("percentual") or 0)
+            qtd = int(p.get("qtd") or 0)
+            pote_id = p.get("pote_id") or p.get("id")
+            clicavel = bool(on_click_pote and pote_id)
+
+            linhas.append(
+                ft.Container(
+                    padding=pad(h=12, v=9),
+                    bgcolor=T.SURFACE_ALT,
+                    border_radius=10,
+                    on_click=(lambda _, pt=p: on_click_pote(pt)) if clicavel else None,
+                    ink=clicavel,
+                    tooltip=f"Filtrar lançamentos do pote {nome}" if clicavel else None,
+                    content=ft.Column(
+                        spacing=5,
+                        controls=[
+                            ft.Row(
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                controls=[
+                                    ft.Row(
+                                        spacing=8,
+                                        controls=[
+                                            ft.Container(width=10, height=10, bgcolor=cor, border_radius=5),
+                                            ft.Text(nome, color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_600),
+                                            ft.Text(f"({qtd})", color=T.TEXT_MUTED, size=11) if qtd > 0 else ft.Container(),
+                                        ],
+                                    ),
+                                    ft.Row(
+                                        spacing=6,
+                                        controls=[
+                                            ft.Text(f"{perc:.1f}%", color=T.TEXT_MUTED, size=11),
+                                            ft.Text(formatar_moeda(total), color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.BOLD),
+                                            ft.Icon(ft.Icons.CHEVRON_RIGHT_ROUNDED, size=15, color=T.TEXT_MUTED)
+                                            if clicavel
+                                            else ft.Container(),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            ft.ProgressBar(
+                                value=min(1.0, max(0.0, perc / 100.0)),
+                                color=cor,
+                                bgcolor=f"{T.BORDER}50",
+                                height=5,
+                                border_radius=3,
+                            ),
+                        ],
+                    ),
+                )
+            )
+
+    return ft.Container(
+        col=col or {"xs": 12, "md": 6},
+        padding=pad(all_=18),
+        bgcolor=T.SURFACE,
+        border_radius=16,
+        border=borda(),
+        content=ft.Column(
+            spacing=10,
+            controls=[
+                ft.Row(
+                    spacing=8,
+                    controls=[
+                        ft.Icon(ft.Icons.ALL_INBOX_ROUNDED, color=cor_base, size=18),
+                        ft.Column(
+                            spacing=1,
+                            controls=[
+                                ft.Text(titulo, color=T.TEXT_PRIMARY, size=14, weight=ft.FontWeight.BOLD),
+                                ft.Text(subtitulo, color=T.TEXT_MUTED, size=11),
+                            ],
+                        ),
+                    ],
+                ),
+                ft.Divider(height=1, color=T.BORDER),
+                *linhas,
+            ],
+        ),
+    )

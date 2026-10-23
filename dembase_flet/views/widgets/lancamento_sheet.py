@@ -33,6 +33,7 @@ def abrir_lancamento(
     cartao_inicial: Optional[str] = None,
     categoria_inicial: Optional[str] = None,
     regra_inicial: Optional[str] = None,
+    pote_inicial: Optional[str] = None,
 ):
     """
     Abre o modal/bottom sheet de criação ou edição de lançamento financeiro.
@@ -88,6 +89,8 @@ def abrir_lancamento(
         if regra_inicial and state.eh_despesa:
             state.regra = regra_inicial
             state.mais_detalhes_aberto = True
+        if pote_inicial and state.eh_despesa:
+            state.pote_id = str(pote_inicial)
 
     # 2. Instanciação do formulário
     form = LancamentoForm(page, state)

@@ -190,6 +190,7 @@ DECLARE
     v_cartao_id    UUID := NULLIF(trim(COALESCE(p_filtros->>'cartao_id', '')), '')::uuid;
     v_categoria_id UUID := NULLIF(trim(COALESCE(p_filtros->>'categoria_id', '')), '')::uuid;
     v_subcat_id    UUID := NULLIF(trim(COALESCE(p_filtros->>'subcategoria_id', '')), '')::uuid;
+    v_pote_id      UUID := NULLIF(trim(COALESCE(p_filtros->>'pote_id', '')), '')::uuid;
     v_regra        TEXT := NULLIF(trim(COALESCE(p_filtros->>'regra', '')), '');
     v_status       TEXT := NULLIF(trim(COALESCE(p_filtros->>'status', '')), '');
     v_forma        TEXT := NULLIF(trim(COALESCE(p_filtros->>'forma', '')), '');
@@ -204,6 +205,7 @@ DECLARE
     v_base_total   NUMERIC := 0;
     v_por_cat      JSONB;
     v_por_subcat   JSONB;
+    v_por_pote     JSONB;
     v_por_dia      JSONB;
     v_por_forma    JSONB;
     v_lancamentos  JSONB;
@@ -248,6 +250,7 @@ BEGIN
       AND (v_cartao_id IS NULL OR l.cartao_id = v_cartao_id)
       AND (v_categoria_id IS NULL OR l.categoria_id = v_categoria_id)
       AND (v_subcat_id IS NULL OR l.subcategoria_id = v_subcat_id)
+      AND (v_pote_id IS NULL OR l.pote_id = v_pote_id)
       AND (v_regra IS NULL OR l.regra::text = v_regra)
       AND (v_status IS NULL OR l.status::text = v_status)
       AND (v_forma IS NULL OR lower(l.forma_movimentacao) = lower(v_forma))
@@ -334,6 +337,43 @@ BEGIN
         GROUP BY sub.id, sub.nome
     ) row;
 
+    -- Ranking por Pote Financeiro
+    SELECT COALESCE(JSONB_AGG(row ORDER BY row.posicao), '[]'::jsonb) INTO v_por_pote
+    FROM (
+        SELECT
+            pot.id AS pote_id,
+            COALESCE(pot.posicao, 99) AS posicao,
+            COALESCE(pot.nome, 'Sem Pote') AS nome,
+            COALESCE(pot.cor, '#94A3B8') AS cor,
+            SUM(l.valor) AS total,
+            COUNT(*)::INT AS qtd,
+            COALESCE(ROUND(SUM(l.valor) / NULLIF(v_base_total, 0) * 100, 1), 0) AS percentual
+        FROM public.lancamentos l
+        LEFT JOIN public.potes pot ON pot.id = l.pote_id
+        LEFT JOIN public.categorias cat ON cat.id = l.categoria_id
+        WHERE (l.user_id = v_user_id OR l.perfil_id = v_user_id)
+          AND l.data BETWEEN v_inicio AND v_fim
+          AND (
+              (v_tipo IS NULL AND l.tipo IN ('Receita', 'Despesa'))
+              OR (v_tipo IS NOT NULL AND l.tipo = v_tipo)
+          )
+          AND (v_conta_id IS NULL OR l.conta_id = v_conta_id OR l.destino_id = v_conta_id)
+          AND (v_cartao_id IS NULL OR l.cartao_id = v_cartao_id)
+          AND (v_categoria_id IS NULL OR l.categoria_id = v_categoria_id)
+          AND (v_subcat_id IS NULL OR l.subcategoria_id = v_subcat_id)
+          AND (v_pote_id IS NULL OR l.pote_id = v_pote_id)
+          AND (v_regra IS NULL OR l.regra::text = v_regra)
+          AND (v_status IS NULL OR l.status::text = v_status)
+          AND (v_forma IS NULL OR lower(l.forma_movimentacao) = lower(v_forma))
+          AND (
+              v_busca IS NULL
+              OR COALESCE(l.descricao, '') ILIKE '%' || v_busca || '%'
+              OR COALESCE(l.subtipo, '') ILIKE '%' || v_busca || '%'
+              OR COALESCE(cat.nome, '') ILIKE '%' || v_busca || '%'
+          )
+        GROUP BY pot.id, pot.posicao, pot.nome, pot.cor
+    ) row;
+
     -- Evolução por Dia
     SELECT COALESCE(JSONB_AGG(row ORDER BY row.data), '[]'::jsonb) INTO v_por_dia
     FROM (
@@ -413,6 +453,9 @@ BEGIN
             l.descricao,
             l.status::text AS status,
             l.regra::text AS regra,
+            l.pote_id,
+            pot.nome AS pote_nome,
+            pot.cor AS pote_cor,
             l.conta_id,
             co.nome AS conta_nome,
             co.cor AS conta_cor,
@@ -432,6 +475,7 @@ BEGIN
             l.serie_id,
             l.recorrente_id
         FROM public.lancamentos l
+        LEFT JOIN public.potes pot ON pot.id = l.pote_id
         LEFT JOIN public.contas co ON co.id = l.conta_id
         LEFT JOIN public.contas cd ON cd.id = l.destino_id
         LEFT JOIN public.cartoes ca ON ca.id = l.cartao_id
@@ -475,6 +519,7 @@ BEGIN
         ),
         'por_categoria', v_por_cat,
         'por_subcategoria', v_por_subcat,
+        'por_pote', v_por_pote,
         'por_dia', v_por_dia,
         'por_forma', v_por_forma,
         'lancamentos', v_lancamentos,
@@ -748,6 +793,9 @@ BEGIN
             l.descricao,
             l.status::text AS status,
             l.regra::text AS regra,
+            l.pote_id,
+            pot.nome AS pote_nome,
+            pot.cor AS pote_cor,
             l.conta_id,
             co.nome AS conta_nome,
             co.cor AS conta_cor,
@@ -768,6 +816,7 @@ BEGIN
                 ELSE 'Saida'
             END AS direcao_conta
         FROM public.lancamentos l
+        LEFT JOIN public.potes pot ON pot.id = l.pote_id
         LEFT JOIN public.contas co ON co.id = l.conta_id
         LEFT JOIN public.contas cd ON cd.id = l.destino_id
         LEFT JOIN public.categorias cat ON cat.id = l.categoria_id

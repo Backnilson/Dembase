@@ -324,8 +324,26 @@ class TransactionList(ft.Column):
                 )
             )
 
-        regra = item.get("regra")
-        if regra:
+        pote_nome = item.get("pote_nome")
+        pote_cor = item.get("pote_cor") or T.PRIMARY
+        if pote_nome:
+            badges.append(
+                ft.Container(
+                    padding=pad(h=6, v=2),
+                    bgcolor=f"{pote_cor}18",
+                    border_radius=6,
+                    content=ft.Row(
+                        spacing=3,
+                        tight=True,
+                        controls=[
+                            ft.Container(width=6, height=6, border_radius=3, bgcolor=pote_cor),
+                            ft.Text(pote_nome, size=10, color=pote_cor, weight=ft.FontWeight.BOLD),
+                        ],
+                    ),
+                )
+            )
+        elif item.get("regra"):
+            regra = item.get("regra")
             cor_r = T.PRIMARY if regra == "Essencial" else (T.WARNING if regra == "Estilo de Vida" else T.SALDO)
             badges.append(
                 ft.Container(

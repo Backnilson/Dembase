@@ -78,8 +78,8 @@ def criar_view_hub_relatorios(
             ir_contas(page)
         elif cid == "faturas_cartoes":
             ir_cartoes(page)
-        elif cid == "regra_5030":
-            ir_relatorio_regra(page, "Essencial")
+        elif cid in ("potes_financeiros", "regra_5030"):
+            ir_relatorio_lancamentos(page, tipo="Despesa", origem="relatorios")
         elif cid == "fluxo_mensal":
             ir_relatorio_fluxo(page)
         else:
@@ -182,7 +182,7 @@ def criar_view_hub_relatorios(
                 else db.obter_despesas_por_categoria(m, a, data_inicio=di, data_fim=df)
             )
             _popular_categorias(bloco_cat, desp)
-            _popular_regra_5030(di, df)
+            _popular_potes(di, df)
             _popular_balanco_semestral()
 
         except Exception as ex:
@@ -261,51 +261,62 @@ def criar_view_hub_relatorios(
                 )
             )
 
-    def _popular_regra_5030(di: str, df: str):
+    def _popular_potes(di: str, df: str):
         col_regra5030.controls.clear()
         try:
-            resumo = db.obter_resumo_5030(di, df)
-            itens_regra = [
-                {"nome": "Essencial",      "titulo": "Essencial (Meta 50%)",      "chave": "essencial",   "cor": T.PRIMARY},
-                {"nome": "Estilo de Vida", "titulo": "Estilo de Vida (Meta 30%)", "chave": "estilo_vida", "cor": T.WARNING},
-                {"nome": "Investimento",   "titulo": "Investimento (Meta 20%)",   "chave": "investimento","cor": T.SALDO},
-            ]
-            for reg in itens_regra:
-                dados_reg = resumo.get(reg["chave"]) or resumo.get("estilo_de_vida" if reg["chave"] == "estilo_vida" else reg["chave"], {})
-                gasto = float(dados_reg.get("gasto", 0) or 0)
-                ideal = float(dados_reg.get("orcamento") or dados_reg.get("ideal") or 0)
-                pct_real = float(dados_reg.get("percentual_usado") or dados_reg.get("percentual_real") or 0)
-                progresso = min(1.0, max(0.0, gasto / ideal)) if ideal > 0 else 0.0
+            resumo = db.obter_resumo_potes(di, df)
+            potes = resumo.get("potes") or []
+            if not potes:
+                col_regra5030.controls.append(
+                    ft.Text("Nenhum pote configurado.", color=T.TEXT_MUTED, size=12.5)
+                )
+                return
+
+            for p in potes:
+                nome = p.get("nome", "Pote")
+                cor = p.get("cor") or T.PRIMARY
+                gasto = float(p.get("gasto", 0) or 0)
+                previsto = float(p.get("previsto", 0) or 0)
+                pid = p.get("id")
+                pct_meta = float(p.get("percentual", 0) or 0)
+                progresso = min(1.0, max(0.0, gasto / previsto)) if previsto > 0 else (1.0 if gasto > 0 else 0.0)
 
                 col_regra5030.controls.append(
                     ft.Container(
-                        padding=pad(all_=14),
+                        padding=pad(h=12, v=10),
                         bgcolor=T.SURFACE_ALT,
                         border_radius=12,
-                        on_click=lambda _, r=reg["nome"]: ir_relatorio_regra(page, r),
-                        ink=True,
+                        on_click=(lambda _, pt_id=pid: ir_relatorio_lancamentos(page, tipo="Despesa", pote=pt_id, origem="relatorios")) if pid else None,
+                        ink=bool(pid),
+                        tooltip=f"Ver lançamentos do pote {nome}",
                         content=ft.Column(
-                            spacing=6,
+                            spacing=5,
                             controls=[
                                 ft.Row(
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     controls=[
-                                        ft.Text(reg["titulo"], color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_600),
+                                        ft.Row(
+                                            spacing=8,
+                                            controls=[
+                                                ft.Container(width=10, height=10, bgcolor=cor, border_radius=5),
+                                                ft.Text(f"{nome} ({pct_meta:.0f}%)", color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_600),
+                                            ],
+                                        ),
                                         ft.Row(
                                             spacing=4,
                                             controls=[
-                                                ft.Text(f"{pct_real:.1f}% da receita", color=reg["cor"], size=12, weight=ft.FontWeight.BOLD),
+                                                ft.Text(formatar_moeda(gasto), color=cor, size=12, weight=ft.FontWeight.BOLD),
                                                 ft.Icon(ft.Icons.CHEVRON_RIGHT_ROUNDED, color=T.TEXT_MUTED, size=16),
                                             ],
                                         ),
                                     ],
                                 ),
-                                ft.ProgressBar(value=progresso, color=reg["cor"], bgcolor=f"{T.BORDER}50", height=6, border_radius=3),
+                                ft.ProgressBar(value=progresso, color=cor, bgcolor=f"{T.BORDER}50", height=5, border_radius=3),
                                 ft.Row(
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     controls=[
-                                        ft.Text(f"Gasto: {formatar_moeda(gasto)}", color=T.TEXT_MUTED, size=11),
-                                        ft.Text(f"Meta Ideal: {formatar_moeda(ideal)}", color=T.TEXT_MUTED, size=11),
+                                        ft.Text(f"Gasto: {formatar_moeda(gasto)}", color=T.TEXT_MUTED, size=10.5),
+                                        ft.Text(f"Previsto: {formatar_moeda(previsto)}", color=T.TEXT_MUTED, size=10.5),
                                     ],
                                 ),
                             ],
@@ -314,7 +325,7 @@ def criar_view_hub_relatorios(
                 )
         except Exception:
             col_regra5030.controls.append(
-                ft.Text("Regra 50/30/20 indisponível no momento.", color=T.TEXT_MUTED, size=12.5)
+                ft.Text("Potes financeiros indisponíveis no momento.", color=T.TEXT_MUTED, size=12.5)
             )
 
     def _popular_balanco_semestral():
@@ -486,10 +497,16 @@ def criar_view_hub_relatorios(
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
-                        ft.Text("Diagnóstico Regra 50/30/20", color=T.TEXT_PRIMARY, size=14.5, weight=ft.FontWeight.BOLD),
+                        ft.Row(
+                            spacing=8,
+                            controls=[
+                                ft.Icon(ft.Icons.ALL_INBOX_ROUNDED, color="#6C5CE7", size=18),
+                                ft.Text("6 Potes Financeiros", color=T.TEXT_PRIMARY, size=14.5, weight=ft.FontWeight.BOLD),
+                            ],
+                        ),
                         ft.TextButton(
-                            content=ft.Text("Abrir análise →", color=T.PRIMARY, size=11.5, weight=ft.FontWeight.W_600),
-                            on_click=lambda _: ir_relatorio_regra(page, "Essencial"),
+                            content=ft.Text("Ver despesas →", color=T.PRIMARY, size=11.5, weight=ft.FontWeight.W_600),
+                            on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Despesa", origem="relatorios"),
                         ),
                     ],
                 ),

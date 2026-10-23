@@ -125,7 +125,17 @@ def ir_relatorio_lancamentos(
     if origem:
         q["origem"] = origem
     for k, v in filtros.items():
-        if v is not None and str(v) != "":
+        if k == "filtros" and isinstance(v, dict):
+            for fk, fv in v.items():
+                if fv is not None and str(fv) != "":
+                    if fk == "pote_id":
+                        q["pote"] = str(fv)
+                    else:
+                        q[fk] = str(fv)
+        elif k == "pote_id":
+            if v is not None and str(v) != "":
+                q["pote"] = str(v)
+        elif v is not None and str(v) != "":
             q[k] = str(v)
     navegar(page, montar_url("/relatorios/lancamentos", q))
 

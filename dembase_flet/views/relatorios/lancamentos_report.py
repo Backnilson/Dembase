@@ -29,6 +29,7 @@ from views.widgets.report import (
 )
 from views.widgets.report.scaffold import (
     construir_card_ranking_categorias,
+    construir_card_ranking_potes,
     construir_card_evolucao_diaria,
 )
 import services.supabase_client as db
@@ -77,6 +78,11 @@ def criar_view_relatorio_lancamentos(
                 tipo=ctx_atual[0].tipo or "Despesa",
                 ctx=ctx_atual[0],
             )
+
+    def _ao_clicar_pote(pt: dict):
+        pid = pt.get("pote_id") or pt.get("id")
+        if pid:
+            filter_bar.atualizar_contexto(ctx_atual[0].com(pote_id=str(pid)), emitir=True)
 
     def _ao_clicar_dia(dt_iso: str):
         novo = ctx_atual[0].com(data_inicio=dt_iso, data_fim=dt_iso)
@@ -162,24 +168,45 @@ def criar_view_relatorio_lancamentos(
             )
 
             por_cat = pacote.get("por_categoria") or []
+            por_pote = pacote.get("por_pote") or []
             por_dia = pacote.get("por_dia") or []
 
-            graficos_row.controls = [
+            cards_graficos = []
+            # Se houver dados de potes e não for filtro de apenas Receita
+            potes_com_dados = [p for p in por_pote if p.get("pote_id") is not None]
+            if potes_com_dados and c.tipo != "Receita":
+                cards_graficos.append(
+                    construir_card_ranking_potes(
+                        potes=potes_com_dados,
+                        titulo="Participação por Pote Financeiro",
+                        subtitulo="Toque em um pote para filtrar os lançamentos dele",
+                        cor_padrao=T.PRIMARY,
+                        on_click_pote=_ao_clicar_pote,
+                        col={"xs": 12, "md": 6 if not por_cat else 4},
+                    )
+                )
+
+            cards_graficos.append(
                 construir_card_ranking_categorias(
                     categorias=por_cat,
                     titulo="Participação por Categoria",
                     subtitulo="Toque em uma categoria para abrir o relatório exclusivo dela",
                     cor_padrao=cor_t,
                     on_click_categoria=_ao_clicar_categoria,
-                ),
+                    col={"xs": 12, "md": 6 if not potes_com_dados or c.tipo == "Receita" else 4},
+                )
+            )
+            cards_graficos.append(
                 construir_card_evolucao_diaria(
                     por_dia=por_dia,
                     titulo="Movimentação Dia a Dia",
                     subtitulo="Toque em uma coluna para focar naquele dia",
                     modo_saldo=False,
                     on_click_dia=_ao_clicar_dia,
-                ),
-            ]
+                    col={"xs": 12, "md": 6 if not potes_com_dados or c.tipo == "Receita" else 4},
+                )
+            )
+            graficos_row.controls = cards_graficos
 
             lista_tx.renderizar(
                 lancamentos=pacote.get("lancamentos") or [],
@@ -214,6 +241,7 @@ def criar_view_relatorio_lancamentos(
             cartao_inicial=ctx_atual[0].cartao_id,
             categoria_inicial=ctx_atual[0].categoria_id,
             regra_inicial=ctx_atual[0].regra,
+            pote_inicial=ctx_atual[0].pote_id,
             on_saved=lambda: carregar(inicial=False),
         )
 

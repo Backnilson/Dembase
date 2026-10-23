@@ -12,6 +12,7 @@ from views.widgets.report.transaction_list import TransactionList, criar_transac
 from views.widgets.report.scaffold import (
     ReportScaffold,
     construir_card_ranking_categorias,
+    construir_card_ranking_potes,
     construir_card_evolucao_diaria,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "criar_transaction_list",
     "ReportScaffold",
     "construir_card_ranking_categorias",
+    "construir_card_ranking_potes",
     "construir_card_evolucao_diaria",
 ]

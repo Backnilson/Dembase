@@ -38,6 +38,7 @@ class FilterBar(ft.Column):
         fixar_cartao: bool = False,
         fixar_categoria: bool = False,
         fixar_regra: bool = False,
+        fixar_pote: bool = False,
     ):
         self._page = page
         self.ctx = ctx
@@ -47,11 +48,13 @@ class FilterBar(ft.Column):
         self.fixar_cartao = fixar_cartao
         self.fixar_categoria = fixar_categoria
         self.fixar_regra = fixar_regra
+        self.fixar_pote = fixar_pote
         self.mobile = is_mobile(page)
 
         self.contas_cache: list[dict] = []
         self.cartoes_cache: list[dict] = []
         self.categorias_cache: list[dict] = []
+        self.potes_cache: list[dict] = []
 
         self._carregar_metadados()
 
@@ -164,6 +167,10 @@ class FilterBar(ft.Column):
             self.categorias_cache = db.listar_categorias() or []
         except Exception:
             self.categorias_cache = []
+        try:
+            self.potes_cache = db.listar_potes() or []
+        except Exception:
+            self.potes_cache = []
 
     def atualizar_contexto(self, novo_ctx: ReportContext, emitir: bool = True):
         self.ctx = novo_ctx
@@ -292,6 +299,10 @@ class FilterBar(ft.Column):
             nome_cat = self._nome_por_id(self.categorias_cache, self.ctx.categoria_id, "Categoria")
             pilulas.append((f"Categoria: {nome_cat}", lambda _: self.atualizar_contexto(self.ctx.com(categoria_id=None, subcategoria_id=None))))
 
+        if self.ctx.pote_id and not self.fixar_pote:
+            nome_pote = self._nome_por_id(self.potes_cache, self.ctx.pote_id, "Pote")
+            pilulas.append((f"Pote: {nome_pote}", lambda _: self.atualizar_contexto(self.ctx.com(pote_id=None))))
+
         if self.ctx.regra and not self.fixar_regra:
             pilulas.append((f"Regra: {self.ctx.regra}", lambda _: self.atualizar_contexto(self.ctx.com(regra=None))))
 
@@ -332,6 +343,7 @@ class FilterBar(ft.Column):
                             cartao_id=self.ctx.cartao_id if self.fixar_cartao else None,
                             categoria_id=self.ctx.categoria_id if self.fixar_categoria else None,
                             subcategoria_id=None,
+                            pote_id=self.ctx.pote_id if self.fixar_pote else None,
                             regra=self.ctx.regra if self.fixar_regra else None,
                             status=None,
                             forma=None,
@@ -386,8 +398,22 @@ class FilterBar(ft.Column):
             **T.dropdown_estilo(),
         )
 
+        dd_pote = ft.Dropdown(
+            label="Pote Financeiro",
+            value=self.ctx.pote_id or "",
+            disabled=self.fixar_pote,
+            options=[ft.dropdown.Option(key="", text="Todos os potes")] + [
+                ft.dropdown.Option(
+                    key=str(p["id"]),
+                    text=f"{p.get('posicao', '')}. {p.get('nome', 'Pote')} ({float(p.get('percentual', 0)):.0f}%)"
+                )
+                for p in self.potes_cache
+            ],
+            **T.dropdown_estilo(),
+        )
+
         dd_regra = ft.Dropdown(
-            label="Regra 50/30/20",
+            label="Regra 50/30/20 (Legado)",
             value=self.ctx.regra or "",
             disabled=self.fixar_regra,
             options=[ft.dropdown.Option(key="", text="Todas as faixas")] + [
@@ -403,6 +429,7 @@ class FilterBar(ft.Column):
                     conta_id=(dd_conta.value or None) if not self.fixar_conta else self.ctx.conta_id,
                     cartao_id=(dd_cartao.value or None) if not self.fixar_cartao else self.ctx.cartao_id,
                     categoria_id=(dd_cat.value or None) if not self.fixar_categoria else self.ctx.categoria_id,
+                    pote_id=(dd_pote.value or None) if not self.fixar_pote else self.ctx.pote_id,
                     forma=dd_forma.value or None,
                     regra=(dd_regra.value or None) if not self.fixar_regra else self.ctx.regra,
                 ),
@@ -417,6 +444,7 @@ class FilterBar(ft.Column):
                     cartao_id=self.ctx.cartao_id if self.fixar_cartao else None,
                     categoria_id=self.ctx.categoria_id if self.fixar_categoria else None,
                     subcategoria_id=None,
+                    pote_id=self.ctx.pote_id if self.fixar_pote else None,
                     forma=None,
                     regra=self.ctx.regra if self.fixar_regra else None,
                     status=None,
@@ -432,6 +460,8 @@ class FilterBar(ft.Column):
             campos.append(dd_cartao)
         if not self.fixar_categoria:
             campos.append(dd_cat)
+        if not self.fixar_pote:
+            campos.append(dd_pote)
         campos.append(dd_forma)
         if not self.fixar_regra:
             campos.append(dd_regra)
