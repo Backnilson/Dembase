@@ -82,6 +82,8 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
 
         async def sair_app(_):
             try:
+                await storage.limpar_sessao_autenticada(page)
+                await storage.salvar_ultima_rota(page, ROTA_AUTH)
                 db.fazer_logout()
             except Exception:
                 pass

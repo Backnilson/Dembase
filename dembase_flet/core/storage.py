@@ -284,3 +284,189 @@ def salvar_dia_ciclo_padrao(page: ft.Page, dia: int) -> None:
     dados["dia_ciclo_financeiro"] = d
     _salvar_local_json(dados)
 
+
+
+# =============================================================================
+# PERSISTÊNCIA DE SESSÃO AUTENTICADA (MOBILE BACKGROUND E RESILIÊNCIA)
+# =============================================================================
+async def salvar_sessao_autenticada(page: ft.Page, access_token: str, refresh_token: str, email: str = "") -> None:
+    """
+    Grava os tokens da sessão autenticada ativa no SharedPreferences e fallback local.
+    Permite reconexão invisível ao minimizar e restaurar o app no celular sem cair na tela de login.
+    """
+    if not access_token or not refresh_token:
+        return
+
+    dados = _ler_local_json()
+    dados["auth_access_token"] = access_token
+    dados["auth_refresh_token"] = refresh_token
+    if email:
+        dados["auth_email"] = email.strip()
+    _salvar_local_json(dados)
+
+    sp = _obter_sp(page)
+    if sp:
+        try:
+            await sp.set("auth_access_token", access_token)
+            await sp.set("auth_refresh_token", refresh_token)
+            if email:
+                await sp.set("auth_email", email.strip())
+        except Exception:
+            pass
+
+    session_set(page, "auth_access_token", access_token)
+    session_set(page, "auth_refresh_token", refresh_token)
+    if email:
+        session_set(page, "auth_email", email.strip())
+
+
+def salvar_sessao_autenticada_sync(page: ft.Page, access_token: str, refresh_token: str, email: str = "") -> None:
+    """Versão síncrona para gravação imediata em memória e disco local."""
+    if not access_token or not refresh_token:
+        return
+    dados = _ler_local_json()
+    dados["auth_access_token"] = access_token
+    dados["auth_refresh_token"] = refresh_token
+    if email:
+        dados["auth_email"] = email.strip()
+    _salvar_local_json(dados)
+
+    session_set(page, "auth_access_token", access_token)
+    session_set(page, "auth_refresh_token", refresh_token)
+    if email:
+        session_set(page, "auth_email", email.strip())
+
+
+async def carregar_sessao_autenticada(page: ft.Page) -> Tuple[str, str, str]:
+    """
+    Recupera (access_token, refresh_token, email) persistidos.
+    Consulta SharedPreferences, fallback local e sessão de runtime.
+    """
+    acc = ""
+    ref = ""
+    email = ""
+
+    sp = _obter_sp(page)
+    if sp:
+        try:
+            acc = str(await sp.get("auth_access_token") or "")
+            ref = str(await sp.get("auth_refresh_token") or "")
+            email = str(await sp.get("auth_email") or "")
+        except Exception:
+            pass
+
+    if not acc or not ref:
+        local = _ler_local_json()
+        acc = local.get("auth_access_token", "") or acc
+        ref = local.get("auth_refresh_token", "") or ref
+        email = local.get("auth_email", "") or email
+
+    if not acc or not ref:
+        acc = session_get(page, "auth_access_token", "") or acc
+        ref = session_get(page, "auth_refresh_token", "") or ref
+        email = session_get(page, "auth_email", "") or email
+
+    return acc, ref, email
+
+
+def carregar_sessao_autenticada_sync(page: ft.Page) -> Tuple[str, str, str]:
+    """Consulta síncrona imediata para uso no roteador e verificações de rota."""
+    acc = session_get(page, "auth_access_token", "")
+    ref = session_get(page, "auth_refresh_token", "")
+    email = session_get(page, "auth_email", "")
+
+    if not acc or not ref:
+        local = _ler_local_json()
+        acc = local.get("auth_access_token", "") or acc
+        ref = local.get("auth_refresh_token", "") or ref
+        email = local.get("auth_email", "") or email
+
+    return acc, ref, email
+
+
+async def limpar_sessao_autenticada(page: ft.Page) -> None:
+    """Limpa tokens de sessão autenticada em todos os níveis (usado no logout explícito)."""
+    sp = _obter_sp(page)
+    if sp:
+        try:
+            await sp.remove("auth_access_token")
+            await sp.remove("auth_refresh_token")
+            await sp.remove("auth_email")
+            await sp.remove("ultima_rota")
+        except Exception:
+            pass
+
+    dados = _ler_local_json()
+    dados.pop("auth_access_token", None)
+    dados.pop("auth_refresh_token", None)
+    dados.pop("auth_email", None)
+    dados.pop("ultima_rota", None)
+    _salvar_local_json(dados)
+
+    session_remove(page, "auth_access_token")
+    session_remove(page, "auth_refresh_token")
+    session_remove(page, "auth_email")
+    session_remove(page, "ultima_rota")
+
+
+# =============================================================================
+# RESTAURAÇÃO DA ÚLTIMA TELA / ROTA
+# =============================================================================
+def salvar_ultima_rota_sync(page: ft.Page, rota: str) -> None:
+    """Salva a última rota ativa para restauração automática após backgrounding."""
+    if not rota or str(rota).strip() in ("", "/auth", "auth", "/login", "login"):
+        return
+    r_limpa = str(rota).strip()
+    session_set(page, "ultima_rota", r_limpa)
+    dados = _ler_local_json()
+    dados["ultima_rota"] = r_limpa
+    _salvar_local_json(dados)
+
+
+async def salvar_ultima_rota(page: ft.Page, rota: str) -> None:
+    salvar_ultima_rota_sync(page, rota)
+    if not rota or str(rota).strip() in ("", "/auth", "auth", "/login", "login"):
+        return
+    sp = _obter_sp(page)
+    if sp:
+        try:
+            await sp.set("ultima_rota", str(rota).strip())
+        except Exception:
+            pass
+
+
+async def carregar_ultima_rota(page: ft.Page) -> str:
+    """Recupera a última tela visitada pelo usuário, com fallback para /dashboard."""
+    sp = _obter_sp(page)
+    if sp:
+        try:
+            val = await sp.get("ultima_rota")
+            if val and str(val).strip() not in ("", "/auth", "auth", "/login", "login"):
+                return str(val).strip()
+        except Exception:
+            pass
+
+    local = _ler_local_json()
+    val_local = local.get("ultima_rota")
+    if val_local and str(val_local).strip() not in ("", "/auth", "auth", "/login", "login"):
+        return str(val_local).strip()
+
+    val_sess = session_get(page, "ultima_rota")
+    if val_sess and str(val_sess).strip() not in ("", "/auth", "auth", "/login", "login"):
+        return str(val_sess).strip()
+
+    return "/dashboard"
+
+
+def carregar_ultima_rota_sync(page: ft.Page) -> str:
+    """Versão síncrona para recuperação da última rota."""
+    local = _ler_local_json()
+    val_local = local.get("ultima_rota")
+    if val_local and str(val_local).strip() not in ("", "/auth", "auth", "/login", "login"):
+        return str(val_local).strip()
+
+    val_sess = session_get(page, "ultima_rota")
+    if val_sess and str(val_sess).strip() not in ("", "/auth", "auth", "/login", "login"):
+        return str(val_sess).strip()
+
+    return "/dashboard"

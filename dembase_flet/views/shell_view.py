@@ -290,6 +290,8 @@ def criar_shell(
                 r = rotas_drawer[idx]
                 if r == ROTA_AUTH:
                     try:
+                        await storage.limpar_sessao_autenticada(page)
+                        await storage.salvar_ultima_rota(page, ROTA_AUTH)
                         db.fazer_logout()
                         await storage.limpar_lembrar(page)
                         session_clear(page)
@@ -411,6 +413,8 @@ def criar_shell(
             async def _on_click(_):
                 if rota == ROTA_AUTH:
                     try:
+                        await storage.limpar_sessao_autenticada(page)
+                        await storage.salvar_ultima_rota(page, ROTA_AUTH)
                         db.fazer_logout()
                         await storage.limpar_lembrar(page)
                         session_clear(page)

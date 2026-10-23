@@ -356,13 +356,17 @@ def criar_view_auth(page: ft.Page) -> ft.View:
             if sess:
                 acc = getattr(sess, "access_token", "") or ""
                 ref = getattr(sess, "refresh_token", "") or ""
+                # Salva sessão persistente para manter usuário conectado mesmo em background no mobile
+                await storage.salvar_sessao_autenticada(page, acc, ref, email)
                 if chk_lembrar.value:
                     await storage.salvar_lembrar(page, email, acc, ref)
                 else:
                     await storage.limpar_lembrar(page)
                     storage.salvar_sessao_temporaria(page, acc, ref)
 
+            await storage.salvar_ultima_rota(page, ROTA_DASHBOARD)
             await ajustar_janela_principal(page)
+            db.aquecer_cache()
             try:
                 db.gerar_recorrentes_pendentes()
             except Exception:

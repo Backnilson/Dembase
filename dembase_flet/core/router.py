@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import flet as ft
 
 from core.constants import session_get
+from core import storage
 from core.report_context import ReportContext
 from services import supabase_client as db
 
@@ -402,8 +403,10 @@ def configurar_rotas(page: ft.Page):
             sessao = db.sessao_atual()
             if sessao and getattr(sessao, "user", None):
                 return True
-            acc = session_get(page, "auth_access_token")
-            ref = session_get(page, "auth_refresh_token")
+            acc, ref, _ = storage.carregar_sessao_autenticada_sync(page)
+            if not acc or not ref:
+                acc = session_get(page, "auth_access_token")
+                ref = session_get(page, "auth_refresh_token")
             if acc and ref:
                 return db.restaurar_sessao(acc, ref)
             return False
@@ -434,6 +437,10 @@ def configurar_rotas(page: ft.Page):
             page.views.append(_build_dashboard(page, RouteMatch(path=ROTA_DASHBOARD, rota_completa=ROTA_DASHBOARD, template=ROTA_DASHBOARD)))
             page.update()
             return
+
+        # Persiste a última rota ativa para restauração automática no mobile/background
+        if logado and path_atual not in _ROTAS_SEM_SHELL:
+            storage.salvar_ultima_rota_sync(page, rota)
 
         pilha = montar_pilha(rota)
         views_atuais = list(page.views)

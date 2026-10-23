@@ -9,6 +9,7 @@ Dashboard Principal Multiplataforma (Mobile-First PWA + Desktop).
 """
 from __future__ import annotations
 import random
+import asyncio
 from calendar import monthrange
 import flet as ft
 from core import theme as T
@@ -113,10 +114,8 @@ def criar_view_dashboard(
             except Exception:
                 pass
 
-        try:
-            # 1. Pacote consolidado do período (overview, categorias com ID, frequência, modalidades)
-            pacote_periodo = db.obter_dashboard_periodo(di, df)
-            overview = pacote_periodo.get("overview") if isinstance(pacote_periodo, dict) else None
+        def _aplicar_dados(pacote_p, d_5030, b_6m, r_cart, r_potes):
+            overview = pacote_p.get("overview") if isinstance(pacote_p, dict) else None
             if not overview:
                 overview = db.obter_overview_dashboard(m, a, data_inicio=di, data_fim=df)
 
@@ -130,63 +129,110 @@ def criar_view_dashboard(
             txt_despesas.value     = formatar_moeda(desp)
             txt_faturas.value      = formatar_moeda(faturas_ab)
 
-            # 2. Dados complementares para os gráficos
-            dados_5030 = db.obter_resumo_5030(di, df)
-            balanco_6m = db.obter_balanco_6_meses()
-            resumo_cartoes = db.obter_resumo_cartoes(m, a)
-
             ultimo_pacote.clear()
             ultimo_pacote.update({
                 "data_inicio": di,
                 "data_fim": df,
                 "overview": overview,
-                "regra_5030": dados_5030,
+                "regra_5030": d_5030 if isinstance(d_5030, dict) else {},
                 "despesas_por_categoria": (
-                    pacote_periodo.get("despesas_por_categoria")
-                    if isinstance(pacote_periodo, dict) and "despesas_por_categoria" in pacote_periodo
+                    pacote_p.get("despesas_por_categoria")
+                    if isinstance(pacote_p, dict) and "despesas_por_categoria" in pacote_p
                     else db.obter_despesas_por_categoria(m, a, data_inicio=di, data_fim=df)
                 ),
                 "receitas_por_categoria": (
-                    pacote_periodo.get("receitas_por_categoria")
-                    if isinstance(pacote_periodo, dict) and "receitas_por_categoria" in pacote_periodo
+                    pacote_p.get("receitas_por_categoria")
+                    if isinstance(pacote_p, dict) and "receitas_por_categoria" in pacote_p
                     else db.obter_receitas_por_categoria(m, a, data_inicio=di, data_fim=df)
                 ),
                 "frequencia_diaria": (
-                    pacote_periodo.get("frequencia_diaria")
-                    if isinstance(pacote_periodo, dict) and "frequencia_diaria" in pacote_periodo
+                    pacote_p.get("frequencia_diaria")
+                    if isinstance(pacote_p, dict) and "frequencia_diaria" in pacote_p
                     else db.obter_frequencia_gastos(m, a, data_inicio=di, data_fim=df)
                 ),
                 "despesas_por_forma": (
-                    pacote_periodo.get("despesas_por_forma")
-                    if isinstance(pacote_periodo, dict)
+                    pacote_p.get("despesas_por_forma")
+                    if isinstance(pacote_p, dict)
                     else []
                 ),
-                "balanco_6_meses": balanco_6m,
-                "resumo_cartoes": resumo_cartoes,
+                "balanco_6_meses": b_6m if isinstance(b_6m, list) else [],
+                "resumo_cartoes": r_cart if isinstance(r_cart, dict) else {},
             })
 
             _renderizar_graficos_atuais()
 
-            # Potes financeiros — Gasto vs Previsto do período selecionado
-            try:
-                resumo_potes = db.obter_resumo_potes(di, df)
+            if isinstance(r_potes, dict):
                 area_potes.controls = [secao_potes(
-                    resumo_potes,
+                    r_potes,
                     nav_func=_abrir_extrato_pote,
                     on_ajustar=lambda _: navegar(page, "/configuracoes?aba=metas"),
                 )]
-            except Exception:
+            else:
                 area_potes.controls = []
-        except Exception as ex:
-            if not inicial:
-                mostrar_feedback(page, f"Erro ao atualizar dashboard: {ex}", "erro")
-        finally:
-            spinner.visible = False
-            if not inicial:
+
+        if inicial:
+            # Carregamento síncrono rápido no primeiro frame com apoio do RAM cache
+            try:
+                p_periodo = db.obter_dashboard_periodo(di, df)
+                d_5030 = db.obter_resumo_5030(di, df)
+                b_6m = db.obter_balanco_6_meses()
+                r_cart = db.obter_resumo_cartoes(m, a)
+                r_potes = db.obter_resumo_potes(di, df)
+                _aplicar_dados(p_periodo, d_5030, b_6m, r_cart, r_potes)
+            except Exception:
+                pass
+            finally:
+                spinner.visible = False
+        else:
+            # Em atualizações/filtros, executa via asyncio.gather em background thread
+            # garantindo ZERO UI BLOCKING e spinner renderizado imediatamente
+            spinner.visible = True
+            try:
+                page.update()
+            except Exception:
+                pass
+
+            async def _executar_async():
                 try:
+                    res = await asyncio.gather(
+                        db.executar_async(db.obter_dashboard_periodo, di, df),
+                        db.executar_async(db.obter_resumo_5030, di, df),
+                        db.executar_async(db.obter_balanco_6_meses),
+                        db.executar_async(db.obter_resumo_cartoes, m, a),
+                        db.executar_async(db.obter_resumo_potes, di, df),
+                        return_exceptions=True,
+                    )
+                    p_periodo = res[0] if not isinstance(res[0], Exception) else {}
+                    d_5030 = res[1] if not isinstance(res[1], Exception) else {}
+                    b_6m = res[2] if not isinstance(res[2], Exception) else []
+                    r_cart = res[3] if not isinstance(res[3], Exception) else {}
+                    r_potes = res[4] if not isinstance(res[4], Exception) else {}
+
+                    _aplicar_dados(p_periodo, d_5030, b_6m, r_cart, r_potes)
+                except Exception as ex:
+                    mostrar_feedback(page, f"Erro ao atualizar dashboard: {ex}", "erro")
+                finally:
+                    spinner.visible = False
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+
+            try:
+                loop = getattr(page, "loop", None)
+                if loop and loop.is_running() and hasattr(page, "run_task"):
+                    page.run_task(_executar_async)
+                else:
+                    p_periodo = db.obter_dashboard_periodo(di, df)
+                    d_5030 = db.obter_resumo_5030(di, df)
+                    b_6m = db.obter_balanco_6_meses()
+                    r_cart = db.obter_resumo_cartoes(m, a)
+                    r_potes = db.obter_resumo_potes(di, df)
+                    _aplicar_dados(p_periodo, d_5030, b_6m, r_cart, r_potes)
+                    spinner.visible = False
                     page.update()
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
     # ── Callbacks do Filtro Global do Shell ───────────────────────────────────
     def on_periodo(d_ini: str, d_fim: str, m: int, a: int):

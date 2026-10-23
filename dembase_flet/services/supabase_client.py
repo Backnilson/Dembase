@@ -6,6 +6,9 @@ Encapsula: Auth, CRUD de todas as tabelas e chamadas RPC.
 =============================================================================
 """
 import os
+import time
+import asyncio
+from typing import Any, Callable
 import ssl
 import httpx
 import httpx._config
@@ -42,6 +45,135 @@ if not _URL or not _KEY:
     )
 
 supabase: Client = create_client(_URL, _KEY)
+
+# =============================================================================
+# SISTEMA DE CACHE EM MEMÓRIA (RAM) E EXECUÇÃO ASSÍNCRONA SEM UI BLOCKING
+# =============================================================================
+_CACHE_RAM: dict[str, Any] = {
+    "potes": {"dados": None, "expira_em": 0.0},
+    "potes_resumo": {},          # chave (data_inicio_data_fim) -> {"dados": dict, "expira_em": float}
+    "categorias": {"dados": None, "expira_em": 0.0},
+    "categorias_por_tipo": {},  # tipo -> {"dados": list, "expira_em": float}
+    "subcategorias": {},        # cat_id -> {"dados": list, "expira_em": float}
+    "contas": {"dados": None, "expira_em": 0.0},
+    "cartoes": {"dados": None, "expira_em": 0.0},
+    "perfil": {"dados": None, "expira_em": 0.0},
+}
+
+TTL_CADASTROS_BASE = 600.0   # 10 minutos para potes, categorias, contas e cartões
+TTL_RESUMO_POTES   = 120.0   # 2 minutos para potes do período
+
+
+def obter_cache(chave: str, subchave: Any = None) -> Any | None:
+    """Recupera dados em memória se válidos e dentro do TTL."""
+    agora = time.monotonic()
+    if subchave is not None:
+        subdict = _CACHE_RAM.get(chave)
+        if isinstance(subdict, dict) and subchave in subdict:
+            item = subdict[subchave]
+            if isinstance(item, dict) and agora < item.get("expira_em", 0.0):
+                return item.get("dados")
+        return None
+    item = _CACHE_RAM.get(chave)
+    if isinstance(item, dict) and item.get("dados") is not None:
+        if agora < item.get("expira_em", 0.0):
+            return item.get("dados")
+    return None
+
+
+def salvar_cache(chave: str, dados: Any, subchave: Any = None, ttl: float = TTL_CADASTROS_BASE) -> None:
+    """Armazena dados em memória com TTL calculado."""
+    expira_em = time.monotonic() + ttl
+    if subchave is not None:
+        if chave not in _CACHE_RAM or not isinstance(_CACHE_RAM[chave], dict):
+            _CACHE_RAM[chave] = {}
+        _CACHE_RAM[chave][subchave] = {"dados": dados, "expira_em": expira_em}
+    else:
+        _CACHE_RAM[chave] = {"dados": dados, "expira_em": expira_em}
+
+
+def invalidar_cache(tipo: str | None = None) -> None:
+    """Invalida cirurgicamente ou totalmente o cache em memória."""
+    if tipo == "potes":
+        _CACHE_RAM["potes"] = {"dados": None, "expira_em": 0.0}
+        _CACHE_RAM["potes_resumo"].clear()
+    elif tipo == "categorias":
+        _CACHE_RAM["categorias"] = {"dados": None, "expira_em": 0.0}
+        _CACHE_RAM["categorias_por_tipo"].clear()
+        _CACHE_RAM["subcategorias"].clear()
+    elif tipo == "contas":
+        _CACHE_RAM["contas"] = {"dados": None, "expira_em": 0.0}
+    elif tipo == "cartoes":
+        _CACHE_RAM["cartoes"] = {"dados": None, "expira_em": 0.0}
+    elif tipo == "lancamentos":
+        _CACHE_RAM["potes_resumo"].clear()
+        _CACHE_RAM["contas"] = {"dados": None, "expira_em": 0.0}
+        _CACHE_RAM["cartoes"] = {"dados": None, "expira_em": 0.0}
+    elif tipo == "perfil":
+        _CACHE_RAM["perfil"] = {"dados": None, "expira_em": 0.0}
+    else:
+        # Invalidação total (ex: logout)
+        _CACHE_RAM["potes"] = {"dados": None, "expira_em": 0.0}
+        _CACHE_RAM["potes_resumo"].clear()
+        _CACHE_RAM["categorias"] = {"dados": None, "expira_em": 0.0}
+        _CACHE_RAM["categorias_por_tipo"].clear()
+        _CACHE_RAM["subcategorias"].clear()
+        _CACHE_RAM["contas"] = {"dados": None, "expira_em": 0.0}
+        _CACHE_RAM["cartoes"] = {"dados": None, "expira_em": 0.0}
+        _CACHE_RAM["perfil"] = {"dados": None, "expira_em": 0.0}
+
+
+def aquecer_cache() -> None:
+    """Pré-carrega potes, categorias, contas e cartões em background thread sem travar a interface."""
+    import threading
+    def _worker():
+        try:
+            listar_potes()
+            listar_categorias()
+            listar_contas()
+            listar_cartoes()
+            ler_perfil()
+        except Exception:
+            pass
+    t = threading.Thread(target=_worker, daemon=True, name="dembase_cache_warmup")
+    t.start()
+
+
+async def aquecer_cache_async() -> None:
+    await asyncio.to_thread(aquecer_cache)
+
+
+async def executar_async(func: Callable, *args, **kwargs) -> Any:
+    """Executa chamadas do Supabase em background thread sem bloquear o event loop da UI."""
+    return await asyncio.to_thread(func, *args, **kwargs)
+
+
+async def listar_potes_async() -> list:
+    return await asyncio.to_thread(listar_potes)
+
+
+async def listar_categorias_async(tipo: str = None) -> list:
+    return await asyncio.to_thread(listar_categorias, tipo)
+
+
+async def obter_resumo_potes_async(data_inicio: str, data_fim: str) -> dict:
+    return await asyncio.to_thread(obter_resumo_potes, data_inicio, data_fim)
+
+
+async def obter_dashboard_periodo_async(data_inicio: str, data_fim: str) -> dict:
+    return await asyncio.to_thread(obter_dashboard_periodo, data_inicio, data_fim)
+
+
+async def obter_relatorio_cartao_async(cartao_id: str, data_inicio: str, data_fim: str, filtros: dict = None) -> dict:
+    return await asyncio.to_thread(obter_relatorio_cartao, cartao_id, data_inicio, data_fim, filtros)
+
+
+async def obter_relatorio_conta_async(conta_id: str, data_inicio: str, data_fim: str, filtros: dict = None) -> dict:
+    return await asyncio.to_thread(obter_relatorio_conta, conta_id, data_inicio, data_fim, filtros)
+
+
+async def obter_relatorio_lancamentos_async(**kwargs) -> dict:
+    return await asyncio.to_thread(obter_relatorio_lancamentos, **kwargs)
 
 
 # =============================================================================
@@ -121,15 +253,23 @@ def usuario_atual():
 # =============================================================================
 # PERFIS
 # =============================================================================
-def ler_perfil() -> dict | None:
+def ler_perfil(forcar_atualizacao: bool = False) -> dict | None:
+    if not forcar_atualizacao:
+        cached = obter_cache("perfil")
+        if cached is not None:
+            return cached
     user = usuario_atual()
     if not user:
         return None
     resp = supabase.table("perfis").select("*").eq("id", user.id).single().execute()
-    return resp.data
+    dados = resp.data
+    if dados:
+        salvar_cache("perfil", dados, ttl=TTL_CADASTROS_BASE)
+    return dados
 
 
 def atualizar_perfil(dados: dict):
+    invalidar_cache('perfil')
     user = usuario_atual()
     if not user:
         return None
@@ -139,7 +279,11 @@ def atualizar_perfil(dados: dict):
 # =============================================================================
 # CONTAS BANCÁRIAS
 # =============================================================================
-def listar_contas() -> list:
+def listar_contas(forcar_atualizacao: bool = False) -> list:
+    if not forcar_atualizacao:
+        cached = obter_cache("contas")
+        if cached is not None:
+            return list(cached)
     resp = (
         supabase.table("contas")
         .select("*")
@@ -147,7 +291,9 @@ def listar_contas() -> list:
         .order("nome")
         .execute()
     )
-    return resp.data or []
+    dados = resp.data or []
+    salvar_cache("contas", dados, ttl=TTL_CADASTROS_BASE)
+    return dados
 
 
 MAPA_TIPOS_CONTA = {
@@ -199,6 +345,7 @@ def criar_conta(dados: dict):
 
 
 def atualizar_conta(conta_id: str, dados: dict):
+    invalidar_cache('contas')
     payload = dict(dados)
     if "tipo" in payload:
         tipo_legado = payload.pop("tipo")
@@ -224,13 +371,28 @@ def atualizar_saldo_conta(conta_id: str, saldo_atual: float, saldo_previsto: flo
 # =============================================================================
 # CATEGORIAS
 # =============================================================================
-def listar_categorias(tipo: str = None) -> list:
-    """Lista categorias. Filtra por tipo ('receita'|'despesa'|'ambos') se informado."""
+def listar_categorias(tipo: str = None, forcar_atualizacao: bool = False) -> list:
+    """Lista categorias. Filtra por tipo com suporte a RAM cache instantâneo."""
+    if not forcar_atualizacao:
+        if tipo:
+            cached_sub = obter_cache("categorias_por_tipo", subchave=tipo)
+            if cached_sub is not None:
+                return list(cached_sub)
+        else:
+            cached = obter_cache("categorias")
+            if cached is not None:
+                return list(cached)
+
     query = supabase.table("categorias").select("*").eq("ativo", True)
     if tipo:
         query = query.in_("tipo", [tipo, "ambos"])
     resp = query.order("nome").execute()
-    return resp.data or []
+    dados = resp.data or []
+    if tipo:
+        salvar_cache("categorias_por_tipo", dados, subchave=tipo, ttl=TTL_CADASTROS_BASE)
+    else:
+        salvar_cache("categorias", dados, ttl=TTL_CADASTROS_BASE)
+    return dados
 
 
 def normalizar_tipo_categoria(tipo: str | None) -> str:
@@ -243,6 +405,7 @@ def normalizar_tipo_categoria(tipo: str | None) -> str:
 
 def criar_categoria(dados: dict):
     """dados: nome, tipo, cor, icone"""
+    invalidar_cache('categorias')
     payload = dict(dados)
     payload["tipo"] = normalizar_tipo_categoria(payload.get("tipo"))
     user = usuario_atual()
@@ -253,6 +416,7 @@ def criar_categoria(dados: dict):
 
 
 def atualizar_categoria(categoria_id: str, dados: dict):
+    invalidar_cache('categorias')
     payload = dict(dados)
     if "tipo" in payload:
         payload["tipo"] = normalizar_tipo_categoria(payload["tipo"])
@@ -260,6 +424,7 @@ def atualizar_categoria(categoria_id: str, dados: dict):
 
 
 def deletar_categoria(categoria_id: str):
+    invalidar_cache('categorias')
     return supabase.table("categorias").update({"ativo": False}).eq("id", categoria_id).execute()
 
 
@@ -307,6 +472,7 @@ def criar_subcategoria(categoria_id: str, nome: str, cor: str = "#94A3B8"):
 
 
 def atualizar_subcategoria(subcategoria_id: str, dados: dict):
+    invalidar_cache('categorias')
     return supabase.table("subcategorias").update(dados).eq("id", subcategoria_id).execute()
 
 
@@ -333,6 +499,7 @@ def obter_ou_criar_subcategoria(categoria_id: str, nome: str) -> dict:
 
 
 def deletar_subcategoria(subcategoria_id: str):
+    invalidar_cache('categorias')
     return supabase.table("subcategorias").update({"ativo": False}).eq("id", subcategoria_id).execute()
 
 
@@ -363,7 +530,11 @@ def deletar_destino(destino_id: str):
 # =============================================================================
 # CARTÕES DE CRÉDITO
 # =============================================================================
-def listar_cartoes() -> list:
+def listar_cartoes(forcar_atualizacao: bool = False) -> list:
+    if not forcar_atualizacao:
+        cached = obter_cache("cartoes")
+        if cached is not None:
+            return list(cached)
     resp = (
         supabase.table("cartoes")
         .select("*")
@@ -371,7 +542,9 @@ def listar_cartoes() -> list:
         .order("nome")
         .execute()
     )
-    return resp.data or []
+    dados = resp.data or []
+    salvar_cache("cartoes", dados, ttl=TTL_CADASTROS_BASE)
+    return dados
 
 
 MAPA_BANDEIRAS_CARTAO = {
@@ -414,6 +587,7 @@ def criar_cartao(dados: dict):
 
 
 def atualizar_cartao(cartao_id: str, dados: dict):
+    invalidar_cache('cartoes')
     payload = dict(dados)
     if "bandeira" in payload:
         payload["bandeira"] = normalizar_bandeira_cartao(payload["bandeira"])
@@ -421,6 +595,7 @@ def atualizar_cartao(cartao_id: str, dados: dict):
 
 
 def deletar_cartao(cartao_id: str):
+    invalidar_cache('cartoes')
     return supabase.table("cartoes").update({"ativo": False}).eq("id", cartao_id).execute()
 
 
@@ -485,6 +660,7 @@ def pagar_fatura(fatura_id: str, valor_pago: float):
 # =============================================================================
 def criar_lancamento(dados: dict):
     """Insere um lançamento. O trigger no banco define o status automático."""
+    invalidar_cache('lancamentos')
     user = usuario_atual()
     if user:
         dados.setdefault("user_id", user.id)
@@ -532,10 +708,12 @@ def obter_lancamento(lancamento_id: str) -> dict | None:
 
 
 def atualizar_lancamento(lancamento_id: str, dados: dict):
+    invalidar_cache('lancamentos')
     return supabase.table("lancamentos").update(dados).eq("id", lancamento_id).execute()
 
 
 def deletar_lancamento(lancamento_id: str):
+    invalidar_cache('lancamentos')
     return supabase.table("lancamentos").delete().eq("id", lancamento_id).execute()
 
 
@@ -544,6 +722,7 @@ def importar_lancamentos_csv(lista: list[dict]) -> dict:
     Importação em lote. Usa upsert com external_id para evitar duplicatas.
     Retorna {'inseridos': N, 'ignorados': M, 'erros': [...]}.
     """
+    invalidar_cache("lancamentos")
     user = usuario_atual()
     inseridos, erros = 0, []
     for item in lista:
@@ -820,7 +999,7 @@ def obter_lancamentos_calendario(mes: int, ano: int) -> list:
 
 # Mantém compatibilidade com código antigo
 def obter_totais_dashboard(data_inicio: str = None, data_fim: str = None) -> dict:
-    """Legado — mantido para não quebrar dashboard_view.py atual."""
+    """Legado - mantido para nao quebrar dashboard_view.py atual."""
     params: dict = {}
     if data_inicio:
         params["p_data_inicio"] = data_inicio
@@ -1001,13 +1180,19 @@ def garantir_potes() -> None:
     supabase.rpc("garantir_potes", {}).execute()
 
 
-def listar_potes() -> list:
-    """Retorna os 6 potes do usuário ordenados por posição (cria se ausentes)."""
+def listar_potes(forcar_atualizacao: bool = False) -> list:
+    """Retorna os 6 potes do usuário ordenados por posição (RAM cache de alta performance)."""
+    if not forcar_atualizacao:
+        cached = obter_cache("potes")
+        if cached is not None:
+            return list(cached)
     resp = supabase.table("potes").select("*").order("posicao").execute()
     if not resp.data:
         garantir_potes()
         resp = supabase.table("potes").select("*").order("posicao").execute()
-    return resp.data or []
+    dados = resp.data or []
+    salvar_cache("potes", dados, ttl=TTL_CADASTROS_BASE)
+    return dados
 
 
 def salvar_potes(itens: list[dict]) -> list:
@@ -1016,7 +1201,10 @@ def salvar_potes(itens: list[dict]) -> list:
     itens: [{"id", "nome", "percentual"}]. O banco revalida a soma == 100.
     """
     resp = supabase.rpc("salvar_potes", {"p_potes": itens}).execute()
-    return resp.data or []
+    dados = resp.data or []
+    salvar_cache("potes", dados, ttl=TTL_CADASTROS_BASE)
+    invalidar_cache("potes")
+    return dados
 
 
 def ler_renda_referencia() -> float:
@@ -1037,18 +1225,23 @@ def registrar_distribuicao_receita(lancamento_id: str, itens: list[dict]) -> int
     return resp.data or 0
 
 
-def obter_resumo_potes(data_inicio: str, data_fim: str) -> dict:
+def obter_resumo_potes(data_inicio: str, data_fim: str, forcar_atualizacao: bool = False) -> dict:
     """
-    Chama 'get_potes_resumo'. Retorna:
-    {renda, total_gasto, saldo, percentual_renda_usado, sem_pote:{qtd,total},
-     potes:[{id, posicao, nome, cor, percentual, previsto, gasto,
-             qtd_transacoes, restante, percentual_usado}]}
+    Chama 'get_potes_resumo' com cache de curta duração em RAM (120s) para evitar UI blocking.
     """
+    chave_p = f"{data_inicio}_{data_fim}"
+    if not forcar_atualizacao:
+        cached = obter_cache("potes_resumo", subchave=chave_p)
+        if cached is not None:
+            return dict(cached)
+
     resp = supabase.rpc(
         "get_potes_resumo",
         {"p_data_inicio": data_inicio, "p_data_fim": data_fim},
     ).execute()
-    return resp.data or {"renda": 0, "total_gasto": 0, "saldo": 0,
+    dados = resp.data or {"renda": 0, "total_gasto": 0, "saldo": 0,
                          "percentual_renda_usado": 0, "potes": [],
                          "sem_pote": {"qtd": 0, "total": 0}}
+    salvar_cache("potes_resumo", dados, subchave=chave_p, ttl=TTL_RESUMO_POTES)
+    return dados
 
