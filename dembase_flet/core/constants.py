@@ -68,6 +68,95 @@ def formatar_moeda(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def parse_moeda_seguro(val: object) -> float:
+    """
+    Converte qualquer valor (string, int, float, None, formatado em PT-BR ou EN-US)
+    para float de forma ultra segura, tratando números negativos e símbolos monetários.
+    Exemplos:
+      "-150,00" -> -150.0
+      "R$ -150,00" -> -150.0
+      "-R$ 150,00" -> -150.0
+      "R$ 1.250,50" -> 1250.5
+      "-1.250,50" -> -1250.5
+      None -> 0.0
+    """
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        try:
+            import math
+            if math.isnan(val) or math.isinf(val):
+                return 0.0
+            return round(float(val), 2)
+        except Exception:
+            return 0.0
+
+    s = str(val).strip()
+    if not s:
+        return 0.0
+
+    # Normalizar espaços não-quebráveis
+    s = s.replace("\u00a0", " ").replace("\xa0", " ").strip()
+
+    # Detectar se é negativo
+    negativo = False
+    if s.startswith("(") and s.endswith(")"):
+        negativo = True
+        s = s[1:-1].strip()
+    if "-" in s:
+        negativo = True
+        s = s.replace("-", "").strip()
+
+    # Remover símbolos monetários e prefixos
+    s = s.replace("R$", "").replace("r$", "").replace("$", "").strip()
+
+    if not s:
+        return 0.0
+
+    # Se contiver vírgula e ponto (ex: 1.250,50 ou 1,250.50)
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    elif "." in s:
+        partes = s.split(".")
+        if len(partes) > 2:
+            s = "".join(partes)
+
+    import re
+    s_limpo = re.sub(r"[^\d.]", "", s)
+    if not s_limpo:
+        return 0.0
+
+    if s_limpo.count(".") > 1:
+        partes = s_limpo.split(".")
+        s_limpo = "".join(partes[:-1]) + "." + partes[-1]
+
+    try:
+        resultado = float(s_limpo)
+        if negativo:
+            resultado = -resultado
+        return round(resultado, 2)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def formatar_moeda_input(valor: object) -> str:
+    """
+    Formata valor para exibição limpa em TextField monetário (sem prefixo 'R$ ').
+    Exemplos:
+      -150.5 -> "-150,50"
+      1250.0 -> "1.250,00"
+      None -> "0,00"
+    """
+    num = parse_moeda_seguro(valor)
+    s = f"{abs(num):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"-{s}" if num < 0 else s
+
+
 # =============================================================================
 # HELPERS DE SESSÃO (FLET 1.0.1 — Session.store compatível)
 # =============================================================================

@@ -176,6 +176,119 @@ async def obter_relatorio_lancamentos_async(**kwargs) -> dict:
     return await asyncio.to_thread(obter_relatorio_lancamentos, **kwargs)
 
 
+async def obter_balanco_6_meses_async() -> list:
+    return await asyncio.to_thread(obter_balanco_6_meses)
+
+
+async def obter_overview_dashboard_async(mes: int = None, ano: int = None, data_inicio: str = None, data_fim: str = None) -> dict:
+    return await asyncio.to_thread(obter_overview_dashboard, mes, ano, data_inicio=data_inicio, data_fim=data_fim)
+
+
+async def obter_despesas_por_categoria_async(mes: int = None, ano: int = None, data_inicio: str = None, data_fim: str = None) -> dict:
+    return await asyncio.to_thread(obter_despesas_por_categoria, mes, ano, data_inicio=data_inicio, data_fim=data_fim)
+
+
+async def listar_faturas_async(cartao_id: str = None, status: str = None) -> list:
+    return await asyncio.to_thread(listar_faturas, cartao_id, status)
+
+
+async def obter_lista_contas_resumo_async(data_inicio: str = None, data_fim: str = None) -> dict:
+    return await asyncio.to_thread(obter_lista_contas_resumo, data_inicio, data_fim)
+
+
+def listar_faturas_opcoes_cartao(cartao_id: str) -> list[dict]:
+    """
+    Retorna opções amigáveis de faturas para seleção no formulário de compra no cartão.
+    Inclui faturas abertas existentes e opções calculadas para os próximos 12 meses.
+    """
+    if not cartao_id:
+        return []
+    try:
+        faturas_db = listar_faturas(cartao_id=cartao_id)
+    except Exception:
+        faturas_db = []
+
+    faturas_map = {}
+    for f in faturas_db:
+        m = f.get("mes")
+        a = f.get("ano")
+        if m and a:
+            faturas_map[(int(m), int(a))] = f
+
+    meses_pt = [
+        "", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+    ]
+
+    from datetime import date
+    hoje = date.today()
+    opcoes = []
+
+    # Gera opções cobrindo do mês anterior até os próximos 12 meses
+    for offset_mes in range(-1, 13):
+        ano_alvo = hoje.year + ((hoje.month + offset_mes - 1) // 12)
+        mes_alvo = ((hoje.month + offset_mes - 1) % 12) + 1
+        
+        fatura_existente = faturas_map.get((mes_alvo, ano_alvo))
+        nome_mes = meses_pt[mes_alvo] if 1 <= mes_alvo <= 12 else str(mes_alvo)
+        
+        status_label = ""
+        f_id = None
+        if fatura_existente:
+            f_id = str(fatura_existente.get("id"))
+            st = str(fatura_existente.get("status") or "").lower()
+            if st == "aberta":
+                status_label = " (Aberta)"
+            elif st == "fechada":
+                status_label = " (Fechada)"
+            elif st == "paga":
+                status_label = " (Paga)"
+        
+        opcoes.append({
+            "id": f_id or f"futura_{mes_alvo}_{ano_alvo}",
+            "fatura_id_real": f_id,
+            "mes": mes_alvo,
+            "ano": ano_alvo,
+            "label": f"{nome_mes}/{ano_alvo}{status_label}",
+        })
+    return opcoes
+
+
+def obter_ou_criar_fatura_por_mes_ano(cartao_id: str, mes: int, ano: int) -> dict:
+    """Garante que a fatura do mês/ano exista para o cartão selecionado."""
+    if not cartao_id or not mes or not ano:
+        return {}
+    existente = obter_fatura_atual(cartao_id, mes, ano)
+    if existente:
+        return existente
+    
+    # Busca dados do cartão para compor vencimento e fechamento
+    user = usuario_atual()
+    try:
+        cartao_resp = supabase.table("cartoes").select("*").eq("id", cartao_id).maybe_single().execute()
+        cartao = cartao_resp.data or {}
+    except Exception:
+        cartao = {}
+    dia_fech = int(cartao.get("dia_fechamento") or 1)
+    dia_venc = int(cartao.get("dia_vencimento") or 10)
+    
+    import calendar
+    last_day = calendar.monthrange(ano, mes)[1]
+    df_dia = min(dia_fech, last_day)
+    dv_dia = min(dia_venc, last_day)
+    
+    data_fech = f"{ano:04d}-{mes:02d}-{df_dia:02d}"
+    data_venc = f"{ano:04d}-{mes:02d}-{dv_dia:02d}"
+    
+    return criar_ou_obter_fatura(
+        cartao_id=cartao_id,
+        mes=mes,
+        ano=ano,
+        data_vencimento=data_venc,
+        data_fechamento=data_fech,
+    )
+
+
 # =============================================================================
 # AUTH
 # =============================================================================
@@ -341,10 +454,32 @@ def criar_conta(dados: dict):
     if user:
         payload["user_id"] = user.id
         payload["perfil_id"] = user.id
-    return supabase.table("contas").insert(payload).execute()
+    resp = supabase.table("contas").insert(payload).execute()
+    if user:
+        recalcular_saldos_usuario(user.id)
+    return resp
+
+
+def recalcular_saldos_usuario(user_id: str = None) -> bool:
+    """Invoca a RPC atômica fn_recalcular_saldos_usuario no PostgreSQL se disponível."""
+    try:
+        uid = user_id
+        if not uid:
+            u = usuario_atual()
+            uid = u.id if u else None
+        if not uid:
+            return False
+        supabase.rpc("fn_recalcular_saldos_usuario", {"p_user_id": str(uid)}).execute()
+        return True
+    except Exception:
+        return False
 
 
 def atualizar_conta(conta_id: str, dados: dict):
+    """
+    Atualiza dados de uma conta com invalidação de cache, tipagem segura de números
+    e sincronização automática de saldos.
+    """
     invalidar_cache('contas')
     payload = dict(dados)
     if "tipo" in payload:
@@ -352,7 +487,28 @@ def atualizar_conta(conta_id: str, dados: dict):
         payload.setdefault("tipo_conta", tipo_legado)
     if "tipo_conta" in payload:
         payload["tipo_conta"] = normalizar_tipo_conta(payload["tipo_conta"])
-    return supabase.table("contas").update(payload).eq("id", conta_id).execute()
+
+    # Conversão estrita de tipos para números decimais
+    for campo_num in ("saldo_inicial", "saldo_atual", "saldo_previsto"):
+        if campo_num in payload and payload[campo_num] is not None:
+            try:
+                payload[campo_num] = float(round(float(payload[campo_num]), 2))
+            except (ValueError, TypeError):
+                pass
+
+    user = usuario_atual()
+    resp = supabase.table("contas").update(payload).eq("id", conta_id).execute()
+
+    # Se resp.data vier vazio, tenta associar user_id caso tenha sido criado sem ele
+    if not (resp and resp.data) and user:
+        payload_rec = dict(payload)
+        payload_rec["user_id"] = user.id
+        resp = supabase.table("contas").update(payload_rec).eq("id", conta_id).execute()
+
+    if user:
+        recalcular_saldos_usuario(user.id)
+
+    return resp
 
 
 def deletar_conta(conta_id: str):
@@ -613,16 +769,29 @@ def listar_faturas(cartao_id: str = None, status: str = None) -> list:
 
 
 def obter_fatura_atual(cartao_id: str, mes: int, ano: int) -> dict | None:
-    resp = (
-        supabase.table("faturas")
-        .select("*")
-        .eq("cartao_id", cartao_id)
-        .eq("mes", mes)
-        .eq("ano", ano)
-        .single()
-        .execute()
-    )
-    return resp.data
+    """Busca a fatura do cartão para o mês/ano especificado de forma segura sem erro PGRST116."""
+    try:
+        resp = (
+            supabase.table("faturas")
+            .select("*")
+            .eq("cartao_id", cartao_id)
+            .eq("mes", mes)
+            .eq("ano", ano)
+            .maybe_single()
+            .execute()
+        )
+        return resp.data
+    except Exception:
+        resp = (
+            supabase.table("faturas")
+            .select("*")
+            .eq("cartao_id", cartao_id)
+            .eq("mes", mes)
+            .eq("ano", ano)
+            .limit(1)
+            .execute()
+        )
+        return resp.data[0] if (resp and resp.data) else None
 
 
 def criar_ou_obter_fatura(cartao_id: str, mes: int, ano: int, data_vencimento: str, data_fechamento: str) -> dict:
@@ -694,17 +863,30 @@ def listar_lancamentos(
 
 
 def obter_lancamento(lancamento_id: str) -> dict | None:
-    resp = (
-        supabase.table("lancamentos")
-        .select(
-            "*, contas(nome,cor,icone), categorias(nome,cor,icone), "
-            "cartoes(nome,bandeira,cor), subcategorias(nome), faturas(mes,ano,status)"
+    try:
+        resp = (
+            supabase.table("lancamentos")
+            .select(
+                "*, contas(nome,cor,icone), categorias(nome,cor,icone), "
+                "cartoes(nome,bandeira,cor), subcategorias(nome), faturas(mes,ano,status)"
+            )
+            .eq("id", lancamento_id)
+            .maybe_single()
+            .execute()
         )
-        .eq("id", lancamento_id)
-        .single()
-        .execute()
-    )
-    return resp.data
+        return resp.data
+    except Exception:
+        resp = (
+            supabase.table("lancamentos")
+            .select(
+                "*, contas(nome,cor,icone), categorias(nome,cor,icone), "
+                "cartoes(nome,bandeira,cor), subcategorias(nome), faturas(mes,ano,status)"
+            )
+            .eq("id", lancamento_id)
+            .limit(1)
+            .execute()
+        )
+        return resp.data[0] if (resp and resp.data) else None
 
 
 def atualizar_lancamento(lancamento_id: str, dados: dict):
@@ -1142,18 +1324,32 @@ def obter_relatorio_cartao(
 ) -> dict:
     """
     Chama 'get_relatorio_cartao'.
-    Retorna {cartao, totais, faturas, por_categoria, lancamentos, total_registros}.
+    Retorna {cartao, totais, kpis, faturas, por_categoria, lancamentos, total_registros}.
     """
     vazio = {
         "cartao": None,
         "totais": {
             "gasto_periodo": 0.0,
+            "total_gasto_periodo": 0.0,
             "qtd_compras": 0,
             "ticket_medio": 0.0,
             "total_parcelado": 0.0,
             "total_avista": 0.0,
+            "total_a_vista": 0.0,
+        },
+        "kpis": {
+            "gasto_periodo": 0.0,
+            "total_gasto_periodo": 0.0,
+            "qtd_compras": 0,
+            "ticket_medio": 0.0,
+            "total_parcelado": 0.0,
+            "total_avista": 0.0,
+            "total_a_vista": 0.0,
+            "limite_total": 0.0,
+            "limite_disponivel": 0.0,
         },
         "faturas": [],
+        "fatura_selecionada": {},
         "por_categoria": [],
         "lancamentos": [],
         "total_registros": 0,
@@ -1168,7 +1364,25 @@ def obter_relatorio_cartao(
     }
     resp = supabase.rpc("get_relatorio_cartao", params).execute()
     if isinstance(resp.data, dict):
-        return {**vazio, **resp.data}
+        d = {**vazio, **resp.data}
+        tot = d.get("totais") or {}
+        kpis = d.get("kpis") or {}
+        gasto = float(tot.get("gasto_periodo") or kpis.get("total_gasto_periodo") or tot.get("total_gasto_periodo") or 0)
+        tot_parc = float(tot.get("total_parcelado") or kpis.get("total_parcelado") or 0)
+        tot_av = float(tot.get("total_avista") or kpis.get("total_a_vista") or tot.get("total_a_vista") or 0)
+        qtd = int(tot.get("qtd_compras") or kpis.get("qtd_compras") or len(d.get("lancamentos") or []))
+
+        consolidado = {
+            "gasto_periodo": gasto,
+            "total_gasto_periodo": gasto,
+            "qtd_compras": qtd,
+            "total_parcelado": tot_parc,
+            "total_avista": tot_av,
+            "total_a_vista": tot_av,
+        }
+        d["totais"] = {**tot, **consolidado}
+        d["kpis"] = {**kpis, **consolidado}
+        return d
     return vazio
 
 

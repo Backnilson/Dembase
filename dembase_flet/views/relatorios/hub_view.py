@@ -134,8 +134,7 @@ def criar_view_hub_relatorios(
 
     grid_catalogo = ft.ResponsiveRow(spacing=12, run_spacing=12, controls=cards_catalogo)
 
-    # ── Carregar Dados Analíticos ─────────────────────────────────────────────
-    def carregar(
+    async def _carregar_async(
         d_ini: str | None = None,
         d_fim: str | None = None,
         mes: int | None = None,
@@ -159,10 +158,10 @@ def criar_view_hub_relatorios(
             _safe_update()
 
         try:
-            pacote = db.obter_dashboard_periodo(di, df)
+            pacote = await db.obter_dashboard_periodo_async(di, df)
             overview = pacote.get("overview") if isinstance(pacote, dict) else None
             if not overview:
-                overview = db.obter_overview_dashboard(m, a, data_inicio=di, data_fim=df)
+                overview = await db.obter_overview_dashboard_async(m, a, data_inicio=di, data_fim=df)
 
             rec  = float(overview.get("receitas", 0) or 0)
             desp = float(overview.get("despesas", 0) or 0)
@@ -179,19 +178,40 @@ def criar_view_hub_relatorios(
             bloco_cat = (
                 pacote.get("despesas_por_categoria")
                 if isinstance(pacote, dict) and "despesas_por_categoria" in pacote
-                else db.obter_despesas_por_categoria(m, a, data_inicio=di, data_fim=df)
+                else await db.obter_despesas_por_categoria_async(m, a, data_inicio=di, data_fim=df)
             )
             _popular_categorias(bloco_cat, desp)
-            _popular_potes(di, df)
-            _popular_balanco_semestral()
+
+            resumo_potes = await db.obter_resumo_potes_async(di, df)
+            _popular_potes(resumo_potes)
+
+            dados_bal = await db.obter_balanco_6_meses_async()
+            _popular_balanco_semestral(dados_bal)
+
+            secao_analitica_loading.visible = False
+            secao_analitica_conteudo.visible = True
 
         except Exception as ex:
+            secao_analitica_loading.visible = False
+            secao_analitica_conteudo.visible = True
             if not inicial:
                 mostrar_feedback(page, f"Erro ao atualizar relatórios: {ex}", "erro")
         finally:
             spinner.visible = False
-            if not inicial:
-                _safe_update()
+            _safe_update()
+
+    def carregar(
+        d_ini: str | None = None,
+        d_fim: str | None = None,
+        mes: int | None = None,
+        ano: int | None = None,
+        inicial: bool = False,
+    ):
+        try:
+            page.run_task(_carregar_async, d_ini, d_fim, mes, ano, inicial)
+        except Exception:
+            import asyncio
+            asyncio.create_task(_carregar_async(d_ini, d_fim, mes, ano, inicial))
 
     def _popular_categorias(dados_cat: dict | list, total_desp: float):
         col_categorias.controls.clear()
@@ -261,10 +281,10 @@ def criar_view_hub_relatorios(
                 )
             )
 
-    def _popular_potes(di: str, df: str):
+    def _popular_potes(resumo_dados: dict | None = None, di: str | None = None, df: str | None = None):
         col_regra5030.controls.clear()
         try:
-            resumo = db.obter_resumo_potes(di, df)
+            resumo = resumo_dados if isinstance(resumo_dados, dict) else db.obter_resumo_potes(di or data_ini_sel[0], df or data_fim_sel[0])
             potes = resumo.get("potes") or []
             if not potes:
                 col_regra5030.controls.append(
@@ -328,11 +348,11 @@ def criar_view_hub_relatorios(
                 ft.Text("Potes financeiros indisponíveis no momento.", color=T.TEXT_MUTED, size=12.5)
             )
 
-    def _popular_balanco_semestral():
+    def _popular_balanco_semestral(dados_bal: list | None = None):
         col_balanco.controls.clear()
         try:
-            dados_bal = db.obter_balanco_6_meses()
-            if not dados_bal:
+            itens_bal = dados_bal if isinstance(dados_bal, list) else db.obter_balanco_6_meses()
+            if not itens_bal:
                 col_balanco.controls.append(
                     ft.Text("Sem histórico de 6 meses no momento.", color=T.TEXT_MUTED, size=12.5)
                 )
@@ -602,11 +622,35 @@ def criar_view_hub_relatorios(
             inicial=False,
         )
 
+    secao_analitica_loading = ft.Container(
+        alignment=ft.Alignment(0, 0),
+        padding=pad(all_=50),
+        content=ft.Column(
+            spacing=12,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            controls=[
+                ft.ProgressRing(color=T.PRIMARY, width=32, height=32, stroke_width=3),
+                ft.Text("Carregando indicadores financeiros...", color=T.TEXT_MUTED, size=13, weight=ft.FontWeight.W_500),
+            ],
+        ),
+        visible=True,
+    )
+
+    secao_analitica_conteudo = ft.Column(
+        spacing=16,
+        visible=False,
+        controls=[
+            kpis_topo,
+            ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[secao_cat, secao_regra]),
+            secao_balanco,
+        ],
+    )
+
     conteudo = ft.Column(
         spacing=16,
         controls=[
             cabecalho,
-            kpis_topo,
             ft.Column(
                 spacing=8,
                 controls=[
@@ -620,8 +664,8 @@ def criar_view_hub_relatorios(
                     grid_catalogo,
                 ],
             ),
-            ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[secao_cat, secao_regra]),
-            secao_balanco,
+            secao_analitica_loading,
+            secao_analitica_conteudo,
             ft.Container(height=28),
         ],
     )

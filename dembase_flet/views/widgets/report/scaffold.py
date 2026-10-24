@@ -23,9 +23,8 @@ class ReportScaffold(ft.Column):
     Header (com breadcrumb + voltar + acoes_header)
     -> Hero opcional (ex: card da Conta ou Cartão)
     -> FilterBar opcional
-    -> KpiStrip
-    -> Seção de Gráficos (ResponsiveRow)
-    -> Lista de Lançamentos (TransactionList)
+    -> Loading Indicator (visível enquanto carrega em background)
+    -> Conteúdo final (KpiStrip, Seção de Gráficos, Lista de Lançamentos)
     """
 
     def __init__(
@@ -37,20 +36,47 @@ class ReportScaffold(ft.Column):
         filter_bar: ft.Control | None = None,
         hero_banner: ft.Control | None = None,
         secao_extra: ft.Control | None = None,
+        loading: bool = False,
+        loading_text: str = "Carregando relatório...",
     ):
+        self.loading = loading
+        self.header = header
+        self.hero_banner = hero_banner
+        self.filter_bar = filter_bar
+        self.kpi_strip = kpi_strip
+        self.secao_extra = secao_extra
+        self.graficos_row = graficos_row
+        self.transaction_list = transaction_list
+
+        self.corpo_loading = ft.Container(
+            alignment=ft.Alignment(0, 0),
+            padding=pad(all_=50),
+            content=ft.Column(
+                spacing=14,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
+                controls=[
+                    ft.ProgressRing(color=T.PRIMARY, width=34, height=34, stroke_width=3),
+                    ft.Text(loading_text, color=T.TEXT_MUTED, size=13, weight=ft.FontWeight.W_500),
+                ],
+            ),
+            visible=loading,
+        )
+
+        conteudo_inicial = [c for c in [kpi_strip, secao_extra, graficos_row, transaction_list] if c is not None]
+        self.corpo_conteudo = ft.Column(
+            spacing=14,
+            visible=not loading,
+            controls=conteudo_inicial,
+        )
+
         blocos: list[ft.Control] = [header]
         if hero_banner is not None:
             blocos.append(hero_banner)
         if filter_bar is not None:
             blocos.append(filter_bar)
-        if kpi_strip is not None:
-            blocos.append(kpi_strip)
-        if secao_extra is not None:
-            blocos.append(secao_extra)
-        if graficos_row is not None:
-            blocos.append(graficos_row)
-        if transaction_list is not None:
-            blocos.append(transaction_list)
+        blocos.append(self.corpo_loading)
+        blocos.append(self.corpo_conteudo)
         blocos.append(ft.Container(height=28))
 
         super().__init__(
@@ -60,6 +86,45 @@ class ReportScaffold(ft.Column):
 
         if hasattr(self, "_dirty"):
             self._dirty.clear()
+
+    def set_loading(self, carregando: bool, page: ft.Page | None = None):
+        """Alterna imediatamente entre o indicador de progresso e o conteúdo final."""
+        self.loading = carregando
+        self.corpo_loading.visible = carregando
+        self.corpo_conteudo.visible = not carregando
+        if page is not None:
+            try:
+                page.update()
+            except Exception:
+                pass
+
+    def atualizar_corpo(
+        self,
+        kpi_strip: ft.Control | None = None,
+        graficos_row: ft.Control | None = None,
+        transaction_list: ft.Control | None = None,
+        secao_extra: ft.Control | None = None,
+        page: ft.Page | None = None,
+    ):
+        """Atualiza os controles do corpo analítico quando os dados retornam em background."""
+        if kpi_strip is not None:
+            self.kpi_strip = kpi_strip
+        if graficos_row is not None:
+            self.graficos_row = graficos_row
+        if transaction_list is not None:
+            self.transaction_list = transaction_list
+        if secao_extra is not None:
+            self.secao_extra = secao_extra
+
+        self.corpo_conteudo.controls = [
+            c for c in [self.kpi_strip, self.secao_extra, self.graficos_row, self.transaction_list]
+            if c is not None
+        ]
+        if page is not None:
+            try:
+                page.update()
+            except Exception:
+                pass
 
 
 def _invocar_callback_categoria(cb: Callable | None, cat: dict, cat_id: Any) -> None:

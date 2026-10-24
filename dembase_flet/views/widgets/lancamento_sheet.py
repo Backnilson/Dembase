@@ -59,6 +59,7 @@ def abrir_lancamento(
         state.destino_id = str(lancamento.get("destino_id")) if lancamento.get("destino_id") else None
         state.regra = lancamento.get("regra", "Essencial")
         state.pote_id = str(lancamento.get("pote_id")) if lancamento.get("pote_id") else None
+        state.fatura_id = str(lancamento.get("fatura_id")) if lancamento.get("fatura_id") else None
         state.hora = int(lancamento.get("hora", 12)) if lancamento.get("hora") is not None else 12
         state.status_pago = (lancamento.get("status") == "Pago")
         state.status_manual = True  # Em edição, status gravado tem prioridade absoluta
@@ -218,6 +219,24 @@ def abrir_lancamento(
             subcat_id_final = form._obter_subcat_id(state.subcategoria_id) if not state.eh_transferencia else None
             destino_id_final = form._obter_conta_id(state.destino_id) if state.eh_transferencia else None
 
+            # Resolução da Fatura Manual (se selecionada pelo usuário)
+            fatura_id_final = None
+            if state.eh_credito and cartao_id_final and state.fatura_id:
+                fat_str = str(state.fatura_id).strip()
+                if fat_str.startswith("futura_"):
+                    try:
+                        fat_obj = db.obter_ou_criar_fatura_por_mes_ano(
+                            cartao_id_final,
+                            state.fatura_manual_mes,
+                            state.fatura_manual_ano,
+                        )
+                        if fat_obj and fat_obj.get("id"):
+                            fatura_id_final = str(fat_obj["id"])
+                    except Exception as ex_fat:
+                        print(f"[LancamentoSheet] Aviso ao criar fatura futura: {ex_fat}")
+                else:
+                    fatura_id_final = fat_str
+
             dados = {
                 "tipo": tipo_db,
                 "subtipo": state.subtipo or tipo_db,
@@ -229,6 +248,7 @@ def abrir_lancamento(
                 "status": "Pago" if (state.status_pago or state.eh_transferencia) else "Pendente",
                 "conta_id": conta_id_final,
                 "cartao_id": cartao_id_final,
+                "fatura_id": fatura_id_final,
                 "categoria_id": cat_id_final,
                 "subcategoria_id": subcat_id_final,
                 "destino_id": destino_id_final,

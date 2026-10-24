@@ -91,6 +91,7 @@ class ReportContext:
     tipo: str | None = None          # 'Receita' | 'Despesa' | 'Transferência' | None (=Receita+Despesa)
     conta_id: str | None = None
     cartao_id: str | None = None
+    fatura_id: str | None = None
     categoria_id: str | None = None
     subcategoria_id: str | None = None
     pote_id: str | None = None
@@ -188,6 +189,7 @@ class ReportContext:
             tipo=normalizar_tipo_filtro(raw_params.get("tipo")),
             conta_id=_validar_uuid(raw_params.get("conta") or raw_params.get("conta_id")),
             cartao_id=_validar_uuid(raw_params.get("cartao") or raw_params.get("cartao_id")),
+            fatura_id=_validar_uuid(raw_params.get("fat") or raw_params.get("fatura_id")),
             categoria_id=_validar_uuid(raw_params.get("cat") or raw_params.get("categoria_id")),
             subcategoria_id=_validar_uuid(raw_params.get("sub") or raw_params.get("subcategoria_id")),
             pote_id=_validar_uuid(raw_params.get("pote") or raw_params.get("pote_id")),
@@ -212,6 +214,8 @@ class ReportContext:
             q["conta"] = self.conta_id
         if self.cartao_id:
             q["cartao"] = self.cartao_id
+        if self.fatura_id:
+            q["fat"] = self.fatura_id
         if self.categoria_id:
             q["cat"] = self.categoria_id
         if self.subcategoria_id:
@@ -259,6 +263,8 @@ class ReportContext:
             f["conta_id"] = self.conta_id
         if self.cartao_id:
             f["cartao_id"] = self.cartao_id
+        if self.fatura_id:
+            f["fatura_id"] = self.fatura_id
         if self.categoria_id:
             f["categoria_id"] = self.categoria_id
         if self.subcategoria_id:
@@ -282,6 +288,7 @@ class ReportContext:
             for v in (
                 self.conta_id,
                 self.cartao_id,
+                self.fatura_id,
                 self.categoria_id,
                 self.subcategoria_id,
                 self.pote_id,

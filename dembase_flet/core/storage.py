@@ -38,6 +38,24 @@ def _salvar_local_json(dados: dict) -> None:
         pass
 
 
+def expurgar_tokens_locais() -> None:
+    """Remove tokens de sessão salvos em disco para barrar qualquer bypass de login."""
+    try:
+        dados = _ler_local_json()
+        alterou = False
+        for k in ("auth_access_token", "auth_refresh_token", "ultima_rota"):
+            if k in dados:
+                dados.pop(k, None)
+                alterou = True
+        if alterou:
+            _salvar_local_json(dados)
+    except Exception:
+        pass
+
+# Expurgar tokens antigos gravados em execuções anteriores
+expurgar_tokens_locais()
+
+
 def _obter_sp(page: ft.Page) -> Optional[ft.SharedPreferences]:
     """Recupera ou registra a instância de SharedPreferences na página."""
     try:
@@ -53,15 +71,14 @@ def _obter_sp(page: ft.Page) -> Optional[ft.SharedPreferences]:
 
 async def salvar_lembrar(page: ft.Page, email: str, access_token: str = "", refresh_token: str = "") -> None:
     """
-    Grava o e-mail e os tokens de autenticação quando 'Lembrar de mim' está ativado.
-    NUNCA armazena a senha do usuário em texto.
+    Grava apenas o e-mail quando 'Lembrar de mim' está ativado.
+    NUNCA armazena tokens de acesso em disco para evitar bypass de autenticação.
     """
-    dados = {
-        "lembrar_ativo": True,
-        "lembrar_email": email.strip(),
-        "auth_access_token": access_token or "",
-        "auth_refresh_token": refresh_token or "",
-    }
+    dados = _ler_local_json()
+    dados["lembrar_ativo"] = True
+    dados["lembrar_email"] = email.strip()
+    dados.pop("auth_access_token", None)
+    dados.pop("auth_refresh_token", None)
 
     # 1. Tenta via SharedPreferences
     sp = _obter_sp(page)
@@ -69,32 +86,24 @@ async def salvar_lembrar(page: ft.Page, email: str, access_token: str = "", refr
         try:
             await sp.set("lembrar_ativo", True)
             await sp.set("lembrar_email", email.strip())
-            if access_token:
-                await sp.set("auth_access_token", access_token)
-            if refresh_token:
-                await sp.set("auth_refresh_token", refresh_token)
+            await sp.remove("auth_access_token")
+            await sp.remove("auth_refresh_token")
         except Exception:
             pass
 
-    # 2. Persiste em fallback local (para confiabilidade no Desktop)
+    # 2. Persiste em fallback local (para conveniência de lembrar o e-mail no Desktop)
     _salvar_local_json(dados)
 
     # 3. Mantém também na sessão da memória em runtime
     session_set(page, "lembrar_ativo", True)
     session_set(page, "lembrar_email", email.strip())
-    if access_token:
-        session_set(page, "auth_access_token", access_token)
-    if refresh_token:
-        session_set(page, "auth_refresh_token", refresh_token)
 
 
 async def carregar_lembrar(page: ft.Page) -> Tuple[str, str, str, bool]:
     """
-    Retorna (email, access_token, refresh_token, lembrar_ativo).
+    Retorna (email, "", "", lembrar_ativo). Tokens são sempre vazios para exigir login.
     """
     email = ""
-    acc = ""
-    ref = ""
     ativo = False
 
     # 1. Tenta SharedPreferences
@@ -103,35 +112,27 @@ async def carregar_lembrar(page: ft.Page) -> Tuple[str, str, str, bool]:
         try:
             ativo = bool(await sp.get("lembrar_ativo"))
             email = str(await sp.get("lembrar_email") or "")
-            acc = str(await sp.get("auth_access_token") or "")
-            ref = str(await sp.get("auth_refresh_token") or "")
         except Exception:
             pass
 
     # 2. Se vazio, consulta o fallback local
-    if not email and not acc:
+    if not email:
         local = _ler_local_json()
         if local.get("lembrar_ativo"):
             ativo = True
             email = local.get("lembrar_email", "")
-            acc = local.get("auth_access_token", "")
-            ref = local.get("auth_refresh_token", "")
 
     # 3. Se ainda vazio, consulta sessão em memória
     if not email:
         email = session_get(page, "lembrar_email", "")
-    if not acc:
-        acc = session_get(page, "auth_access_token", "")
-    if not ref:
-        ref = session_get(page, "auth_refresh_token", "")
     if not ativo:
         ativo = bool(session_get(page, "lembrar_ativo", False))
 
-    return email, acc, ref, ativo
+    return email, "", "", ativo
 
 
 async def limpar_lembrar(page: ft.Page) -> None:
-    """Limpa credenciais persistentes e arquivo local."""
+    """Limpa e-mail persistente e arquivo local."""
     sp = _obter_sp(page)
     if sp:
         try:
@@ -142,11 +143,12 @@ async def limpar_lembrar(page: ft.Page) -> None:
         except Exception:
             pass
 
-    try:
-        if _LOCAL_FILE.exists():
-            _LOCAL_FILE.unlink(missing_ok=True)
-    except Exception:
-        pass
+    dados = _ler_local_json()
+    dados.pop("lembrar_ativo", None)
+    dados.pop("lembrar_email", None)
+    dados.pop("auth_access_token", None)
+    dados.pop("auth_refresh_token", None)
+    _salvar_local_json(dados)
 
     session_remove(page, "lembrar_ativo")
     session_remove(page, "lembrar_email")
@@ -287,32 +289,15 @@ def salvar_dia_ciclo_padrao(page: ft.Page, dia: int) -> None:
 
 
 # =============================================================================
-# PERSISTÊNCIA DE SESSÃO AUTENTICADA (MOBILE BACKGROUND E RESILIÊNCIA)
+# PERSISTÊNCIA DE SESSÃO AUTENTICADA (SESSÃO VOLÁTIL EM MEMÓRIA DA PÁGINA)
 # =============================================================================
 async def salvar_sessao_autenticada(page: ft.Page, access_token: str, refresh_token: str, email: str = "") -> None:
     """
-    Grava os tokens da sessão autenticada ativa no SharedPreferences e fallback local.
-    Permite reconexão invisível ao minimizar e restaurar o app no celular sem cair na tela de login.
+    Grava os tokens da sessão autenticada ativa APENAS na sessão volátil da página.
+    Não persiste em disco para que ao fechar o app seja exigida reautenticação obrigatória.
     """
     if not access_token or not refresh_token:
         return
-
-    dados = _ler_local_json()
-    dados["auth_access_token"] = access_token
-    dados["auth_refresh_token"] = refresh_token
-    if email:
-        dados["auth_email"] = email.strip()
-    _salvar_local_json(dados)
-
-    sp = _obter_sp(page)
-    if sp:
-        try:
-            await sp.set("auth_access_token", access_token)
-            await sp.set("auth_refresh_token", refresh_token)
-            if email:
-                await sp.set("auth_email", email.strip())
-        except Exception:
-            pass
 
     session_set(page, "auth_access_token", access_token)
     session_set(page, "auth_refresh_token", refresh_token)
@@ -321,15 +306,9 @@ async def salvar_sessao_autenticada(page: ft.Page, access_token: str, refresh_to
 
 
 def salvar_sessao_autenticada_sync(page: ft.Page, access_token: str, refresh_token: str, email: str = "") -> None:
-    """Versão síncrona para gravação imediata em memória e disco local."""
+    """Versão síncrona para gravação em memória volátil de runtime."""
     if not access_token or not refresh_token:
         return
-    dados = _ler_local_json()
-    dados["auth_access_token"] = access_token
-    dados["auth_refresh_token"] = refresh_token
-    if email:
-        dados["auth_email"] = email.strip()
-    _salvar_local_json(dados)
 
     session_set(page, "auth_access_token", access_token)
     session_set(page, "auth_refresh_token", refresh_token)
@@ -339,48 +318,20 @@ def salvar_sessao_autenticada_sync(page: ft.Page, access_token: str, refresh_tok
 
 async def carregar_sessao_autenticada(page: ft.Page) -> Tuple[str, str, str]:
     """
-    Recupera (access_token, refresh_token, email) persistidos.
-    Consulta SharedPreferences, fallback local e sessão de runtime.
+    Recupera (access_token, refresh_token, email) da sessão volátil de runtime.
+    Não consulta disco rígido para evitar bypass de login no startup.
     """
-    acc = ""
-    ref = ""
-    email = ""
-
-    sp = _obter_sp(page)
-    if sp:
-        try:
-            acc = str(await sp.get("auth_access_token") or "")
-            ref = str(await sp.get("auth_refresh_token") or "")
-            email = str(await sp.get("auth_email") or "")
-        except Exception:
-            pass
-
-    if not acc or not ref:
-        local = _ler_local_json()
-        acc = local.get("auth_access_token", "") or acc
-        ref = local.get("auth_refresh_token", "") or ref
-        email = local.get("auth_email", "") or email
-
-    if not acc or not ref:
-        acc = session_get(page, "auth_access_token", "") or acc
-        ref = session_get(page, "auth_refresh_token", "") or ref
-        email = session_get(page, "auth_email", "") or email
-
+    acc = session_get(page, "auth_access_token", "") or ""
+    ref = session_get(page, "auth_refresh_token", "") or ""
+    email = session_get(page, "auth_email", "") or ""
     return acc, ref, email
 
 
 def carregar_sessao_autenticada_sync(page: ft.Page) -> Tuple[str, str, str]:
-    """Consulta síncrona imediata para uso no roteador e verificações de rota."""
-    acc = session_get(page, "auth_access_token", "")
-    ref = session_get(page, "auth_refresh_token", "")
-    email = session_get(page, "auth_email", "")
-
-    if not acc or not ref:
-        local = _ler_local_json()
-        acc = local.get("auth_access_token", "") or acc
-        ref = local.get("auth_refresh_token", "") or ref
-        email = local.get("auth_email", "") or email
-
+    """Consulta síncrona dos tokens da sessão volátil da página em runtime."""
+    acc = session_get(page, "auth_access_token", "") or ""
+    ref = session_get(page, "auth_refresh_token", "") or ""
+    email = session_get(page, "auth_email", "") or ""
     return acc, ref, email
 
 

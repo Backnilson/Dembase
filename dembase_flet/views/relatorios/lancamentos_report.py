@@ -89,7 +89,7 @@ def criar_view_relatorio_lancamentos(
         novo = ctx_atual[0].com(data_inicio=dt_iso, data_fim=dt_iso)
         filter_bar.atualizar_contexto(novo, emitir=True)
 
-    def carregar(inicial: bool = False):
+    async def _carregar_async(inicial: bool = False):
         c = ctx_atual[0]
         tit, cor_t, _ = _titulo_por_tipo(c.tipo)
         txt_titulo.value = tit
@@ -104,7 +104,7 @@ def criar_view_relatorio_lancamentos(
                 pass
 
         try:
-            pacote = db.obter_relatorio_lancamentos(
+            pacote = await db.obter_relatorio_lancamentos_async(
                 data_inicio=c.data_inicio.isoformat(),
                 data_fim=c.data_fim.isoformat(),
                 filtros=c.to_rpc_filtros(),
@@ -219,12 +219,19 @@ def criar_view_relatorio_lancamentos(
             if not inicial:
                 mostrar_feedback(page, f"Erro ao carregar relatório: {ex}", "erro")
         finally:
+            scaffold.set_loading(False, page)
             spinner.visible = False
-            if not inicial:
-                try:
-                    page.update()
-                except Exception:
-                    pass
+            try:
+                page.update()
+            except Exception:
+                pass
+
+    def carregar(inicial: bool = False):
+        try:
+            page.run_task(_carregar_async, inicial)
+        except Exception:
+            import asyncio
+            asyncio.create_task(_carregar_async(inicial))
 
     def _ao_mudar_filtro(novo_ctx: ReportContext):
         ctx_atual[0] = novo_ctx
@@ -305,6 +312,8 @@ def criar_view_relatorio_lancamentos(
         kpi_strip=kpi_container,
         graficos_row=graficos_row,
         transaction_list=lista_tx,
+        loading=True,
+        loading_text="Carregando lançamentos...",
     )
 
     def _on_periodo_shell(d_ini: str, d_fim: str, _m: int, _a: int):

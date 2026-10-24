@@ -11,7 +11,12 @@ from __future__ import annotations
 import flet as ft
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
-from core.constants import formatar_moeda, formatar_data_br
+from core.constants import (
+    formatar_moeda,
+    formatar_data_br,
+    parse_moeda_seguro,
+    formatar_moeda_input,
+)
 from core.periodo import obter_estado_periodo_atual
 from core.nav import ir_conta, ir_relatorio_lancamentos
 from core.report_context import ReportContext
@@ -63,6 +68,13 @@ def criar_view_contas(
     grid_contas = ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[])
 
     def _safe_update():
+        try:
+            txt_total_atual.update()
+            txt_total_previsto.update()
+            txt_qtd_contas.update()
+            grid_contas.update()
+        except Exception:
+            pass
         try:
             page.update()
         except Exception:
@@ -116,7 +128,7 @@ def criar_view_contas(
         txt_nome = ft.TextField(
             label="Nome da Conta *",
             hint_text="Ex: Santander, Nubank, Carteira",
-            value=conta_edicao.get("nome", "") if eh_edicao else "",
+            value=(conta_edicao.get("nome") or "") if eh_edicao else "",
             **T.campo_estilo(),
         )
 
@@ -135,20 +147,38 @@ def criar_view_contas(
         txt_banco = ft.TextField(
             label="Instituição / Banco (Opcional)",
             hint_text="Ex: Itaú Unibanco, Inter",
-            value=conta_edicao.get("banco", "") if eh_edicao else "",
+            value=(conta_edicao.get("banco") or "") if eh_edicao else "",
             **T.campo_estilo(),
         )
 
-        txt_saldo_ini = ft.TextField(
-            label="Saldo Inicial (R$)",
+        # No modo edição, o saldo exibido e manipulado pelo usuário é o Saldo Atual da Conta
+        saldo_base = (
+            float(conta_edicao.get("saldo_atual", conta_edicao.get("saldo_inicial", 0.0)) or 0.0)
+            if eh_edicao
+            else 0.0
+        )
+        val_saldo = formatar_moeda_input(saldo_base)
+
+        lbl_saldo = "Saldo da Conta (R$)" if eh_edicao else "Saldo Inicial (R$)"
+        hlp_saldo = (
+            "Saldo atual da conta bancária (o valor digitado atualizará o card imediatamente)."
+            if eh_edicao
+            else "Saldo de partida ao cadastrar a conta (valores negativos permitidos, ex: -150,00)."
+        )
+
+        txt_saldo = ft.TextField(
+            label=lbl_saldo,
             hint_text="0,00",
             keyboard_type=ft.KeyboardType.NUMBER,
             prefix="R$ ",
-            value=str(conta_edicao.get("saldo_inicial", "0.00")) if eh_edicao else "0,00",
+            value=val_saldo,
+            helper=hlp_saldo,
+            helper_style=ft.TextStyle(size=11, color=T.TEXT_MUTED),
             **T.campo_estilo(),
         )
 
-        cor_selecionada = [conta_edicao.get("cor", CORES_PRESET[0]["hex"]) if eh_edicao else CORES_PRESET[0]["hex"]]
+        cor_padrao = conta_edicao.get("cor") if eh_edicao else None
+        cor_selecionada = [cor_padrao or CORES_PRESET[0]["hex"]]
 
         def _selecionar_cor(hex_cor):
             cor_selecionada[0] = hex_cor
@@ -174,21 +204,18 @@ def criar_view_contas(
         )
 
         def salvar_conta(_):
-            nome = txt_nome.value.strip()
+            nome = (txt_nome.value or "").strip()
             if not nome:
                 mostrar_feedback(page, "Informe o nome da conta.", "alerta")
                 return
 
-            try:
-                saldo_ini = float(txt_saldo_ini.value.replace(",", ".").replace("R$", "").strip() or 0)
-            except ValueError:
-                saldo_ini = 0.0
+            saldo_digitado = parse_moeda_seguro(txt_saldo.value)
+            banco_val = (txt_banco.value or "").strip() or None
 
             dados = {
                 "nome": nome,
                 "tipo_conta": db.normalizar_tipo_conta(dd_tipo.value),
-                "banco": txt_banco.value.strip() or None,
-                "saldo_inicial": saldo_ini,
+                "banco": banco_val,
                 "cor": cor_selecionada[0],
                 "icone": "account_balance",
                 "ativo": True,
@@ -196,14 +223,36 @@ def criar_view_contas(
 
             try:
                 if eh_edicao:
-                    old_ini = float(conta_edicao.get("saldo_inicial", 0) or 0)
-                    diff_ini = saldo_ini - old_ini
-                    dados["saldo_atual"] = float(conta_edicao.get("saldo_atual", old_ini) or 0) + diff_ini
-                    dados["saldo_previsto"] = float(conta_edicao.get("saldo_previsto", old_ini) or 0) + diff_ini
-                    db.atualizar_conta(conta_edicao["id"], dados)
+                    old_atual = float(conta_edicao.get("saldo_atual", conta_edicao.get("saldo_inicial", 0.0)) or 0.0)
+                    old_ini = float(conta_edicao.get("saldo_inicial", 0.0) or 0.0)
+                    old_prev = float(conta_edicao.get("saldo_previsto", old_atual) or 0.0)
+
+                    # Diferença exata entre o saldo desejado pelo usuário e o saldo atual anterior
+                    diff = saldo_digitado - old_atual
+
+                    # Atualiza os 3 saldos de forma matematicamente alinhada
+                    dados["saldo_atual"] = float(round(saldo_digitado, 2))
+                    dados["saldo_inicial"] = float(round(old_ini + diff, 2))
+                    dados["saldo_previsto"] = float(round(old_prev + diff, 2))
+
+                    resp = db.atualizar_conta(conta_edicao["id"], dados)
+                    if not (resp and resp.data):
+                        raise RuntimeError(
+                            "O banco de dados não confirmou a atualização da conta. "
+                            "Verifique suas permissões de acesso ou conexão com o Supabase."
+                        )
                     msg_ok = "Conta atualizada com sucesso!"
                 else:
-                    db.criar_conta(dados)
+                    saldo_val = float(round(saldo_digitado, 2))
+                    dados["saldo_inicial"] = saldo_val
+                    dados["saldo_atual"] = saldo_val
+                    dados["saldo_previsto"] = saldo_val
+                    resp = db.criar_conta(dados)
+                    if not (resp and resp.data):
+                        raise RuntimeError(
+                            "O banco de dados não confirmou a criação da conta. "
+                            "Verifique suas permissões de acesso ou conexão com o Supabase."
+                        )
                     msg_ok = "Conta criada com sucesso!"
 
                 fechar_dialogo(page, modal)
@@ -226,7 +275,7 @@ def criar_view_contas(
                         txt_nome,
                         dd_tipo,
                         txt_banco,
-                        txt_saldo_ini,
+                        txt_saldo,
                         ft.Text("Cor da Conta", color=T.TEXT_MUTED, size=12, weight=ft.FontWeight.W_500),
                         row_cores,
                     ],

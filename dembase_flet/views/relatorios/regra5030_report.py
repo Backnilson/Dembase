@@ -209,7 +209,7 @@ def criar_view_relatorio_regra(
             )
         return ft.ResponsiveRow(spacing=12, run_spacing=12, controls=cards_p)
 
-    def carregar(inicial: bool = False):
+    async def _carregar_async(inicial: bool = False):
         c = contexto_atual[0]
         di_str = c.data_inicio.isoformat()
         df_str = c.data_fim.isoformat()
@@ -221,8 +221,9 @@ def criar_view_relatorio_regra(
             _safe_update()
 
         try:
-            resumo_5030 = db.obter_resumo_5030(di_str, df_str)
-            pacote = db.obter_relatorio_lancamentos(
+            import asyncio
+            resumo_5030 = await asyncio.to_thread(db.obter_resumo_5030, di_str, df_str)
+            pacote = await db.obter_relatorio_lancamentos_async(
                 data_inicio=di_str,
                 data_fim=df_str,
                 filtros=c.to_rpc_filtros(),
@@ -350,12 +351,22 @@ def criar_view_relatorio_regra(
             )
 
         except Exception as ex:
+            container_loading.visible = False
+            container_corpo.visible = True
             if not inicial:
                 mostrar_feedback(page, f"Erro ao carregar Regra 50/30/20: {ex}", "erro")
         finally:
+            container_loading.visible = False
+            container_corpo.visible = True
             spinner.visible = False
-            if not inicial:
-                _safe_update()
+            _safe_update()
+
+    def carregar(inicial: bool = False):
+        try:
+            page.run_task(_carregar_async, inicial)
+        except Exception:
+            import asyncio
+            asyncio.create_task(_carregar_async(inicial))
 
     def on_periodo(d_ini: str, d_fim: str, m: int, a: int):
         est = atualizar_datas_periodo_global(page, d_ini, d_fim, m, a)
@@ -375,15 +386,39 @@ def criar_view_relatorio_regra(
         )
         carregar(inicial=False)
 
-    conteudo = ft.Column(
+    container_loading = ft.Container(
+        alignment=ft.Alignment(0, 0),
+        padding=pad(all_=50),
+        content=ft.Column(
+            spacing=12,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            controls=[
+                ft.ProgressRing(color=cor_p, width=32, height=32, stroke_width=3),
+                ft.Text("Carregando análise da regra 50/30/20...", color=T.TEXT_MUTED, size=13, weight=ft.FontWeight.W_500),
+            ],
+        ),
+        visible=True,
+    )
+
+    container_corpo = ft.Column(
         spacing=14 if mobile else 16,
+        visible=False,
         controls=[
-            container_header,
             container_pilares,
             container_kpis,
             container_graficos,
             container_filter_bar,
             container_lista,
+        ],
+    )
+
+    conteudo = ft.Column(
+        spacing=14 if mobile else 16,
+        controls=[
+            container_header,
+            container_loading,
+            container_corpo,
             ft.Container(height=28),
         ],
     )

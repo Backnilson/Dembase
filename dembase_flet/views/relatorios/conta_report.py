@@ -166,7 +166,7 @@ def criar_view_relatorio_conta(
         ),
     )
 
-    def carregar(inicial: bool = False):
+    async def _carregar_async(inicial: bool = False):
         c = contexto_atual[0]
         di_str = c.data_inicio.isoformat()
         df_str = c.data_fim.isoformat()
@@ -176,7 +176,7 @@ def criar_view_relatorio_conta(
             _safe_update()
 
         try:
-            pacote = db.obter_relatorio_conta(
+            pacote = await db.obter_relatorio_conta_async(
                 conta_id=conta_id,
                 data_inicio=di_str,
                 data_fim=df_str,
@@ -329,12 +329,22 @@ def criar_view_relatorio_conta(
             )
 
         except Exception as ex:
+            container_loading.visible = False
+            container_corpo.visible = True
             if not inicial:
                 mostrar_feedback(page, f"Erro ao carregar extrato da conta: {ex}", "erro")
         finally:
+            container_loading.visible = False
+            container_corpo.visible = True
             spinner.visible = False
-            if not inicial:
-                _safe_update()
+            _safe_update()
+
+    def carregar(inicial: bool = False):
+        try:
+            page.run_task(_carregar_async, inicial)
+        except Exception:
+            import asyncio
+            asyncio.create_task(_carregar_async(inicial))
 
     # Callbacks do seletor global de período no Shell
     def on_periodo(d_ini: str, d_fim: str, m: int, a: int):
@@ -355,15 +365,39 @@ def criar_view_relatorio_conta(
         )
         carregar(inicial=False)
 
-    conteudo = ft.Column(
+    container_loading = ft.Container(
+        alignment=ft.Alignment(0, 0),
+        padding=pad(all_=50),
+        content=ft.Column(
+            spacing=12,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            controls=[
+                ft.ProgressRing(color=T.PRIMARY, width=32, height=32, stroke_width=3),
+                ft.Text("Carregando extrato da conta...", color=T.TEXT_MUTED, size=13, weight=ft.FontWeight.W_500),
+            ],
+        ),
+        visible=True,
+    )
+
+    container_corpo = ft.Column(
         spacing=14 if mobile else 16,
+        visible=False,
         controls=[
-            container_header,
             hero_conta,
             container_kpis,
             container_graficos,
             container_filter_bar,
             container_lista,
+        ],
+    )
+
+    conteudo = ft.Column(
+        spacing=14 if mobile else 16,
+        controls=[
+            container_header,
+            container_loading,
+            container_corpo,
             ft.Container(height=28),
         ],
     )

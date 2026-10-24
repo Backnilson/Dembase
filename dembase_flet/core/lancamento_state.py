@@ -57,11 +57,36 @@ class LancamentoFormState:
     is_fixa: bool = False
     is_repetir: bool = False
     frequencia: str = "mensal"
-    quantidade: int = 1  # Parcelas no crédito ou repetições no Repetir
-    mais_detalhes_aberto: bool = False
-    lancamento_id: Optional[str] = None
+    fatura_id: Optional[str] = None     # Seleção manual de fatura sobrescrevendo fechamento
+    fatura_manual_mes: Optional[int] = None
+    fatura_manual_ano: Optional[int] = None
+    modo_calculo_parcela: str = "total"  # "total" (divide) ou "parcela" (multiplica)
+    valor_parcela_input: float = 0.0     # Armazena o valor unitário da parcela quando no modo "parcela"
+    quantidade: int = 1
     serie_id: Optional[str] = None
     recorrente_id: Optional[str] = None
+    lancamento_id: Optional[str] = None
+    mais_detalhes_aberto: bool = False
+
+    def definir_valor_total(self, total: float):
+        self.valor = max(0.0, float(total or 0.0))
+        qtd = max(1, self.quantidade)
+        self.valor_parcela_input = self.valor / qtd
+
+    def definir_valor_parcela(self, parcela: float):
+        self.valor_parcela_input = max(0.0, float(parcela or 0.0))
+        qtd = max(1, self.quantidade)
+        self.valor = self.valor_parcela_input * qtd
+
+    def obter_valor_parcela(self) -> float:
+        qtd = max(1, self.quantidade)
+        return self.valor / qtd if self.valor > 0 else 0.0
+
+    def obter_valor_exibicao_input(self) -> float:
+        """Retorna o valor que deve ser exibido no campo txt_valor conforme o modo."""
+        if self.eh_credito and not self.is_fixa and self.modo_calculo_parcela == "parcela" and self.quantidade > 1:
+            return self.obter_valor_parcela()
+        return self.valor
 
     def __post_init__(self):
         # Normaliza tipo para evitar divergências ("Transferência" -> "Transferencia")

@@ -202,7 +202,7 @@ def criar_view_fluxo_mensal(
             ),
         )
 
-    def carregar(inicial: bool = False):
+    async def _carregar_async(inicial: bool = False):
         c = contexto_atual[0]
         di_str = c.data_inicio.isoformat()
         df_str = c.data_fim.isoformat()
@@ -212,8 +212,8 @@ def criar_view_fluxo_mensal(
             _safe_update()
 
         try:
-            balanco_6m = db.obter_balanco_6_meses() or []
-            pacote = db.obter_relatorio_lancamentos(
+            balanco_6m = await db.obter_balanco_6_meses_async() or []
+            pacote = await db.obter_relatorio_lancamentos_async(
                 data_inicio=di_str,
                 data_fim=df_str,
                 filtros=c.to_rpc_filtros(),
@@ -332,12 +332,22 @@ def criar_view_fluxo_mensal(
             )
 
         except Exception as ex:
+            container_loading.visible = False
+            container_corpo.visible = True
             if not inicial:
                 mostrar_feedback(page, f"Erro ao carregar fluxo mensal: {ex}", "erro")
         finally:
+            container_loading.visible = False
+            container_corpo.visible = True
             spinner.visible = False
-            if not inicial:
-                _safe_update()
+            _safe_update()
+
+    def carregar(inicial: bool = False):
+        try:
+            page.run_task(_carregar_async, inicial)
+        except Exception:
+            import asyncio
+            asyncio.create_task(_carregar_async(inicial))
 
     def on_periodo(d_ini: str, d_fim: str, m: int, a: int):
         est = atualizar_datas_periodo_global(page, d_ini, d_fim, m, a)
@@ -357,15 +367,39 @@ def criar_view_fluxo_mensal(
         )
         carregar(inicial=False)
 
-    conteudo = ft.Column(
+    container_loading = ft.Container(
+        alignment=ft.Alignment(0, 0),
+        padding=pad(all_=50),
+        content=ft.Column(
+            spacing=12,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            controls=[
+                ft.ProgressRing(color="#8B5CF6", width=32, height=32, stroke_width=3),
+                ft.Text("Carregando fluxo de caixa e histórico...", color=T.TEXT_MUTED, size=13, weight=ft.FontWeight.W_500),
+            ],
+        ),
+        visible=True,
+    )
+
+    container_corpo = ft.Column(
         spacing=14 if mobile else 16,
+        visible=False,
         controls=[
-            container_header,
             container_kpis,
             container_semestral,
             container_graficos,
             container_filter_bar,
             container_lista,
+        ],
+    )
+
+    conteudo = ft.Column(
+        spacing=14 if mobile else 16,
+        controls=[
+            container_header,
+            container_loading,
+            container_corpo,
             ft.Container(height=28),
         ],
     )

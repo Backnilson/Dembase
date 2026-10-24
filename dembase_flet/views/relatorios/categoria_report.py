@@ -173,7 +173,7 @@ def criar_view_relatorio_categoria(
         novo = ctx_atual[0].com(data_inicio=dt_iso, data_fim=dt_iso)
         filter_bar.atualizar_contexto(novo, emitir=True)
 
-    def carregar(inicial: bool = False):
+    async def _carregar_async(inicial: bool = False):
         c = ctx_atual[0]
         meta = cat_map.get(cat_id) or {}
         nome_c = meta.get("nome") or "Categoria"
@@ -191,7 +191,7 @@ def criar_view_relatorio_categoria(
                 pass
 
         try:
-            pacote = db.obter_relatorio_lancamentos(
+            pacote = await db.obter_relatorio_lancamentos_async(
                 data_inicio=c.data_inicio.isoformat(),
                 data_fim=c.data_fim.isoformat(),
                 filtros=c.to_rpc_filtros(),
@@ -322,12 +322,19 @@ def criar_view_relatorio_categoria(
             if not inicial:
                 mostrar_feedback(page, f"Erro ao carregar categoria: {ex}", "erro")
         finally:
+            scaffold.set_loading(False, page)
             spinner.visible = False
-            if not inicial:
-                try:
-                    page.update()
-                except Exception:
-                    pass
+            try:
+                page.update()
+            except Exception:
+                pass
+
+    def carregar(inicial: bool = False):
+        try:
+            page.run_task(_carregar_async, inicial)
+        except Exception:
+            import asyncio
+            asyncio.create_task(_carregar_async(inicial))
 
     def _ao_mudar_filtro(novo_ctx: ReportContext):
         ctx_atual[0] = novo_ctx.com(categoria_id=cat_id)
@@ -406,6 +413,8 @@ def criar_view_relatorio_categoria(
         secao_extra=_construir_seletor_categorias(),
         graficos_row=graficos_row,
         transaction_list=lista_tx,
+        loading=True,
+        loading_text=f"Carregando {nome_cat_inicial}...",
     )
 
     def _on_periodo_shell(d_ini: str, d_fim: str, _m: int, _a: int):

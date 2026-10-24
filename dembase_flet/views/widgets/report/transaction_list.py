@@ -515,27 +515,76 @@ class TransactionList(ft.Column):
                     content=ft.Text(f"{conta_nome} → {destino_nome}", size=10.5, color=T.INFO, weight=ft.FontWeight.W_600),
                 )
             )
-        elif cartao_nome:
-            parc_txt = ""
-            if item.get("parcela_atual") and item.get("total_parcelas") and int(item.get("total_parcelas", 1)) > 1:
-                parc_txt = f" ({item['parcela_atual']}/{item['total_parcelas']})"
-            badges.append(
-                ft.Container(
-                    padding=pad(h=6, v=2),
-                    bgcolor=f"{T.WARNING}18",
-                    border_radius=6,
-                    content=ft.Text(f"Cartão {cartao_nome}{parc_txt}", size=10.5, color=T.WARNING, weight=ft.FontWeight.W_600),
+        else:
+            eh_credito = ("cred" in str(forma).lower()) or bool(item.get("cartao_id")) or bool(cartao_nome)
+            parc_atual = item.get("parcela_atual")
+            tot_parc = item.get("total_parcelas")
+            is_fixa_rec = (item.get("tipo_recorrencia") == "fixa" or bool(item.get("recorrente_id")))
+
+            if eh_credito:
+                if cartao_nome:
+                    badges.append(
+                        ft.Container(
+                            padding=pad(h=6, v=2),
+                            bgcolor=f"{T.WARNING}18",
+                            border_radius=6,
+                            content=ft.Text(f"Cartão {cartao_nome}", size=10.5, color=T.WARNING, weight=ft.FontWeight.W_600),
+                        )
+                    )
+
+                if tot_parc and int(tot_parc) > 1:
+                    p_atual_num = parc_atual or 1
+                    badges.append(
+                        ft.Container(
+                            padding=pad(h=7, v=2),
+                            bgcolor="#8B5CF622",
+                            border_radius=6,
+                            border=borda(1, "#8B5CF660"),
+                            content=ft.Row(
+                                spacing=4,
+                                tight=True,
+                                controls=[
+                                    ft.Icon(ft.Icons.PAYMENTS_ROUNDED, size=11, color="#8B5CF6"),
+                                    ft.Text(f"Parcela {p_atual_num} de {tot_parc}", size=10.5, color="#8B5CF6", weight=ft.FontWeight.BOLD),
+                                ],
+                            ),
+                        )
+                    )
+                elif is_fixa_rec:
+                    badges.append(
+                        ft.Container(
+                            padding=pad(h=7, v=2),
+                            bgcolor=f"{T.PRIMARY}22",
+                            border_radius=6,
+                            border=borda(1, f"{T.PRIMARY}55"),
+                            content=ft.Row(
+                                spacing=4,
+                                tight=True,
+                                controls=[
+                                    ft.Icon(ft.Icons.ALL_INCLUSIVE_ROUNDED, size=11, color=T.PRIMARY),
+                                    ft.Text("Recorrência", size=10.5, color=T.PRIMARY, weight=ft.FontWeight.BOLD),
+                                ],
+                            ),
+                        )
+                    )
+                else:
+                    badges.append(
+                        ft.Container(
+                            padding=pad(h=6, v=2),
+                            bgcolor=T.SURFACE_ALT,
+                            border_radius=6,
+                            content=ft.Text("À vista", size=10.5, color=T.TEXT_MUTED, weight=ft.FontWeight.W_600),
+                        )
+                    )
+            elif conta_nome:
+                badges.append(
+                    ft.Container(
+                        padding=pad(h=6, v=2),
+                        bgcolor=T.SURFACE_ALT,
+                        border_radius=6,
+                        content=ft.Text(conta_nome, size=10.5, color=T.TEXT_MUTED),
+                    )
                 )
-            )
-        elif conta_nome:
-            badges.append(
-                ft.Container(
-                    padding=pad(h=6, v=2),
-                    bgcolor=T.SURFACE_ALT,
-                    border_radius=6,
-                    content=ft.Text(conta_nome, size=10.5, color=T.TEXT_MUTED),
-                )
-            )
 
         pote_nome = item.get("pote_nome")
         pote_cor = item.get("pote_cor") or T.PRIMARY

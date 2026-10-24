@@ -312,13 +312,19 @@ def _extrair_nomes_parametros(template: str) -> list[str]:
     return nomes
 
 
-def resolver_rota(rota_completa: str | None) -> tuple[RotaDef | None, RouteMatch]:
+def resolver_rota(rota_completa: str | None, logado: bool = False) -> tuple[RotaDef | None, RouteMatch]:
     """
     Faz o match da rota completa contra ROTAS_TABELA usando ft.TemplateRoute
-    apenas no path limpo (sem query string).
+    apenas no path limpo (sem query string). Protege rotas de acordo com o status de autenticação.
     """
     path, query = separar_rota(rota_completa)
     rota_norm = normalizar_rota_completa(rota_completa)
+
+    # Tratamento da rota raiz "/"
+    if path == "/":
+        path = ROTA_DASHBOARD if logado else ROTA_AUTH
+        rota_norm = path
+
     tr = ft.TemplateRoute(path)
 
     for defn in ROTAS_TABELA:
@@ -333,35 +339,34 @@ def resolver_rota(rota_completa: str | None) -> tuple[RotaDef | None, RouteMatch
                 path=path,
                 params_path=params_path,
                 query=query,
-                rota_completa=rota_norm if path != "/" else ROTA_DASHBOARD,
+                rota_completa=rota_norm,
                 template=defn.template,
             )
             return defn, match
 
-    # Fallback para rota desconhecida
+    # Fallback para rota desconhecida: direciona para Login se não autenticado
+    fb_path = ROTA_DASHBOARD if logado else ROTA_AUTH
     fallback_match = RouteMatch(
-        path=ROTA_DASHBOARD,
+        path=fb_path,
         params_path={},
         query={},
-        rota_completa=ROTA_DASHBOARD,
-        template=ROTA_DASHBOARD,
+        rota_completa=fb_path,
+        template=fb_path,
     )
     return None, fallback_match
 
 
-def montar_pilha(rota_completa: str | None) -> list[str]:
+def montar_pilha(rota_completa: str | None, logado: bool = False) -> list[str]:
     """
     Deriva a pilha hierárquica de rotas a partir da URL alvo.
-    Propaga ini/fim para o pai intermediário quando aplicável.
-    Ex: '/contas/abc?ini=2026-10-01&fim=2026-10-31' ->
-        ['/dashboard', '/contas?ini=2026-10-01&fim=2026-10-31', '/contas/abc?ini=2026-10-01&fim=2026-10-31']
+    Se não autenticado, retorna estritamente a tela de Login [ROTA_AUTH].
     """
-    defn, match = resolver_rota(rota_completa)
-    if defn is None:
-        return [ROTA_DASHBOARD]
-
-    if defn.template == ROTA_AUTH:
+    if not logado:
         return [ROTA_AUTH]
+
+    defn, match = resolver_rota(rota_completa, logado=True)
+    if defn is None or defn.template == ROTA_AUTH:
+        return [ROTA_DASHBOARD]
 
     cadeia: list[str] = [match.rota_completa]
     visitados: set[str] = {match.path}
@@ -389,7 +394,7 @@ def montar_pilha(rota_completa: str | None) -> list[str]:
             f"{pai_path}?{urlencode(pai_q)}" if pai_q else pai_path
         )
         cadeia.insert(0, pai_completo)
-        atual_defn, atual_match = resolver_rota(pai_completo)
+        atual_defn, atual_match = resolver_rota(pai_completo, logado=True)
 
     return cadeia
 
@@ -399,50 +404,62 @@ def montar_pilha(rota_completa: str | None) -> list[str]:
 # =============================================================================
 def configurar_rotas(page: ft.Page):
     def _logado() -> bool:
+        """
+        Guarda estrito de autenticação: verifica se há sessão ativa com usuário logado
+        em memória nesta execução. NUNCA ressuscita tokens salvos em disco automaticamente.
+        """
         try:
             sessao = db.sessao_atual()
             if sessao and getattr(sessao, "user", None):
                 return True
-            acc, ref, _ = storage.carregar_sessao_autenticada_sync(page)
-            if not acc or not ref:
-                acc = session_get(page, "auth_access_token")
-                ref = session_get(page, "auth_refresh_token")
-            if acc and ref:
-                return db.restaurar_sessao(acc, ref)
-            return False
+            user = db.usuario_atual()
+            return user is not None
         except Exception:
             return False
 
     def _construir_view(rota_str: str) -> ft.View:
-        defn, match = resolver_rota(rota_str)
+        logado = _logado()
+        defn, match = resolver_rota(rota_str, logado=logado)
+        if not logado:
+            return _build_auth(page, RouteMatch(path=ROTA_AUTH, rota_completa=ROTA_AUTH, template=ROTA_AUTH))
         if defn is None:
-            return _build_dashboard(page, match) if _logado() else _build_auth(page, match)
+            return _build_dashboard(page, match)
         return defn.builder(page, match)
 
     def on_route_change(e: ft.RouteChangeEvent | None = None, forcar_rebuild: bool = False):
-        rota = page.route or ROTA_DASHBOARD
-        path_atual, _ = separar_rota(rota)
         logado = _logado()
+        rota_default = ROTA_DASHBOARD if logado else ROTA_AUTH
+        rota = page.route or rota_default
+        path_atual, _ = separar_rota(rota)
 
-        # Redireciona não-logado para auth
-        if not logado and path_atual not in _ROTAS_SEM_SHELL:
+        if path_atual == "/":
+            rota = rota_default
+            path_atual = rota
+            page.route = rota
+
+        # ── GUARDA DE SEGURANÇA ──────────────────────────────────────────────
+        # Bloqueia qualquer rota se o usuário não realizou login
+        if not logado:
+            if page.route != ROTA_AUTH:
+                page.route = ROTA_AUTH
             page.views.clear()
             page.views.append(_build_auth(page, RouteMatch(path=ROTA_AUTH, rota_completa=ROTA_AUTH, template=ROTA_AUTH)))
             page.update()
             return
 
-        # Redireciona logado que tenta ir para auth
+        # Redireciona usuário já logado que tenta acessar /auth
         if logado and path_atual == ROTA_AUTH:
+            page.route = ROTA_DASHBOARD
             page.views.clear()
             page.views.append(_build_dashboard(page, RouteMatch(path=ROTA_DASHBOARD, rota_completa=ROTA_DASHBOARD, template=ROTA_DASHBOARD)))
             page.update()
             return
 
-        # Persiste a última rota ativa para restauração automática no mobile/background
+        # Persiste a última rota ativa apenas se logado
         if logado and path_atual not in _ROTAS_SEM_SHELL:
             storage.salvar_ultima_rota_sync(page, rota)
 
-        pilha = montar_pilha(rota)
+        pilha = montar_pilha(rota, logado=logado)
         views_atuais = list(page.views)
 
         if forcar_rebuild:
@@ -506,7 +523,7 @@ def configurar_rotas(page: ft.Page):
     def on_view_pop(e: ft.ViewPopEvent):
         if len(page.views) > 1:
             page.views.pop()
-            destino = getattr(page.views[-1], "route", None) or ROTA_DASHBOARD
+            destino = getattr(page.views[-1], "route", None) or (ROTA_DASHBOARD if _logado() else ROTA_AUTH)
             page.navigate(destino)
         else:
             page.update()
