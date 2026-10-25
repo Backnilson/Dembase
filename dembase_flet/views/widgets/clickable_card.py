@@ -3,6 +3,7 @@
 DemBase v3 — views/widgets/clickable_card.py  (Flet 1.0.1)
 Componente padrão de Card Clicável (KPI, Conta, Cartão, Hub de Relatórios)
 com feedback tátil (ink=True), realce de hover no Desktop e chevron de affordance.
+Layout responsivo: 2x2 compacto no Mobile (xs=6, sm=6) e 1x4 normal no Desktop (md=3).
 =============================================================================
 """
 from __future__ import annotations
@@ -76,21 +77,39 @@ def kpi_clicavel(
     compacto: bool = False,
 ) -> ft.Container:
     """
-    Card de KPI interativo com ícone colorido, valor dinâmico (ft.Text),
-    subtítulo e seta indicativa (chevron) quando clicável.
+    Card de KPI interativo responsivo:
+    - Telas pequenas/Mobile: grade 2x2 (xs=6, sm=6) compacta e de alta densidade.
+    - Telas grandes/Desktop: grade normal 1x4 (md=3) com espaçamento e preenchimento normais.
     """
     v_ctrl = valor_control if valor_control is not None else valor_ctrl
-    if v_ctrl is None:
-        v_ctrl = ft.Text("R$ 0,00", color=cor, size=18, weight=ft.FontWeight.BOLD)
-
     is_mob = mobile or compacto
+
+    tam_fonte_padrao = 15 if is_mob else 18
+    if v_ctrl is None:
+        v_ctrl = ft.Text(
+            "R$ 0,00",
+            color=cor,
+            size=tam_fonte_padrao,
+            weight=ft.FontWeight.BOLD,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+    elif isinstance(v_ctrl, ft.Text):
+        if is_mob and (v_ctrl.size is None or v_ctrl.size > 16):
+            v_ctrl.size = 15
+        elif not is_mob and (v_ctrl.size is None or v_ctrl.size < 18):
+            v_ctrl.size = 18
+        if not getattr(v_ctrl, "max_lines", None):
+            v_ctrl.max_lines = 1
+        if not getattr(v_ctrl, "overflow", None):
+            v_ctrl.overflow = ft.TextOverflow.ELLIPSIS
 
     icone_direita = [
         ft.Container(
-            content=ft.Icon(icone, color=cor, size=16 if is_mob else 18),
+            content=ft.Icon(icone, color=cor, size=14 if is_mob else 18),
             bgcolor=f"{cor}1F",
-            border_radius=8,
-            padding=pad(all_=6 if is_mob else 7),
+            border_radius=7 if is_mob else 8,
+            padding=pad(all_=4 if is_mob else 6),
         )
     ]
     if on_click is not None:
@@ -98,7 +117,7 @@ def kpi_clicavel(
             ft.Icon(
                 ft.Icons.CHEVRON_RIGHT_ROUNDED,
                 color=cor if ativo else T.TEXT_MUTED,
-                size=16,
+                size=14 if is_mob else 16,
             )
         )
 
@@ -112,21 +131,21 @@ def kpi_clicavel(
                     ft.Text(
                         titulo,
                         color=cor if ativo else T.TEXT_MUTED,
-                        size=11.5 if is_mob else 12,
+                        size=11 if is_mob else 12,
                         weight=ft.FontWeight.BOLD if ativo else ft.FontWeight.W_500,
                         max_lines=1,
                         overflow=ft.TextOverflow.ELLIPSIS,
                         expand=True,
                     ),
-                    ft.Row(spacing=4, tight=True, controls=icone_direita),
+                    ft.Row(spacing=3 if is_mob else 4, tight=True, controls=icone_direita),
                 ],
             ),
-            ft.Container(height=8 if is_mob else 10),
+            ft.Container(height=3 if is_mob else 8),
             v_ctrl,
             ft.Text(
                 subtitulo,
                 color=T.TEXT_MUTED,
-                size=10.5 if is_mob else 11,
+                size=9.5 if is_mob else 11,
                 max_lines=1,
                 overflow=ft.TextOverflow.ELLIPSIS,
             )
@@ -135,12 +154,14 @@ def kpi_clicavel(
         ],
     )
 
+    pad_final = pad(h=10, v=8) if is_mob else pad(all_=16)
+
     card = clickable_card(
         content=corpo,
         on_click=on_click,
         col=col or {"xs": 6, "sm": 6, "md": 3},
-        padding_val=14 if is_mob else 18,
-        border_radius=14,
+        padding=pad_final,
+        border_radius=12 if is_mob else 14,
         cor_destaque=cor,
         tooltip=tooltip or (f"Clique para abrir detalhes de {titulo}" if on_click else None),
         bgcolor=f"{cor}10" if ativo else T.SURFACE,

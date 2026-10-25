@@ -20,6 +20,7 @@ from core.constants import (
 from core.periodo import obter_estado_periodo_atual
 from core.nav import ir_conta, ir_relatorio_lancamentos
 from core.report_context import ReportContext
+from core.responsive import is_mobile
 from views.shell_view import criar_shell, ROTA_CONTAS
 from views.widgets.clickable_card import kpi_clicavel
 import services.supabase_client as db
@@ -49,6 +50,7 @@ def criar_view_contas(
     match: dict | None = None,
     ctx: ReportContext | None = None,
 ) -> ft.View:
+    mobile = is_mobile(page)
     est_p = obter_estado_periodo_atual(page)
     data_ini_sel = [est_p["data_inicio"].isoformat()]
     data_fim_sel = [est_p["data_fim"].isoformat()]
@@ -56,9 +58,11 @@ def criar_view_contas(
     contas_lista: list[dict] = []
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2, visible=False)
 
-    txt_total_atual    = ft.Text("R$ 0,00", color=T.PRIMARY, size=20, weight=ft.FontWeight.BOLD)
-    txt_total_previsto = ft.Text("R$ 0,00", color=T.TEXT_MUTED, size=20, weight=ft.FontWeight.BOLD)
-    txt_qtd_contas     = ft.Text("0 contas", color=T.INFO, size=20, weight=ft.FontWeight.BOLD)
+    tam_kpi = 15 if mobile else 18
+    txt_total_atual    = ft.Text("R$ 0,00", color=T.PRIMARY, size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_total_previsto = ft.Text("R$ 0,00", color=T.TEXT_MUTED, size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_total_mov      = ft.Text("R$ 0,00", color=T.RECEITA, size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_qtd_contas     = ft.Text("0 ativa(s)", color=T.INFO, size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
     txt_sub_periodo    = ft.Text(
         f"Movimentação no período: {formatar_data_br(data_ini_sel[0])} a {formatar_data_br(data_fim_sel[0])}",
         color=T.TEXT_MUTED,
@@ -71,6 +75,7 @@ def criar_view_contas(
         try:
             txt_total_atual.update()
             txt_total_previsto.update()
+            txt_total_mov.update()
             txt_qtd_contas.update()
             grid_contas.update()
         except Exception:
@@ -101,14 +106,24 @@ def criar_view_contas(
             contas_lista = pacote.get("contas") or []
             total_atual = pacote.get("saldo_total_atual")
             total_prev  = pacote.get("saldo_total_previsto")
+            total_ent   = pacote.get("entradas_periodo_total")
+            total_sai   = pacote.get("saidas_periodo_total")
 
             if total_atual is None:
                 total_atual = sum(float(c.get("saldo_atual", c.get("saldo_inicial", 0)) or 0) for c in contas_lista)
             if total_prev is None:
                 total_prev  = sum(float(c.get("saldo_previsto", c.get("saldo_inicial", 0)) or 0) for c in contas_lista)
+            if total_ent is None:
+                total_ent   = sum(float(c.get("entradas_periodo", 0) or 0) for c in contas_lista)
+            if total_sai is None:
+                total_sai   = sum(float(c.get("saidas_periodo", 0) or 0) for c in contas_lista)
+
+            mov_periodo = float(total_ent or 0) - float(total_sai or 0)
 
             txt_total_atual.value    = formatar_moeda(float(total_atual or 0))
             txt_total_previsto.value = formatar_moeda(float(total_prev or 0))
+            txt_total_mov.value      = formatar_moeda(mov_periodo)
+            txt_total_mov.color      = T.RECEITA if mov_periodo >= 0 else T.DESPESA
             txt_qtd_contas.value     = f"{len(contas_lista)} ativa(s)"
 
             renderizar_cards()
@@ -541,35 +556,52 @@ def criar_view_contas(
             card_box.on_hover = _on_hover_card
             grid_contas.controls.append(card_box)
 
-    # ── KPIs Topo Clicáveis ───────────────────────────────────────────────────
+    # ── KPIs Topo Clicáveis (2x2 no Mobile, 1x4 no Desktop) ───────────────────
     kpis_topo = ft.ResponsiveRow(
-        spacing=12, run_spacing=12,
+        spacing=8 if mobile else 12, run_spacing=8 if mobile else 12,
         controls=[
             kpi_clicavel(
-                titulo="Saldo Total em Contas",
+                titulo="Saldo em Contas",
                 valor_control=txt_total_atual,
-                subtitulo="Ver todas as movimentações",
+                subtitulo="Saldo consolidado",
                 icone=ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED,
                 cor=T.PRIMARY,
-                col={"xs": 12, "sm": 4},
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
+                compacto=mobile,
                 on_click=lambda _: ir_relatorio_lancamentos(page, origem="contas"),
             ),
             kpi_clicavel(
-                titulo="Saldo Previsto Total",
+                titulo="Saldo Previsto",
                 valor_control=txt_total_previsto,
-                subtitulo="Considerando lançamentos pendentes",
+                subtitulo="Com pendentes",
                 icone=ft.Icons.SAVINGS_OUTLINED,
                 cor=T.TEXT_MUTED,
-                col={"xs": 12, "sm": 4},
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
+                compacto=mobile,
                 on_click=lambda _: ir_relatorio_lancamentos(page, status="Pendente", origem="contas"),
             ),
             kpi_clicavel(
-                titulo="Contas Cadastradas",
+                titulo="Movimentação",
+                valor_control=txt_total_mov,
+                subtitulo="Fluxo no período",
+                icone=ft.Icons.SWAP_VERT_ROUNDED,
+                cor=T.RECEITA,
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
+                compacto=mobile,
+                on_click=lambda _: ir_relatorio_lancamentos(page, origem="contas"),
+            ),
+            kpi_clicavel(
+                titulo="Contas Ativas",
                 valor_control=txt_qtd_contas,
-                subtitulo="Toque em uma conta abaixo para abrir o extrato",
+                subtitulo="Cadastradas no app",
                 icone=ft.Icons.ACCOUNT_BALANCE_ROUNDED,
                 cor=T.INFO,
-                col={"xs": 12, "sm": 4},
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
+                compacto=mobile,
             ),
         ],
     )

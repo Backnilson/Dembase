@@ -60,11 +60,11 @@ def criar_view_dashboard(
         nome = "Usuário"
 
     # ── Referências mutáveis para KPIs ────────────────────────────────────────
-    tam_fonte_kpi = 17 if mobile else 21
-    txt_saldo_contas = ft.Text("R$ 0,00", color=T.PRIMARY, size=tam_fonte_kpi, weight=ft.FontWeight.BOLD)
-    txt_receitas     = ft.Text("R$ 0,00", color=T.RECEITA, size=tam_fonte_kpi, weight=ft.FontWeight.BOLD)
-    txt_despesas     = ft.Text("R$ 0,00", color=T.DESPESA, size=tam_fonte_kpi, weight=ft.FontWeight.BOLD)
-    txt_faturas      = ft.Text("R$ 0,00", color=T.WARNING, size=tam_fonte_kpi, weight=ft.FontWeight.BOLD)
+    tam_fonte_kpi = 15 if mobile else 18
+    txt_saldo_contas = ft.Text("R$ 0,00", color=T.PRIMARY, size=tam_fonte_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_receitas     = ft.Text("R$ 0,00", color=T.RECEITA, size=tam_fonte_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_despesas     = ft.Text("R$ 0,00", color=T.DESPESA, size=tam_fonte_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_faturas      = ft.Text("R$ 0,00", color=T.WARNING, size=tam_fonte_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
     txt_sub_periodo  = ft.Text(
         f"Período: {formatar_data_br(data_ini_sel[0])} a {formatar_data_br(data_fim_sel[0])}",
         color=T.TEXT_MUTED,
@@ -343,11 +343,11 @@ def criar_view_dashboard(
         page.show_dialog(dlg_graf)
 
     # =========================================================================
-    # KPI CARDS CLICÁVEIS — Grid 2x2 no Mobile (xs=6) e 1x4 no Desktop (md=3)
+    # KPI CARDS CLICÁVEIS — Responsivo: 2x2 no Mobile (xs=6), 1x4 no Desktop (md=3)
     # =========================================================================
     kpis = ft.ResponsiveRow(
-        spacing=10 if mobile else 14,
-        run_spacing=10 if mobile else 14,
+        spacing=8 if mobile else 12,
+        run_spacing=8 if mobile else 12,
         controls=[
             kpi_clicavel(
                 titulo="Saldo em Conta",
@@ -355,6 +355,8 @@ def criar_view_dashboard(
                 subtitulo="Ver contas e saldos",
                 icone=ft.Icons.ACCOUNT_BALANCE_ROUNDED,
                 cor=T.PRIMARY,
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
                 compacto=mobile,
                 on_click=lambda _: ir_contas(page),
             ),
@@ -364,6 +366,8 @@ def criar_view_dashboard(
                 subtitulo="Ver receitas do período",
                 icone=ft.Icons.ARROW_UPWARD_ROUNDED,
                 cor=T.RECEITA,
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
                 compacto=mobile,
                 on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Receita", origem="dashboard"),
             ),
@@ -373,6 +377,8 @@ def criar_view_dashboard(
                 subtitulo="Ver despesas do período",
                 icone=ft.Icons.ARROW_DOWNWARD_ROUNDED,
                 cor=T.DESPESA,
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
                 compacto=mobile,
                 on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Despesa", origem="dashboard"),
             ),
@@ -382,6 +388,8 @@ def criar_view_dashboard(
                 subtitulo="Ver cartões e faturas",
                 icone=ft.Icons.CREDIT_CARD_ROUNDED,
                 cor=T.WARNING,
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
                 compacto=mobile,
                 on_click=lambda _: ir_cartoes(page),
             ),

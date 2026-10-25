@@ -53,10 +53,11 @@ def criar_view_cartoes(
     cartoes_lista: list[dict] = []
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2, visible=False)
 
-    txt_total_limite     = ft.Text("R$ 0,00", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD)
-    txt_total_disponivel = ft.Text("R$ 0,00", color=T.PRIMARY,      size=18, weight=ft.FontWeight.BOLD)
-    txt_total_faturas    = ft.Text("R$ 0,00", color=T.WARNING,      size=18, weight=ft.FontWeight.BOLD)
-    txt_qtd_cartoes      = ft.Text("0 cartões", color=T.INFO,       size=18, weight=ft.FontWeight.BOLD)
+    tam_kpi = 15 if mobile else 18
+    txt_total_limite     = ft.Text("R$ 0,00", color=T.TEXT_PRIMARY, size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_total_disponivel = ft.Text("R$ 0,00", color=T.PRIMARY,      size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_total_faturas    = ft.Text("R$ 0,00", color=T.WARNING,      size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_qtd_cartoes      = ft.Text("0 cartões", color=T.INFO,       size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
 
     grid_cartoes = ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[])
 
@@ -477,43 +478,51 @@ def criar_view_cartoes(
             )
             grid_cartoes.controls.append(card)
 
-    # ── KPIs Topo Clicáveis ───────────────────────────────────────────────────
+    # ── KPIs Topo Clicáveis (2x2 no Mobile, 1x4 no Desktop) ───────────────────
     kpis_topo = ft.ResponsiveRow(
-        spacing=12, run_spacing=12,
+        spacing=8 if mobile else 12, run_spacing=8 if mobile else 12,
         controls=[
             kpi_clicavel(
                 titulo="Limite Total",
                 valor_control=txt_total_limite,
-                subtitulo="Soma dos cartões ativos",
+                subtitulo="Soma dos cartões",
                 icone=ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED,
                 cor=T.TEXT_PRIMARY,
-                col={"xs": 12, "sm": 6, "md": 3},
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
+                compacto=mobile,
                 on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Despesa", forma="Crédito", origem="cartoes"),
             ),
             kpi_clicavel(
                 titulo="Limite Disponível",
                 valor_control=txt_total_disponivel,
-                subtitulo="Folga consolidada para compras",
+                subtitulo="Folga para compras",
                 icone=ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
                 cor=T.PRIMARY,
-                col={"xs": 12, "sm": 6, "md": 3},
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
+                compacto=mobile,
             ),
             kpi_clicavel(
                 titulo="Faturas Abertas",
                 valor_control=txt_total_faturas,
-                subtitulo="Ver todas as compras no crédito",
+                subtitulo="Total no crédito",
                 icone=ft.Icons.CREDIT_CARD_ROUNDED,
                 cor=T.WARNING,
-                col={"xs": 12, "sm": 6, "md": 3},
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
+                compacto=mobile,
                 on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Despesa", forma="Crédito", origem="cartoes"),
             ),
             kpi_clicavel(
                 titulo="Cartões Ativos",
                 valor_control=txt_qtd_cartoes,
-                subtitulo="Toque em um cartão para abrir a fatura",
+                subtitulo="Cadastrados no app",
                 icone=ft.Icons.PAYMENTS_OUTLINED,
                 cor=T.INFO,
-                col={"xs": 12, "sm": 6, "md": 3},
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
+                compacto=mobile,
             ),
         ],
     )

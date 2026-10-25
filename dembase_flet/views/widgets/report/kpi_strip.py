@@ -1,8 +1,9 @@
 """
 =============================================================================
 DemBase v3 — views/widgets/report/kpi_strip.py  (Flet 1.0.1)
-Faixa responsiva de KPIs clicáveis para o topo dos relatórios (2x2 no Mobile,
-1x4 no Desktop).
+Faixa responsiva de KPIs clicáveis para o topo dos relatórios:
+- Telas pequenas/Mobile: grade 2x2 compacta (xs=6, sm=6).
+- Telas grandes/Desktop: grade normal 1x4 (md=3).
 =============================================================================
 """
 from __future__ import annotations
@@ -54,8 +55,10 @@ def criar_kpi_strip(
             v_ctrl = ft.Text(
                 v_val,
                 color=v_cor,
-                size=17 if mobile else 20,
+                size=15 if mobile else 18,
                 weight=ft.FontWeight.BOLD,
+                max_lines=1,
+                overflow=ft.TextOverflow.ELLIPSIS,
             )
 
         cards.append(
@@ -70,11 +73,12 @@ def criar_kpi_strip(
                 col=item.get("col", {"xs": 6, "sm": 6, "md": 3}),
                 ativo=bool(item.get("ativo", False)),
                 tooltip=item.get("tooltip"),
+                compacto=mobile,
             )
         )
 
     return ft.ResponsiveRow(
-        spacing=10 if mobile else 14,
-        run_spacing=10 if mobile else 14,
+        spacing=8 if mobile else 12,
+        run_spacing=8 if mobile else 12,
         controls=cards,
     )

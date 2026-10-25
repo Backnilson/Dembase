@@ -46,10 +46,11 @@ def criar_view_hub_relatorios(
 
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2.2, visible=False)
 
-    txt_rec_mes       = ft.Text("R$ 0,00", color=T.RECEITA, size=18 if mobile else 20, weight=ft.FontWeight.BOLD)
-    txt_desp_mes      = ft.Text("R$ 0,00", color=T.DESPESA, size=18 if mobile else 20, weight=ft.FontWeight.BOLD)
-    txt_saldo_mes     = ft.Text("R$ 0,00", color=T.SALDO,   size=18 if mobile else 20, weight=ft.FontWeight.BOLD)
-    txt_taxa_poupanca = ft.Text("0.0%",   color=T.PRIMARY, size=18 if mobile else 20, weight=ft.FontWeight.BOLD)
+    tam_kpi = 15 if mobile else 18
+    txt_rec_mes       = ft.Text("R$ 0,00", color=T.RECEITA, size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_desp_mes      = ft.Text("R$ 0,00", color=T.DESPESA, size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_saldo_mes     = ft.Text("R$ 0,00", color=T.SALDO,   size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_taxa_poupanca = ft.Text("0.0%",   color=T.PRIMARY, size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
     txt_sub_periodo   = ft.Text(
         f"Período analisado: {formatar_data_br(data_ini_sel[0])} a {formatar_data_br(data_fim_sel[0])}",
         color=T.TEXT_MUTED,
@@ -436,43 +437,52 @@ def criar_view_hub_relatorios(
                 ft.Text("Sem histórico de 6 meses no momento.", color=T.TEXT_MUTED, size=12.5)
             )
 
-    # ── KPIs Topo Clicáveis ───────────────────────────────────────────────────
+    # ── KPIs Topo Clicáveis (2x2 no Mobile, 1x4 no Desktop) ───────────────────
     kpis_topo = ft.ResponsiveRow(
-        spacing=12, run_spacing=12,
+        spacing=8 if mobile else 12,
+        run_spacing=8 if mobile else 12,
         controls=[
             kpi_clicavel(
                 titulo="Receitas no Período",
                 valor_control=txt_rec_mes,
-                subtitulo="Abrir extrato de receitas",
+                subtitulo="Extrato de receitas",
                 icone=ft.Icons.ARROW_UPWARD_ROUNDED,
                 cor=T.RECEITA,
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
                 compacto=mobile,
                 on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Receita", origem="relatorios"),
             ),
             kpi_clicavel(
                 titulo="Despesas no Período",
                 valor_control=txt_desp_mes,
-                subtitulo="Abrir extrato de despesas",
+                subtitulo="Extrato de despesas",
                 icone=ft.Icons.ARROW_DOWNWARD_ROUNDED,
                 cor=T.DESPESA,
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
                 compacto=mobile,
                 on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Despesa", origem="relatorios"),
             ),
             kpi_clicavel(
                 titulo="Resultado Líquido",
                 valor_control=txt_saldo_mes,
-                subtitulo="Abrir extrato completo",
+                subtitulo="Extrato completo",
                 icone=ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED,
                 cor=T.SALDO,
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
                 compacto=mobile,
                 on_click=lambda _: ir_relatorio_lancamentos(page, origem="relatorios"),
             ),
             kpi_clicavel(
                 titulo="Taxa de Poupança",
                 valor_control=txt_taxa_poupanca,
-                subtitulo="Analisar pilar de Investimentos",
+                subtitulo="Pilar Investimento",
                 icone=ft.Icons.SAVINGS_ROUNDED,
                 cor=T.PRIMARY,
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
                 compacto=mobile,
                 on_click=lambda _: ir_relatorio_regra(page, "Investimento"),
             ),
