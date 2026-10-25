@@ -14,6 +14,7 @@ from core.constants import formatar_moeda
 from core.periodo import obter_estado_periodo_atual
 from core.nav import ir_cartao, ir_relatorio_lancamentos
 from core.report_context import ReportContext
+from core.responsive import is_mobile
 from views.shell_view import criar_shell, ROTA_CARTOES
 from views.widgets.clickable_card import kpi_clicavel
 import services.supabase_client as db
@@ -44,6 +45,7 @@ def criar_view_cartoes(
     match: dict | None = None,
     ctx: ReportContext | None = None,
 ) -> ft.View:
+    mobile = is_mobile(page)
     est_p = obter_estado_periodo_atual(page)
     mes_sel = [est_p["mes"]]
     ano_sel = [est_p["ano"]]
@@ -246,18 +248,31 @@ def criar_view_cartoes(
         def fechar_modal(_):
             fechar_dialogo(page, modal)
 
+        grid_campos = ft.ResponsiveRow(
+            spacing=10,
+            run_spacing=10,
+            controls=[
+                ft.Container(content=txt_nome, col={"xs": 12}),
+                ft.Container(content=dd_bandeira, col={"xs": 12, "sm": 6}),
+                ft.Container(content=txt_limite, col={"xs": 12, "sm": 6}),
+                ft.Container(content=txt_fechamento, col={"xs": 6, "sm": 6}),
+                ft.Container(content=txt_vencimento, col={"xs": 6, "sm": 6}),
+                ft.Container(content=dd_conta_debito, col={"xs": 12}),
+            ],
+        )
+
+        largura_modal = min(450, int(page.width - 32)) if (getattr(page, "width", None) and page.width < 500) else (None if mobile else 450)
+
         modal = ft.AlertDialog(
             title=ft.Text(titulo_modal, color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
             content=ft.Container(
-                width=450,
+                width=largura_modal,
                 content=ft.Column(
                     spacing=12,
                     tight=True,
+                    scroll=ft.ScrollMode.AUTO,
                     controls=[
-                        txt_nome,
-                        ft.Row([ft.Container(content=dd_bandeira, expand=True), ft.Container(content=txt_limite, expand=True)], spacing=10),
-                        ft.Row([ft.Container(content=txt_fechamento, expand=True), ft.Container(content=txt_vencimento, expand=True)], spacing=10),
-                        dd_conta_debito,
+                        grid_campos,
                         ft.Text("Cor do Cartão", color=T.TEXT_MUTED, size=12, weight=ft.FontWeight.W_500),
                         row_cores,
                     ],
@@ -265,7 +280,11 @@ def criar_view_cartoes(
             ),
             actions=[
                 ft.TextButton(content=ft.Text("Cancelar", color=T.TEXT_MUTED), on_click=fechar_modal),
-                ft.FilledButton(content=ft.Text("Salvar Cartão", color=ft.Colors.WHITE, weight=ft.FontWeight.W_600), style=ft.ButtonStyle(bgcolor=T.PRIMARY), on_click=salvar_cartao),
+                ft.FilledButton(
+                    content=ft.Text("Salvar Cartão", color=ft.Colors.WHITE, weight=ft.FontWeight.W_600),
+                    style=ft.ButtonStyle(bgcolor=T.PRIMARY),
+                    on_click=salvar_cartao,
+                ),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
@@ -468,6 +487,7 @@ def criar_view_cartoes(
                 subtitulo="Soma dos cartões ativos",
                 icone=ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED,
                 cor=T.TEXT_PRIMARY,
+                col={"xs": 12, "sm": 6, "md": 3},
                 on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Despesa", forma="Crédito", origem="cartoes"),
             ),
             kpi_clicavel(
@@ -476,6 +496,7 @@ def criar_view_cartoes(
                 subtitulo="Folga consolidada para compras",
                 icone=ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED,
                 cor=T.PRIMARY,
+                col={"xs": 12, "sm": 6, "md": 3},
             ),
             kpi_clicavel(
                 titulo="Faturas Abertas",
@@ -483,6 +504,7 @@ def criar_view_cartoes(
                 subtitulo="Ver todas as compras no crédito",
                 icone=ft.Icons.CREDIT_CARD_ROUNDED,
                 cor=T.WARNING,
+                col={"xs": 12, "sm": 6, "md": 3},
                 on_click=lambda _: ir_relatorio_lancamentos(page, tipo="Despesa", forma="Crédito", origem="cartoes"),
             ),
             kpi_clicavel(
@@ -491,39 +513,71 @@ def criar_view_cartoes(
                 subtitulo="Toque em um cartão para abrir a fatura",
                 icone=ft.Icons.PAYMENTS_OUTLINED,
                 cor=T.INFO,
+                col={"xs": 12, "sm": 6, "md": 3},
             ),
         ],
     )
 
-    # ── Cabeçalho ─────────────────────────────────────────────────────────────
-    cabecalho = ft.Row(
-        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+    # ── Cabeçalho Responsivo (Mobile & Desktop) ──────────────────────────────
+    btn_novo_cartao = ft.FilledButton(
+        content=ft.Row(
+            spacing=6,
+            tight=not mobile,
+            alignment=ft.MainAxisAlignment.CENTER if mobile else ft.MainAxisAlignment.START,
+            controls=[
+                ft.Icon(ft.Icons.ADD_ROUNDED, color=ft.Colors.WHITE, size=18),
+                ft.Text("Novo Cartão", color=ft.Colors.WHITE, size=13.5, weight=ft.FontWeight.W_600),
+            ],
+        ),
+        on_click=lambda _: abrir_modal_cartao(),
+        style=ft.ButtonStyle(
+            bgcolor=T.PRIMARY,
+            overlay_color=T.PRIMARY_DARK,
+            shape=ft.RoundedRectangleBorder(radius=10),
+            padding=pad(h=16, v=12),
+        ),
+        expand=mobile or None,
+    )
+
+    cabecalho = ft.ResponsiveRow(
+        spacing=8,
+        run_spacing=12,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
         controls=[
-            ft.Column(
-                spacing=2,
-                controls=[
-                    ft.Row(spacing=8, controls=[
-                        ft.Text("Cartões de Crédito", color=T.TEXT_PRIMARY, size=22, weight=ft.FontWeight.BOLD),
-                        spinner,
-                    ]),
-                    ft.Text("Toque em qualquer cartão para inspecionar sua fatura e compras por categoria", color=T.TEXT_MUTED, size=12),
-                ],
-            ),
-            ft.FilledButton(
-                content=ft.Row(
-                    spacing=6, tight=True,
+            ft.Container(
+                col={"xs": 12, "sm": 7, "md": 8},
+                content=ft.Column(
+                    spacing=2,
                     controls=[
-                        ft.Icon(ft.Icons.ADD_ROUNDED, color=ft.Colors.WHITE, size=18),
-                        ft.Text("Novo Cartão", color=ft.Colors.WHITE, size=13, weight=ft.FontWeight.W_600),
+                        ft.Row(
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[
+                                ft.Text(
+                                    "Cartões de Crédito",
+                                    color=T.TEXT_PRIMARY,
+                                    size=20 if mobile else 22,
+                                    weight=ft.FontWeight.BOLD,
+                                ),
+                                spinner,
+                            ],
+                        ),
+                        ft.Text(
+                            "Toque em qualquer cartão para inspecionar sua fatura e compras por categoria",
+                            color=T.TEXT_MUTED,
+                            size=12,
+                            max_lines=2,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
                     ],
                 ),
-                on_click=lambda _: abrir_modal_cartao(),
-                style=ft.ButtonStyle(
-                    bgcolor=T.PRIMARY,
-                    overlay_color=T.PRIMARY_DARK,
-                    shape=ft.RoundedRectangleBorder(radius=10),
-                    padding=pad(h=16, v=12),
+            ),
+            ft.Container(
+                col={"xs": 12, "sm": 5, "md": 4},
+                alignment=ft.Alignment(-1, 0) if mobile else ft.Alignment(1, 0),
+                content=ft.Row(
+                    alignment=ft.MainAxisAlignment.START if mobile else ft.MainAxisAlignment.END,
+                    controls=[btn_novo_cartao],
                 ),
             ),
         ],
