@@ -16,6 +16,7 @@ from typing import Callable, Optional
 import flet as ft
 
 from core.lancamento_state import LancamentoFormState
+from core.potes import obter_regra_pote
 from core.responsive import is_mobile
 import core.theme as T
 from core.theme import pad, mostrar_feedback
@@ -39,12 +40,15 @@ def abrir_lancamento(
     Abre o modal/bottom sheet de criação ou edição de lançamento financeiro.
     Usa a pilha nativa de diálogos do Flet 1.0.1 (page.show_dialog / page.pop_dialog).
     """
-    is_edicao = (lancamento is not None and bool(lancamento.get("id")))
+    raw_id = None
+    if lancamento is not None and isinstance(lancamento, dict):
+        raw_id = lancamento.get("id") or lancamento.get("lancamento_id") or lancamento.get("id_lancamento")
+    is_edicao = bool(raw_id)
 
     # 1. Montagem do Estado
     state = LancamentoFormState()
     if is_edicao:
-        state.lancamento_id = str(lancamento["id"])
+        state.lancamento_id = str(raw_id)
         state.serie_id = str(lancamento.get("serie_id")) if lancamento.get("serie_id") else None
         state.recorrente_id = str(lancamento.get("recorrente_id")) if lancamento.get("recorrente_id") else None
         state.mudar_tipo(lancamento.get("tipo", "Despesa"))
@@ -57,8 +61,10 @@ def abrir_lancamento(
         state.categoria_id = str(lancamento.get("categoria_id")) if lancamento.get("categoria_id") else None
         state.subcategoria_id = str(lancamento.get("subcategoria_id")) if lancamento.get("subcategoria_id") else None
         state.destino_id = str(lancamento.get("destino_id")) if lancamento.get("destino_id") else None
-        state.regra = lancamento.get("regra", "Essencial")
-        state.pote_id = str(lancamento.get("pote_id")) if lancamento.get("pote_id") else None
+        regra_salva = lancamento.get("regra")
+        pote_salvo = lancamento.get("pote_id")
+        state.pote_id = str(pote_salvo) if pote_salvo else None
+        state.regra = obter_regra_pote(regra_salva or pote_salvo)
         state.fatura_id = str(lancamento.get("fatura_id")) if lancamento.get("fatura_id") else None
         state.hora = int(lancamento.get("hora", 12)) if lancamento.get("hora") is not None else 12
         state.status_pago = (lancamento.get("status") == "Pago")
@@ -91,10 +97,11 @@ def abrir_lancamento(
         if categoria_inicial:
             state.categoria_id = str(categoria_inicial)
         if regra_inicial and state.eh_despesa:
-            state.regra = regra_inicial
+            state.regra = obter_regra_pote(regra_inicial)
             state.mais_detalhes_aberto = True
         if pote_inicial and state.eh_despesa:
             state.pote_id = str(pote_inicial)
+            state.regra = obter_regra_pote(pote_inicial)
 
     # 2. Instanciação do formulário
     form = LancamentoForm(page, state)
@@ -187,7 +194,12 @@ def abrir_lancamento(
         on_click=fechar_dialog,
     )
 
+    salvando_lock = [False]
+
     def executar_salvamento(modo_serie: str = "individual"):
+        if salvando_lock[0]:
+            return
+        salvando_lock[0] = True
         btn_salvar.disabled = True
         btn_salvar.content = ft.Row(
             controls=[
@@ -252,19 +264,27 @@ def abrir_lancamento(
                 "categoria_id": cat_id_final,
                 "subcategoria_id": subcat_id_final,
                 "destino_id": destino_id_final,
-                "regra": state.regra if state.eh_despesa else None,
-                "pote_id": state.pote_id if state.eh_despesa else None,
+                "regra": obter_regra_pote(state.regra or state.pote_id) if state.eh_despesa else None,
+                "pote_id": str(state.pote_id) if (state.eh_despesa and state.pote_id) else None,
+                "caixinha_id": form._obter_caixinha_id(state.caixinha_id) if state.eh_despesa else None,
             }
 
             if is_edicao:
+                if not state.lancamento_id:
+                    raise ValueError("ID da transação não encontrado para atualização.")
+
+                # Realiza OBRIGATORIAMENTE o UPDATE na linha existente (jamais INSERT duplicado)
+                db.atualizar_lancamento(state.lancamento_id, dados)
+
                 if modo_serie == "proximos" and (state.serie_id or state.recorrente_id):
-                    db.atualizar_serie(
-                        state.serie_id or state.recorrente_id,
-                        dados,
-                        a_partir_de=str(state.data_selecionada),
-                    )
-                else:
-                    db.atualizar_lancamento(state.lancamento_id, dados)
+                    try:
+                        db.atualizar_serie(
+                            state.serie_id or state.recorrente_id,
+                            dados,
+                            a_partir_de=str(state.data_selecionada),
+                        )
+                    except Exception as ex_serie:
+                        print(f"[LancamentoSheet] Aviso ao atualizar série: {ex_serie}")
 
                 if state.eh_receita:
                     try:
@@ -296,6 +316,13 @@ def abrir_lancamento(
                     except Exception:
                         pass
 
+                if state.caixinha_id:
+                    try:
+                        db.recalcular_saldo_caixinha(state.caixinha_id)
+                        db.invalidar_cache("caixinhas")
+                    except Exception as ex_cx:
+                        print(f"[LancamentoSheet] Aviso ao atualizar saldo da caixinha: {ex_cx}")
+
                 mostrar_feedback(page, "Lançamento salvo com sucesso!", "sucesso")
 
             fechar_dialog()
@@ -314,6 +341,8 @@ def abrir_lancamento(
             except Exception:
                 pass
             mostrar_feedback(page, f"Erro ao salvar: {ex}", "erro")
+        finally:
+            salvando_lock[0] = False
 
     def ao_clicar_salvar(_):
         # Garante que os IDs no state estejam normalizados antes de validar
@@ -327,14 +356,18 @@ def abrir_lancamento(
         else:
             state.categoria_id = form._obter_cat_id(state.categoria_id or form.dd_categoria.value)
             state.subcategoria_id = form._obter_subcat_id(state.subcategoria_id or form.dd_subcategoria.value)
+            state.caixinha_id = form._obter_caixinha_id(state.caixinha_id or form.dd_caixinha.value) if state.eh_despesa else None
 
         valido, erro_msg = state.validar()
         if not valido:
             mostrar_feedback(page, erro_msg or "Verifique os campos obrigatórios.", "alerta")
             return
 
-        # Se for edição de lançamento que pertence a uma série/recorrência, perguntar o escopo
-        if is_edicao and (state.serie_id or state.recorrente_id):
+        total_parc = int(lancamento.get("total_parcelas", 1) or 1) if (lancamento and isinstance(lancamento, dict)) else 1
+        tem_serie_real = bool(state.recorrente_id) or (bool(state.serie_id) and (total_parc > 1 or state.is_fixa))
+
+        # Se for edição de lançamento que pertence a uma série real (parcelado ou recorrente), perguntar o escopo
+        if is_edicao and tem_serie_real:
             modal_serie = None
 
             def fechar_modal_serie():

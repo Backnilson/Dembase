@@ -16,6 +16,7 @@ from typing import Callable, Optional
 import flet as ft
 
 from core.constants import (
+    formatar_moeda,
     REGRAS_5030,
     FORMAS_RECEITA,
     FORMAS_DESPESA,
@@ -26,6 +27,7 @@ from core.constants import (
 )
 from core.lancamento_state import LancamentoFormState
 from core.recorrencia import resumo_parcelas
+from core.potes import obter_regra_pote
 import core.theme as T
 from core.theme import pad, borda, mostrar_feedback
 from views.widgets.custom_date_picker import (
@@ -102,6 +104,7 @@ class LancamentoForm(ft.Column):
         self.cartoes: list[dict] = []
         self.categorias: list[dict] = []
         self.subcategorias: list[dict] = []
+        self.caixinhas: list[dict] = []
 
         # 1. Constrói os controles filhos antes do super().__init__ (padrão dataclass Flet 1.0.1)
         controles_iniciais = self._construir_controles()
@@ -184,6 +187,17 @@ class LancamentoForm(ft.Column):
         if _is_uuid(val_str):
             return val_str
         for c in self.cartoes:
+            if str(c.get("id")) == val_str or str(c.get("nome", "")).strip().lower() == val_str.lower():
+                return str(c["id"])
+        return None
+
+    def _obter_caixinha_id(self, val: Optional[str]) -> Optional[str]:
+        if not val:
+            return None
+        val_str = str(val).strip()
+        if _is_uuid(val_str):
+            return val_str
+        for c in self.caixinhas:
             if str(c.get("id")) == val_str or str(c.get("nome", "")).strip().lower() == val_str.lower():
                 return str(c["id"])
         return None
@@ -495,6 +509,30 @@ class LancamentoForm(ft.Column):
             visible=(not self.state.eh_transferencia),
         )
 
+        # 11. Caixinhas de Teto (Vincular despesa à caixinha)
+        self.dd_caixinha = ft.Dropdown(
+            label="Vincular a uma Caixinha? (Opcional)",
+            value=self.state.caixinha_id,
+            options=[ft.dropdown.Option(key="", text="Nenhuma (Não vincular)")],
+            expand=True,
+            on_select=self._ao_mudar_caixinha,
+            **T.dropdown_estilo(),
+        )
+        self.row_caixinha = ft.Row(
+            controls=[
+                ft.Container(
+                    content=ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=T.PRIMARY, size=18),
+                    padding=pad(all_=8),
+                    bgcolor=f"{T.PRIMARY}18",
+                    border_radius=8,
+                ),
+                self.dd_caixinha,
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
+            visible=self.state.eh_despesa,
+        )
+
         # =====================================================================
         # SEÇÃO PROGRESSIVE DISCLOSURE: "Mais detalhes" (Decisão 4)
         # =====================================================================
@@ -539,11 +577,11 @@ class LancamentoForm(ft.Column):
 
         # Potes Financeiros (Obrigatório em Despesa)
         try:
-            potes_usuario = potes_svc.carregar_potes()
+            self._potes_cache = potes_svc.carregar_potes() or []
         except Exception:
-            potes_usuario = []
+            self._potes_cache = []
 
-        if potes_usuario:
+        if self._potes_cache:
             def _p_id(p):
                 val = getattr(p, "id", None)
                 if val is None and isinstance(p, dict): val = p.get("id")
@@ -560,13 +598,15 @@ class LancamentoForm(ft.Column):
                 try: return float(val) if val is not None else 0.0
                 except Exception: return 0.0
 
-            opcoes_regra = [ft.dropdown.Option(key=_p_id(p), text=f"{_p_nome(p)} ({_p_perc(p):g}%)") for p in potes_usuario]
-            val_pote = str(self.state.pote_id) if self.state.pote_id else (_p_id(potes_usuario[0]) if potes_usuario else None)
-            if not self.state.pote_id and potes_usuario:
-                self.state.pote_id = _p_id(potes_usuario[0])
+            opcoes_regra = [ft.dropdown.Option(key=_p_id(p), text=f"{_p_nome(p)} ({_p_perc(p):g}%)") for p in self._potes_cache]
+            val_pote = str(self.state.pote_id) if self.state.pote_id else (_p_id(self._potes_cache[0]) if self._potes_cache else None)
+            if not self.state.pote_id and self._potes_cache:
+                self.state.pote_id = _p_id(self._potes_cache[0])
+            self.state.regra = obter_regra_pote(self.state.pote_id or self.state.regra, self._potes_cache)
         else:
             opcoes_regra = [ft.dropdown.Option(key=r, text=r) for r in REGRAS_5030]
             val_pote = self.state.regra or "Essencial"
+            self.state.regra = obter_regra_pote(self.state.regra)
 
         self.dd_regra = ft.Dropdown(
             label="Pote Financeiro *",
@@ -718,6 +758,7 @@ class LancamentoForm(ft.Column):
             self.row_fatura,
             self.row_parcelas,
             self.row_categoria,
+            self.row_caixinha,
             ft.Divider(height=1, color=T.BORDER),
             ft.Row([self.btn_toggle_detalhes], alignment=ft.MainAxisAlignment.CENTER),
             self.col_detalhes,
@@ -739,6 +780,7 @@ class LancamentoForm(ft.Column):
         self._atualizar_opcoes_fatura(atualizar_ui=False)
         self._atualizar_opcoes_categoria(atualizar_ui=False)
         self._atualizar_opcoes_subtipo(atualizar_ui=False)
+        self._atualizar_opcoes_caixinhas(atualizar_ui=False)
 
         if self.state.categoria_id:
             self._carregar_subcategorias(self.state.categoria_id, atualizar_ui=False)
@@ -853,6 +895,7 @@ class LancamentoForm(ft.Column):
 
         self.row_destino.visible = is_transf
         self.row_categoria.visible = not is_transf
+        self.row_caixinha.visible = self.state.eh_despesa
         self.row_subcategoria.visible = not is_transf
         self.row_fatura.visible = is_credito
         self.row_parcelas.visible = is_credito
@@ -985,9 +1028,36 @@ class LancamentoForm(ft.Column):
                 ft.dropdown.Option(key=str(opt["id"]), text=opt["label"])
             )
 
+        # Preserva fatura existente caso ela já esteja no banco mas fora do range padrão
+        if self.state.fatura_id and self.state.fatura_id not in self._faturas_opcoes_cache:
+            try:
+                fat_d = db.obter_fatura_por_id(self.state.fatura_id)
+                if fat_d:
+                    m = int(fat_d.get("mes") or 1)
+                    a = int(fat_d.get("ano") or 2026)
+                    st = (fat_d.get("status") or "Aberta").capitalize()
+                    from core.constants import MESES_PT
+                    m_label = MESES_PT[m] if 1 <= m <= 12 else str(m)
+                    lbl = f"{m_label}/{a} · {st}"
+                    dropdown_opts.append(ft.dropdown.Option(key=self.state.fatura_id, text=lbl))
+                    self._faturas_opcoes_cache[self.state.fatura_id] = {
+                        "id": self.state.fatura_id,
+                        "fatura_id_real": self.state.fatura_id,
+                        "mes": m,
+                        "ano": a,
+                        "label": lbl,
+                    }
+                    self.state.fatura_manual_mes = m
+                    self.state.fatura_manual_ano = a
+            except Exception:
+                pass
+
         self.dd_fatura.options = dropdown_opts
         if self.state.fatura_id and self.state.fatura_id in self._faturas_opcoes_cache:
             self.dd_fatura.value = self.state.fatura_id
+            opt = self._faturas_opcoes_cache[self.state.fatura_id]
+            self.state.fatura_manual_mes = opt.get("mes")
+            self.state.fatura_manual_ano = opt.get("ano")
         else:
             self.dd_fatura.value = ""
             self.state.fatura_id = None
@@ -996,6 +1066,49 @@ class LancamentoForm(ft.Column):
 
         if atualizar_ui:
             self._safe_update(self.row_fatura)
+
+    def _atualizar_opcoes_caixinhas(self, atualizar_ui: bool = True):
+        try:
+            self.caixinhas = db.listar_caixinhas_opcoes()
+        except Exception:
+            self.caixinhas = []
+
+        opcoes = [ft.dropdown.Option(key="", text="Nenhuma (Não vincular)")]
+        for c in self.caixinhas:
+            saldo_str = formatar_moeda(c.get('saldo_atual', 0))
+            opcoes.append(
+                ft.dropdown.Option(
+                    key=str(c["id"]),
+                    text=f"{c.get('nome', 'Caixinha')} · Saldo: {saldo_str}"
+                )
+            )
+        self.dd_caixinha.options = opcoes
+        self.dd_caixinha.value = self.state.caixinha_id or ""
+        if atualizar_ui:
+            self._safe_update(self.dd_caixinha)
+
+    def _ao_mudar_caixinha(self, e):
+        val = e.data or e.control.value
+        self.state.caixinha_id = self._obter_caixinha_id(val)
+        if self.state.caixinha_id:
+            for c in self.caixinhas:
+                if str(c.get("id")) == str(self.state.caixinha_id):
+                    if c.get("pote_id") and not self.state.pote_id:
+                        self.state.pote_id = str(c["pote_id"])
+                        self.state.regra = obter_regra_pote(self.state.pote_id, getattr(self, "_potes_cache", None))
+                        self.dd_regra.value = self.state.pote_id
+                        self._safe_update(self.dd_regra)
+                    if c.get("categoria_id") and not self.state.categoria_id:
+                        self.state.categoria_id = str(c["categoria_id"])
+                        self.dd_categoria.value = self.state.categoria_id
+                        self._safe_update(self.dd_categoria)
+                        self._carregar_subcategorias(self.state.categoria_id, atualizar_ui=True)
+                    if c.get("subcategoria_id") and not self.state.subcategoria_id:
+                        self.state.subcategoria_id = str(c["subcategoria_id"])
+                        self.dd_subcategoria.value = self.state.subcategoria_id
+                        self._safe_update(self.dd_subcategoria)
+                    break
+        self._notificar_mudanca()
 
     def _atualizar_opcoes_categoria(self, atualizar_ui: bool = True):
         self.dd_categoria.options = [
@@ -1274,8 +1387,13 @@ class LancamentoForm(ft.Column):
 
     def _ao_mudar_regra(self, e):
         val = e.data or e.control.value
-        self.state.pote_id = val
-        self.state.regra = val
+        potes = getattr(self, "_potes_cache", None)
+        if potes:
+            self.state.pote_id = str(val) if val else None
+            self.state.regra = obter_regra_pote(val, potes)
+        else:
+            self.state.pote_id = None
+            self.state.regra = obter_regra_pote(val)
         self._notificar_mudanca()
 
     def _ao_mudar_hora(self, e):

@@ -31,6 +31,87 @@ POTES_PADRAO = [
     {"posicao": 6, "nome": "Liberdade Financeira", "percentual": Decimal("25"), "cor": "#6C5CE7"},
 ]
 
+REGRAS_VALIDAS = {"Essencial", "Estilo de Vida", "Investimento"}
+
+REGRA_POR_POSICAO = {
+    1: "Essencial",       # Custos Fixos
+    2: "Essencial",       # Conforto / Custos Semi Fixos
+    3: "Investimento",    # Metas
+    4: "Estilo de Vida",  # Prazeres
+    5: "Investimento",    # Conhecimento
+    6: "Investimento",    # Liberdade Financeira
+}
+
+REGRA_POR_ID = {
+    "2df4dd2f-4353-42cc-a5c9-8983085a5301": "Essencial",       # Custos Fixos
+    "da6e1d2b-c611-481d-b48d-065cc5d584b4": "Essencial",       # Custos Semi Fixos
+    "986da9e8-3042-4562-b1df-c1f5cf0138b9": "Investimento",    # Metas
+    "c82b0736-fb01-419f-8155-923ebfec82b2": "Estilo de Vida",  # Prazeres
+    "1f1f7449-d985-4c2a-b807-0570a5526614": "Investimento",    # Conhecimento
+    "34a47be1-9879-46bd-96b1-4082703bf388": "Investimento",    # Liberdade Financeira
+}
+
+
+def _regra_por_nome(nome: str) -> str:
+    n = (nome or "").lower().strip()
+    if any(k in n for k in ("fix", "confort", "semi", "essenc", "morad", "aliment", "saud", "transp")):
+        return "Essencial"
+    if any(k in n for k in ("prazer", "estilo", "lazer", "vida", "desejo", "restaur", "divers")):
+        return "Estilo de Vida"
+    if any(k in n for k in ("meta", "conhec", "liberdad", "invest", "poupanc", "futuro", "reserva", "educac")):
+        return "Investimento"
+    return "Essencial"
+
+
+def obter_regra_pote(pote_ref: str | int | None, potes: list | None = None) -> str:
+    """
+    Retorna o valor válido do enum regra_financeira ('Essencial', 'Estilo de Vida', 'Investimento')
+    a partir de um pote_id (UUID), posição (1-6), nome do pote ou da própria regra já existente.
+    Garante que NUNCA um UUID ou string inválida seja gravado na coluna `regra`.
+    """
+    if not pote_ref:
+        return "Essencial"
+
+    texto = str(pote_ref).strip()
+    if texto in REGRAS_VALIDAS:
+        return texto
+
+    # Se já é um ID canônico padrão
+    if texto.lower() in REGRA_POR_ID:
+        return REGRA_POR_ID[texto.lower()]
+
+    # Se uma lista de potes foi informada (ou cache), busca correspondência por id, posição ou nome
+    if potes:
+        for p in potes:
+            pid = str(getattr(p, "id", None) or (p.get("id") if isinstance(p, dict) else "") or "")
+            pos = getattr(p, "posicao", None) or (p.get("posicao") if isinstance(p, dict) else None)
+            pnome = str(getattr(p, "nome", None) or (p.get("nome") if isinstance(p, dict) else "") or "")
+            if pid and pid.lower() == texto.lower():
+                if pos is not None:
+                    try:
+                        pos_int = int(pos)
+                        if pos_int in REGRA_POR_POSICAO:
+                            return REGRA_POR_POSICAO[pos_int]
+                    except (ValueError, TypeError):
+                        pass
+                return _regra_por_nome(pnome)
+            if pnome and pnome.lower() == texto.lower():
+                if pos is not None:
+                    try:
+                        pos_int = int(pos)
+                        if pos_int in REGRA_POR_POSICAO:
+                            return REGRA_POR_POSICAO[pos_int]
+                    except (ValueError, TypeError):
+                        pass
+                return _regra_por_nome(pnome)
+            if pos is not None and str(pos) == texto:
+                try:
+                    return REGRA_POR_POSICAO.get(int(pos), "Essencial")
+                except (ValueError, TypeError):
+                    pass
+
+    return _regra_por_nome(texto)
+
 
 # =============================================================================
 # EXCEÇÕES / MODELOS

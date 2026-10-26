@@ -220,16 +220,18 @@ class TransactionList(ft.Column):
 
         def _executar_salvamento(pid: str | None, pnome: str, escopo: str = "individual"):
             try:
+                from core.potes import obter_regra_pote
+                regra_pote = obter_regra_pote(pid, potes) if pid else None
                 if escopo == "proximos" and tem_serie:
                     sid = str(item.get("serie_id") or item.get("recorrente_id"))
                     dt = str(item.get("data"))[:10] if item.get("data") else None
-                    db.atualizar_serie(sid, {"pote_id": pid}, a_partir_de=dt)
+                    db.atualizar_serie(sid, {"pote_id": pid, "regra": regra_pote}, a_partir_de=dt)
                     if pid:
                         mostrar_feedback(self._page, f"Pote '{pnome}' aplicado a este e aos próximos lançamentos!", "sucesso")
                     else:
                         mostrar_feedback(self._page, "Pote desvinculado deste e dos próximos lançamentos!", "info")
                 else:
-                    db.atualizar_lancamento(str(item["id"]), {"pote_id": pid})
+                    db.atualizar_lancamento(str(item["id"]), {"pote_id": pid, "regra": regra_pote})
                     if pid:
                         mostrar_feedback(self._page, f"Classificado no pote '{pnome}'!", "sucesso")
                     else:

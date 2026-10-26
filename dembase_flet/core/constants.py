@@ -163,7 +163,7 @@ def formatar_moeda_input(valor: object) -> str:
 def session_get(page, key: str, default=None):
     """Obtém um valor da sessão de forma segura no Flet 1.0.1."""
     try:
-        if hasattr(page, "session") and page.session:
+        if hasattr(page, "session") and page.session is not None:
             store = getattr(page.session, "store", None)
             if store:
                 val = store.get(key)
@@ -180,7 +180,7 @@ def session_get(page, key: str, default=None):
 def session_set(page, key: str, value):
     """Define um valor na sessão de forma segura no Flet 1.0.1."""
     try:
-        if hasattr(page, "session") and page.session:
+        if hasattr(page, "session") and page.session is not None:
             store = getattr(page.session, "store", None)
             if store:
                 store.set(key, value)
@@ -198,7 +198,7 @@ def session_set(page, key: str, value):
 def session_remove(page, key: str):
     """Remove uma chave da sessão de forma segura no Flet 1.0.1."""
     try:
-        if hasattr(page, "session") and page.session:
+        if hasattr(page, "session") and page.session is not None:
             store = getattr(page.session, "store", None)
             if store:
                 if store.contains_key(key):
@@ -224,7 +224,7 @@ def session_pop(page, key: str, default=None):
 def session_clear(page):
     """Limpa toda a sessão de forma segura no Flet 1.0.1."""
     try:
-        if hasattr(page, "session") and page.session:
+        if hasattr(page, "session") and page.session is not None:
             store = getattr(page.session, "store", None)
             if store:
                 store.clear()
