@@ -1656,68 +1656,205 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
 
         data_str = formatar_data_br(item.get("data", ""))
 
+        if not mobile:
+            return ft.Container(
+                padding=pad(h=16, v=12),
+                bgcolor=T.SURFACE,
+                border_radius=12,
+                border=borda(),
+                content=ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Row(
+                            spacing=12,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            expand=True,
+                            controls=[
+                                ft.Container(
+                                    content=ft.Icon(icone_tipo, color=cor_valor, size=18),
+                                    bgcolor=cor_badge_tipo,
+                                    border_radius=10,
+                                    padding=pad(all_=10),
+                                ),
+                                ft.Column(
+                                    spacing=4,
+                                    expand=True,
+                                    controls=[
+                                        ft.Row(
+                                            spacing=8,
+                                            controls=[
+                                                ft.Text(
+                                                    item.get("descricao") or categoria_nome,
+                                                    color=T.TEXT_PRIMARY,
+                                                    size=14,
+                                                    weight=ft.FontWeight.W_600,
+                                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                                ),
+                                                ft.Text(data_str, color=T.TEXT_MUTED, size=11),
+                                            ],
+                                        ),
+                                        ft.Row(spacing=6, wrap=True, controls=sub_badges),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        ft.Row(
+                            spacing=12,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[
+                                badge_status,
+                                ft.Text(
+                                    f"{sinal} {formatar_moeda(valor)}",
+                                    color=cor_valor,
+                                    size=15,
+                                    weight=ft.FontWeight.BOLD,
+                                ),
+                                ft.IconButton(
+                                    icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
+                                    icon_color=T.TEXT_MUTED,
+                                    icon_size=18,
+                                    tooltip="Excluir",
+                                    on_click=lambda _, it=item: confirmar_exclusao(it),
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            )
+
+        # =========================================================================
+        # LAYOUT DEDICADO MOBILE NO CALENDÁRIO: Compacto, 2 linhas, sem espaço vazio
+        # =========================================================================
+        nome_desc = (item.get("descricao") or "").strip()
+        tem_desc = bool(nome_desc and nome_desc.lower() != str(categoria_nome).lower())
+        nome_principal = nome_desc if tem_desc else categoria_nome
+        subtitulo = categoria_nome if tem_desc else ""
+
+        col_textos_cal_mob: list[ft.Control] = [
+            ft.Row(
+                spacing=6,
+                controls=[
+                    ft.Text(
+                        nome_principal,
+                        color=T.TEXT_PRIMARY,
+                        size=13.5,
+                        weight=ft.FontWeight.W_600,
+                        max_lines=1,
+                        overflow=ft.TextOverflow.ELLIPSIS,
+                    ),
+                    ft.Text(data_str, color=T.TEXT_MUTED, size=10.5),
+                ],
+            )
+        ]
+        if subtitulo:
+            col_textos_cal_mob.append(
+                ft.Text(
+                    subtitulo,
+                    color=T.TEXT_MUTED,
+                    size=11,
+                    weight=ft.FontWeight.W_500,
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                )
+            )
+
+        linha_topo_cal_mob = ft.Container(
+            on_click=lambda _, it=item: abrir_lancamento(page, lancamento=it, on_saved=carregar_dados),
+            ink=True,
+            tooltip="Clique para editar este lançamento",
+            content=ft.Row(
+                spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Container(
+                        content=ft.Icon(icone_tipo, color=cor_valor, size=16),
+                        bgcolor=cor_badge_tipo,
+                        border_radius=8,
+                        padding=pad(all_=8),
+                    ),
+                    ft.Column(
+                        spacing=1,
+                        expand=True,
+                        controls=col_textos_cal_mob,
+                    ),
+                    ft.Text(
+                        f"{sinal} {formatar_moeda(valor)}",
+                        color=cor_valor,
+                        size=14,
+                        weight=ft.FontWeight.BOLD,
+                    ),
+                ],
+            ),
+        )
+
+        badge_status_cal_mob = ft.Container(
+            content=ft.Row(
+                spacing=3,
+                tight=True,
+                controls=[
+                    ft.Icon(
+                        ft.Icons.CHECK_CIRCLE_ROUNDED if eh_pago else ft.Icons.SCHEDULE_ROUNDED,
+                        size=11,
+                        color=T.RECEITA if eh_pago else T.WARNING,
+                    ),
+                    ft.Text(
+                        status,
+                        size=10,
+                        color=T.RECEITA if eh_pago else T.WARNING,
+                        weight=ft.FontWeight.W_600,
+                    ),
+                ],
+            ),
+            bgcolor=f"{T.RECEITA}18" if eh_pago else f"{T.WARNING}18",
+            border_radius=8,
+            padding=pad(h=7, v=3),
+            border=borda(1, f"{T.RECEITA}30" if eh_pago else f"{T.WARNING}30"),
+            tooltip="Clique para alterar status",
+            on_click=lambda _, it=item: alternar_status_lancamento(it),
+            ink=True,
+        )
+
+        linha_rodape_cal_mob = ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Row(
+                    spacing=4,
+                    scroll=ft.ScrollMode.HIDDEN,
+                    expand=True,
+                    controls=sub_badges,
+                ),
+                ft.Row(
+                    spacing=4,
+                    tight=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        badge_status_cal_mob,
+                        ft.IconButton(
+                            icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
+                            icon_color=T.TEXT_MUTED,
+                            icon_size=17,
+                            tooltip="Excluir",
+                            on_click=lambda _, it=item: confirmar_exclusao(it),
+                            style=ft.ButtonStyle(padding=pad(all_=2)),
+                        ),
+                    ],
+                ),
+            ],
+        )
+
         return ft.Container(
-            padding=pad(h=16, v=12),
+            padding=pad(h=12, v=10),
             bgcolor=T.SURFACE,
             border_radius=12,
             border=borda(),
-            content=ft.Row(
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            content=ft.Column(
+                spacing=8,
+                tight=True,
                 controls=[
-                    ft.Row(
-                        spacing=12,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        expand=True,
-                        controls=[
-                            ft.Container(
-                                content=ft.Icon(icone_tipo, color=cor_valor, size=18),
-                                bgcolor=cor_badge_tipo,
-                                border_radius=10,
-                                padding=pad(all_=10),
-                            ),
-                            ft.Column(
-                                spacing=4,
-                                expand=True,
-                                controls=[
-                                    ft.Row(
-                                        spacing=8,
-                                        controls=[
-                                            ft.Text(
-                                                item.get("descricao") or categoria_nome,
-                                                color=T.TEXT_PRIMARY,
-                                                size=14,
-                                                weight=ft.FontWeight.W_600,
-                                                overflow=ft.TextOverflow.ELLIPSIS,
-                                            ),
-                                            ft.Text(data_str, color=T.TEXT_MUTED, size=11),
-                                        ],
-                                    ),
-                                    ft.Row(spacing=6, wrap=True, controls=sub_badges),
-                                ],
-                            ),
-                        ],
-                    ),
-                    ft.Row(
-                        spacing=12,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        controls=[
-                            badge_status,
-                            ft.Text(
-                                f"{sinal} {formatar_moeda(valor)}",
-                                color=cor_valor,
-                                size=15,
-                                weight=ft.FontWeight.BOLD,
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
-                                icon_color=T.TEXT_MUTED,
-                                icon_size=18,
-                                tooltip="Excluir",
-                                on_click=lambda _, it=item: confirmar_exclusao(it),
-                            ),
-                        ],
-                    ),
+                    linha_topo_cal_mob,
+                    linha_rodape_cal_mob,
                 ],
             ),
         )

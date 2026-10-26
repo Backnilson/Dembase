@@ -143,6 +143,7 @@ class TransactionList(ft.Column):
             self._dirty.clear()
 
     def renderizar(self, lancamentos: list[dict], total_registros: int | None = None):
+        self.mobile = is_mobile(self._page)
         total = total_registros if total_registros is not None else len(lancamentos)
         self.lbl_contador.value = f"Exibindo {len(lancamentos)} de {total} registro(s)"
         self.col_itens.controls.clear()
@@ -672,8 +673,123 @@ class TransactionList(ft.Column):
             ),
         )
 
-        area_clicavel_edicao = ft.Container(
-            expand=True,
+        is_mob = getattr(self, "mobile", False) or is_mobile(self._page)
+
+        if not is_mob:
+            # === DESKTOP LAYOUT (100% INTACTO) ===
+            area_clicavel_edicao = ft.Container(
+                expand=True,
+                on_click=lambda _, it=item: abrir_lancamento(
+                    self._page,
+                    lancamento=it,
+                    on_saved=self.on_refresh,
+                ),
+                ink=True,
+                tooltip="Clique para editar este lançamento",
+                content=ft.Row(
+                    spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Container(
+                            content=ft.Icon(icone_tipo, color=cor_valor, size=18),
+                            bgcolor=f"{cor_valor}1A",
+                            border_radius=10,
+                            padding=pad(all_=9),
+                        ),
+                        ft.Column(
+                            spacing=4,
+                            expand=True,
+                            controls=[
+                                ft.Text(
+                                    item.get("descricao") or cat_nome,
+                                    color=T.TEXT_PRIMARY,
+                                    size=13.5,
+                                    weight=ft.FontWeight.W_600,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                ),
+                                ft.Row(spacing=5, wrap=True, controls=badges),
+                            ],
+                        ),
+                        ft.Text(
+                            f"{sinal} {formatar_moeda(valor)}",
+                            color=cor_valor,
+                            size=15,
+                            weight=ft.FontWeight.BOLD,
+                        ),
+                    ],
+                ),
+            )
+
+            acoes_direita: list[ft.Control] = []
+            if not eh_transf and not eh_rec:
+                acoes_direita.append(
+                    ft.IconButton(
+                        icon=ft.Icons.SAVINGS_ROUNDED,
+                        icon_color=pote_cor if pote_nome else T.WARNING,
+                        icon_size=18,
+                        tooltip=f"Pote: {pote_nome or 'Não classificado'} (toque para alterar rapidamente)",
+                        on_click=lambda _, it=item: self._abrir_seletor_pote(it),
+                    )
+                )
+            acoes_direita.append(badge_status)
+            acoes_direita.append(
+                ft.IconButton(
+                    icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
+                    icon_color=T.TEXT_MUTED,
+                    icon_size=18,
+                    tooltip="Excluir lançamento",
+                    on_click=lambda _, it=item: self._confirmar_exclusao(it),
+                )
+            )
+
+            return ft.Container(
+                padding=pad(h=14, v=10),
+                bgcolor=T.SURFACE,
+                border_radius=12,
+                border=borda(),
+                content=ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=8,
+                    controls=[
+                        area_clicavel_edicao,
+                        *acoes_direita,
+                    ],
+                ),
+            )
+
+        # =========================================================================
+        # LAYOUT DEDICADO MOBILE: Compacto, estruturado em 2 linhas, sem estouro vertical
+        # =========================================================================
+        nome_desc = (item.get("descricao") or "").strip()
+        tem_desc = bool(nome_desc and nome_desc.lower() != str(cat_nome).lower())
+        nome_principal = nome_desc if tem_desc else cat_nome
+        subtitulo = (f"{cat_nome} › {subcat_nome}" if subcat_nome else cat_nome) if tem_desc else (subcat_nome or "")
+
+        col_textos_mobile: list[ft.Control] = [
+            ft.Text(
+                nome_principal,
+                color=T.TEXT_PRIMARY,
+                size=13.5,
+                weight=ft.FontWeight.W_600,
+                max_lines=1,
+                overflow=ft.TextOverflow.ELLIPSIS,
+            )
+        ]
+        if subtitulo:
+            col_textos_mobile.append(
+                ft.Text(
+                    subtitulo,
+                    color=T.TEXT_MUTED,
+                    size=11,
+                    weight=ft.FontWeight.W_500,
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                )
+            )
+
+        linha_topo_mobile = ft.Container(
             on_click=lambda _, it=item: abrir_lancamento(
                 self._page,
                 lancamento=it,
@@ -682,74 +798,214 @@ class TransactionList(ft.Column):
             ink=True,
             tooltip="Clique para editar este lançamento",
             content=ft.Row(
-                spacing=12,
+                spacing=10,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
                     ft.Container(
-                        content=ft.Icon(icone_tipo, color=cor_valor, size=18),
+                        content=ft.Icon(icone_tipo, color=cor_valor, size=16),
                         bgcolor=f"{cor_valor}1A",
-                        border_radius=10,
-                        padding=pad(all_=9),
+                        border_radius=8,
+                        padding=pad(all_=8),
                     ),
                     ft.Column(
-                        spacing=4,
+                        spacing=1,
                         expand=True,
-                        controls=[
-                            ft.Text(
-                                item.get("descricao") or cat_nome,
-                                color=T.TEXT_PRIMARY,
-                                size=13.5,
-                                weight=ft.FontWeight.W_600,
-                                max_lines=1,
-                                overflow=ft.TextOverflow.ELLIPSIS,
-                            ),
-                            ft.Row(spacing=5, wrap=True, controls=badges),
-                        ],
+                        controls=col_textos_mobile,
                     ),
                     ft.Text(
                         f"{sinal} {formatar_moeda(valor)}",
                         color=cor_valor,
-                        size=14 if self.mobile else 15,
+                        size=14,
                         weight=ft.FontWeight.BOLD,
                     ),
                 ],
             ),
         )
 
-        acoes_direita: list[ft.Control] = []
-        if not eh_transf and not eh_rec:
-            acoes_direita.append(
-                ft.IconButton(
-                    icon=ft.Icons.SAVINGS_ROUNDED,
-                    icon_color=pote_cor if pote_nome else T.WARNING,
-                    icon_size=18,
-                    tooltip=f"Pote: {pote_nome or 'Não classificado'} (toque para alterar rapidamente)",
-                    on_click=lambda _, it=item: self._abrir_seletor_pote(it),
+        # Badges contextuais compactos no rodapé mobile
+        badges_mobile: list[ft.Control] = []
+        if eh_transf and conta_nome and destino_nome:
+            badges_mobile.append(
+                ft.Container(
+                    padding=pad(h=6, v=2),
+                    bgcolor=f"{T.INFO}18",
+                    border_radius=6,
+                    content=ft.Text(f"{conta_nome} → {destino_nome}", size=10, color=T.INFO, weight=ft.FontWeight.W_600),
                 )
             )
-        acoes_direita.append(badge_status)
-        acoes_direita.append(
-            ft.IconButton(
-                icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
-                icon_color=T.TEXT_MUTED,
-                icon_size=18,
-                tooltip="Excluir lançamento",
-                on_click=lambda _, it=item: self._confirmar_exclusao(it),
+        else:
+            eh_credito = ("cred" in str(forma).lower()) or bool(item.get("cartao_id")) or bool(cartao_nome)
+            parc_atual = item.get("parcela_atual")
+            tot_parc = item.get("total_parcelas")
+            is_fixa_rec = (item.get("tipo_recorrencia") == "fixa" or bool(item.get("recorrente_id")))
+
+            if eh_credito:
+                cartao_lbl = f"Cartão {cartao_nome}" if cartao_nome else "Crédito"
+                badges_mobile.append(
+                    ft.Container(
+                        padding=pad(h=6, v=2),
+                        bgcolor=f"{T.WARNING}18",
+                        border_radius=6,
+                        content=ft.Text(cartao_lbl, size=10, color=T.WARNING, weight=ft.FontWeight.W_600),
+                    )
+                )
+                if tot_parc and int(tot_parc) > 1:
+                    p_num = parc_atual or 1
+                    badges_mobile.append(
+                        ft.Container(
+                            padding=pad(h=6, v=2),
+                            bgcolor="#8B5CF622",
+                            border_radius=6,
+                            content=ft.Text(f"{p_num}/{tot_parc}", size=10, color="#8B5CF6", weight=ft.FontWeight.BOLD),
+                        )
+                    )
+                elif is_fixa_rec:
+                    badges_mobile.append(
+                        ft.Container(
+                            padding=pad(h=6, v=2),
+                            bgcolor=f"{T.PRIMARY}22",
+                            border_radius=6,
+                            content=ft.Text("Recorrência", size=10, color=T.PRIMARY, weight=ft.FontWeight.BOLD),
+                        )
+                    )
+            elif conta_nome:
+                badges_mobile.append(
+                    ft.Container(
+                        padding=pad(h=6, v=2),
+                        bgcolor=T.SURFACE_ALT,
+                        border_radius=6,
+                        content=ft.Text(f"{forma} • {conta_nome}", size=10, color=T.TEXT_MUTED),
+                    )
+                )
+            else:
+                badges_mobile.append(
+                    ft.Container(
+                        padding=pad(h=6, v=2),
+                        bgcolor=T.SURFACE_ALT,
+                        border_radius=6,
+                        content=ft.Text(forma, size=10, color=T.TEXT_MUTED),
+                    )
+                )
+
+        if pote_nome:
+            badges_mobile.append(
+                ft.Container(
+                    padding=pad(h=6, v=2),
+                    bgcolor=f"{pote_cor}20",
+                    border_radius=6,
+                    border=borda(1, f"{pote_cor}45"),
+                    on_click=lambda _, it=item: self._abrir_seletor_pote(it),
+                    ink=True,
+                    tooltip=f"Pote: {pote_nome}. Clique para alterar",
+                    content=ft.Row(
+                        spacing=3,
+                        tight=True,
+                        controls=[
+                            ft.Container(width=6, height=6, border_radius=3, bgcolor=pote_cor),
+                            ft.Text(pote_nome, size=10, color=pote_cor, weight=ft.FontWeight.BOLD),
+                        ],
+                    ),
+                )
             )
+        elif not eh_transf and not eh_rec:
+            badges_mobile.append(
+                ft.Container(
+                    padding=pad(h=6, v=2),
+                    bgcolor=f"{T.WARNING}1A",
+                    border_radius=6,
+                    border=borda(1, f"{T.WARNING}50"),
+                    on_click=lambda _, it=item: self._abrir_seletor_pote(it),
+                    ink=True,
+                    tooltip="Definir Pote",
+                    content=ft.Row(
+                        spacing=3,
+                        tight=True,
+                        controls=[
+                            ft.Icon(ft.Icons.SAVINGS_OUTLINED, size=11, color=T.WARNING),
+                            ft.Text("Definir Pote", size=10, color=T.WARNING, weight=ft.FontWeight.BOLD),
+                        ],
+                    ),
+                )
+            )
+        elif item.get("regra"):
+            regra = item.get("regra")
+            cor_r = T.PRIMARY if regra == "Essencial" else (T.WARNING if regra == "Estilo de Vida" else T.SALDO)
+            badges_mobile.append(
+                ft.Container(
+                    padding=pad(h=6, v=2),
+                    bgcolor=f"{cor_r}18",
+                    border_radius=6,
+                    content=ft.Text(regra, size=10, color=cor_r, weight=ft.FontWeight.BOLD),
+                )
+            )
+
+        badge_status_mobile = ft.Container(
+            padding=pad(h=7, v=3),
+            bgcolor=f"{T.RECEITA}18" if eh_pago else f"{T.WARNING}18",
+            border_radius=8,
+            border=borda(1, f"{T.RECEITA}35" if eh_pago else f"{T.WARNING}35"),
+            tooltip="Toque para alternar Pago / Pendente",
+            on_click=lambda _, it=item: self._alternar_status(it),
+            ink=True,
+            content=ft.Row(
+                spacing=3,
+                tight=True,
+                controls=[
+                    ft.Icon(
+                        ft.Icons.CHECK_CIRCLE_ROUNDED if eh_pago else ft.Icons.SCHEDULE_ROUNDED,
+                        size=11,
+                        color=T.RECEITA if eh_pago else T.WARNING,
+                    ),
+                    ft.Text(
+                        status,
+                        size=10,
+                        color=T.RECEITA if eh_pago else T.WARNING,
+                        weight=ft.FontWeight.BOLD,
+                    ),
+                ],
+            ),
+        )
+
+        linha_rodape_mobile = ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Row(
+                    spacing=4,
+                    scroll=ft.ScrollMode.HIDDEN,
+                    expand=True,
+                    controls=badges_mobile,
+                ),
+                ft.Row(
+                    spacing=4,
+                    tight=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        badge_status_mobile,
+                        ft.IconButton(
+                            icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
+                            icon_color=T.TEXT_MUTED,
+                            icon_size=17,
+                            tooltip="Excluir lançamento",
+                            on_click=lambda _, it=item: self._confirmar_exclusao(it),
+                            style=ft.ButtonStyle(padding=pad(all_=2)),
+                        ),
+                    ],
+                ),
+            ],
         )
 
         return ft.Container(
-            padding=pad(h=14, v=10),
+            padding=pad(h=12, v=10),
             bgcolor=T.SURFACE,
             border_radius=12,
             border=borda(),
-            content=ft.Row(
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            content=ft.Column(
                 spacing=8,
+                tight=True,
                 controls=[
-                    area_clicavel_edicao,
-                    *acoes_direita,
+                    linha_topo_mobile,
+                    linha_rodape_mobile,
                 ],
             ),
         )
