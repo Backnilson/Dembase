@@ -27,7 +27,8 @@ CATEGORIAS_PADRAO = [
 ]
 
 
-def criar_view_categorias(page: ft.Page) -> ft.View:
+def montar_aba_categorias(page: ft.Page) -> ft.Control:
+    """Retorna o gerenciador completo de Categorias & Subcategorias para embutir em Configurações."""
     col_categorias = ft.Column(spacing=12)
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2, visible=False)
     txt_busca = ft.TextField(
@@ -394,4 +395,8 @@ def criar_view_categorias(page: ft.Page) -> ft.View:
 
     carregar_dados()
 
-    return criar_shell(page, rota_ativa=ROTA_CATEGORIAS, conteudo=conteudo)
+    return conteudo
+
+
+def criar_view_categorias(page: ft.Page) -> ft.View:
+    return criar_shell(page, rota_ativa=ROTA_CATEGORIAS, conteudo=montar_aba_categorias(page))

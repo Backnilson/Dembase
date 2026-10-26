@@ -59,7 +59,7 @@ ICONES_OPCOES = [
 MAPA_ICONES = {item["nome"]: item["icone"] for item in ICONES_OPCOES}
 
 
-def criar_view_caixinhas(page: ft.Page, match=None) -> ft.View:
+def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
     mobile = is_mobile(page)
     caixinhas_lista: list[dict] = []
 
@@ -1614,6 +1614,11 @@ def criar_view_caixinhas(page: ft.Page, match=None) -> ft.View:
 
     carregar_dados(inicial=True)
 
+    return conteudo
+
+
+def criar_view_caixinhas(page: ft.Page, match=None) -> ft.View:
+    conteudo = montar_aba_caixinhas(page, match)
     return criar_shell(
         page,
         rota_ativa=ROTA_CAIXINHAS,

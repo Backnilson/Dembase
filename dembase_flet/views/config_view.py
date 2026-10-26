@@ -1,10 +1,19 @@
 """
 =============================================================================
 DemBase v3 — views/config_view.py  (Flet 1.0.1)
-Configurações do Usuário e CRUDs Base (Perfil, Categorias, Destinos).
+Configurações do Usuário e Cadastros Base:
+- Meu Perfil
+- Metas (6 Potes)
+- Caixinhas de Teto (embutido inline igual Metas)
+- Categorias & Subcategorias (embutido inline igual Metas)
+- Aparência & Tema
+- Gráficos do Dashboard
+- Destinos
 Montado DENTRO do Shell (sidebar + header).
 =============================================================================
 """
+from __future__ import annotations
+
 import flet as ft
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
@@ -12,35 +21,47 @@ from core.router import ROTA_CONFIG, ROTA_AUTH, navegar
 from core import storage
 from views.shell_view import criar_shell
 from views.widgets.potes_config import montar_aba_potes
+from views.caixinhas_view import montar_aba_caixinhas
+from views.categorias_view import montar_aba_categorias
 import services.supabase_client as db
-
-CATEGORIAS_PADRAO = [
-    {"nome": "Alimentação",  "tipo": "ambos", "cor": "#EF4444", "icone": "restaurant"},
-    {"nome": "Transporte",   "tipo": "ambos", "cor": "#3B82F6", "icone": "directions_car"},
-    {"nome": "Moradia",      "tipo": "ambos", "cor": "#8B5CF6", "icone": "home"},
-    {"nome": "Lazer",        "tipo": "ambos", "cor": "#F59E0B", "icone": "celebration"},
-    {"nome": "Saúde",        "tipo": "ambos", "cor": "#10B981", "icone": "medical_services"},
-    {"nome": "Educação",     "tipo": "ambos", "cor": "#06B6D4", "icone": "school"},
-    {"nome": "DJ & Eventos", "tipo": "ambos", "cor": "#EC4899", "icone": "headphones"},
-    {"nome": "Investimento", "tipo": "ambos", "cor": "#10B981", "icone": "trending_up"},
-    {"nome": "Salário",      "tipo": "ambos", "cor": "#10B981", "icone": "payments"},
-    {"nome": "Outros",       "tipo": "ambos", "cor": "#64748B", "icone": "more_horiz"},
-]
 
 DESTINOS_PADRAO = ["Eu", "Casa", "Moto", "Carro", "DJ", "Família", "Outros"]
 
 
 def criar_view_config(page: ft.Page, match=None) -> ft.View:
+    # 0: Perfil, 1: Metas (Potes), 2: Caixinhas, 3: Categorias, 4: Tema, 5: Gráficos, 6: Destinos
     aba_inicial = 0
+    aba_query = ""
     if match and getattr(match, "query", None):
-        if match.query.get("aba") in ("metas", "potes"):
-            aba_inicial = 1
-    aba_ativa = [aba_inicial]  # 0: Perfil, 1: Metas (potes), 2: Tema, 3: Gráficos, 4: Categorias, 5: Destinos
+        aba_query = str(match.query.get("aba") or "").strip().lower()
+    elif "?" in str(getattr(page, "route", "")):
+        try:
+            q_part = str(page.route).split("?", 1)[1]
+            for kv in q_part.split("&"):
+                if kv.startswith("aba="):
+                    aba_query = kv.split("=", 1)[1].strip().lower()
+        except Exception:
+            pass
+
+    if aba_query in ("metas", "potes"):
+        aba_inicial = 1
+    elif aba_query in ("caixinhas", "caixinha"):
+        aba_inicial = 2
+    elif aba_query in ("categorias", "categoria"):
+        aba_inicial = 3
+    elif aba_query in ("tema", "aparencia"):
+        aba_inicial = 4
+    elif aba_query in ("graficos", "dashboard"):
+        aba_inicial = 5
+    elif aba_query in ("destinos", "destino"):
+        aba_inicial = 6
+
+    aba_ativa = [aba_inicial]
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2, visible=False)
 
     area_conteudo = ft.Column(spacing=16, controls=[])
 
-    # ── 1. ABA PERFIL ────────────────────────────────────────────────────────
+    # ── 0. ABA PERFIL ────────────────────────────────────────────────────────
     def _montar_aba_perfil():
         user = db.usuario_atual()
         email_str = user.email if user and user.email else "E-mail não informado"
@@ -140,36 +161,7 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
             ),
         )
 
-    # ── 2. ABA CATEGORIAS (MIGRADA PARA O MENU LATERAL) ──────────────────────
-    def _montar_aba_categorias():
-        return ft.Container(
-            padding=pad(all_=30),
-            bgcolor=T.SURFACE,
-            border_radius=16,
-            border=borda(),
-            content=ft.Column(
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=14,
-                controls=[
-                    ft.Icon(ft.Icons.CATEGORY_ROUNDED, size=52, color=T.PRIMARY),
-                    ft.Text("Gerenciador de Categorias & Subcategorias", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
-                    ft.Text(
-                        "O gerenciamento de categorias e subcategorias agora possui uma tela exclusiva acessível diretamente pelo Menu Lateral (Sidebar)!",
-                        color=T.TEXT_MUTED,
-                        size=13,
-                        text_align=ft.TextAlign.CENTER,
-                    ),
-                    ft.Container(height=10),
-                    ft.FilledButton(
-                        content=ft.Row([ft.Icon(ft.Icons.OPEN_IN_NEW_ROUNDED, size=16), ft.Text("Abrir Gerenciador de Categorias")]),
-                        style=ft.ButtonStyle(bgcolor=T.PRIMARY),
-                        on_click=lambda _: navegar(page, "/categorias"),
-                    ),
-                ],
-            ),
-        )
-
-    # ── 3. ABA DESTINOS ──────────────────────────────────────────────────────
+    # ── 6. ABA DESTINOS ──────────────────────────────────────────────────────
     def _montar_aba_destinos():
         col_itens_dest = ft.Column(spacing=8, controls=[])
 
@@ -311,7 +303,7 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
             ),
         )
 
-    # ── 2. ABA APARÊNCIA & TEMA ──────────────────────────────────────────────
+    # ── 4. ABA APARÊNCIA & TEMA ──────────────────────────────────────────────
     def _montar_aba_tema():
         pref_atual = storage.obter_preferencia_tema_memoria(page) or "system"
 
@@ -433,24 +425,6 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
                             ft.Container(col={"xs": 12, "md": 4}, content=card_claro),
                         ],
                     ),
-                    ft.Container(
-                        padding=pad(all_=14),
-                        bgcolor=T.SURFACE_ALT,
-                        border_radius=12,
-                        border=borda(),
-                        content=ft.Row(
-                            spacing=12,
-                            controls=[
-                                ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED, color=T.INFO, size=20),
-                                ft.Text(
-                                    "A opção 'Acompanhar Sistema' detecta automaticamente quando o seu celular, navegador ou Windows muda de tema (dia/noite) e atualiza todas as telas na mesma hora.",
-                                    color=T.TEXT_MUTED,
-                                    size=12,
-                                    expand=True,
-                                ),
-                            ],
-                        ),
-                    ),
                 ],
             ),
         )
@@ -546,86 +520,74 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
         )
 
     # ── Alternar Abas ────────────────────────────────────────────────────────
+    botoes_abas_lista: list[tuple[int, ft.Container]] = []
+
     def renderizar_aba():
         area_conteudo.controls.clear()
-        if aba_ativa[0] == 0:
+        idx = aba_ativa[0]
+        if idx == 0:
             area_conteudo.controls.append(_montar_aba_perfil())
-        elif aba_ativa[0] == 1:
+        elif idx == 1:
             area_conteudo.controls.append(montar_aba_potes(page))
-        elif aba_ativa[0] == 2:
+        elif idx == 2:
+            area_conteudo.controls.append(montar_aba_caixinhas(page))
+        elif idx == 3:
+            area_conteudo.controls.append(montar_aba_categorias(page))
+        elif idx == 4:
             area_conteudo.controls.append(_montar_aba_tema())
-        elif aba_ativa[0] == 3:
+        elif idx == 5:
             area_conteudo.controls.append(_montar_aba_graficos())
-        elif aba_ativa[0] == 4:
-            area_conteudo.controls.append(_montar_aba_categorias())
         else:
             area_conteudo.controls.append(_montar_aba_destinos())
-        page.update()
+        try:
+            page.update()
+        except Exception:
+            pass
 
     def _trocar_aba(idx: int):
         aba_ativa[0] = idx
-        btn_perfil.bgcolor     = f"{T.PRIMARY}18" if idx == 0 else "transparent"
-        btn_metas.bgcolor      = f"{T.PRIMARY}18" if idx == 1 else "transparent"
-        btn_tema.bgcolor       = f"{T.PRIMARY}18" if idx == 2 else "transparent"
-        btn_graficos.bgcolor   = f"{T.PRIMARY}18" if idx == 3 else "transparent"
-        btn_categorias.bgcolor = f"{T.PRIMARY}18" if idx == 4 else "transparent"
-        btn_destinos.bgcolor   = f"{T.PRIMARY}18" if idx == 5 else "transparent"
+        for i_b, btn_c in botoes_abas_lista:
+            btn_c.bgcolor = f"{T.PRIMARY}18" if i_b == idx else "transparent"
         renderizar_aba()
 
-    btn_perfil = ft.Container(
-        content=ft.Row([ft.Icon(ft.Icons.PERSON_OUTLINED, size=16), ft.Text("Meu Perfil", size=13, weight=ft.FontWeight.W_600)], tight=True),
-        padding=pad(h=14, v=10),
-        bgcolor=f"{T.PRIMARY}18" if aba_inicial == 0 else "transparent",
-        border_radius=10,
-        on_click=lambda _: _trocar_aba(0),
-    )
+    definicao_abas = [
+        (0, "Meu Perfil",        ft.Icons.PERSON_OUTLINED),
+        (1, "Metas (Potes)",     ft.Icons.DONUT_LARGE_ROUNDED),
+        (2, "Caixinhas",         ft.Icons.INVENTORY_2_ROUNDED),
+        (3, "Categorias",        ft.Icons.CATEGORY_OUTLINED),
+        (4, "Aparência & Tema",  ft.Icons.PALETTE_OUTLINED),
+        (5, "Gráficos",          ft.Icons.DASHBOARD_CUSTOMIZE_ROUNDED),
+        (6, "Destinos",          ft.Icons.LOCATION_ON_OUTLINED),
+    ]
 
-    btn_metas = ft.Container(
-        content=ft.Row([ft.Icon(ft.Icons.DONUT_LARGE_ROUNDED, size=16), ft.Text("Metas (Potes)", size=13, weight=ft.FontWeight.W_600)], tight=True),
-        padding=pad(h=14, v=10),
-        bgcolor=f"{T.PRIMARY}18" if aba_inicial == 1 else "transparent",
-        border_radius=10,
-        on_click=lambda _: _trocar_aba(1),
-    )
-
-    btn_tema = ft.Container(
-        content=ft.Row([ft.Icon(ft.Icons.PALETTE_OUTLINED, size=16), ft.Text("Aparência & Tema", size=13, weight=ft.FontWeight.W_600)], tight=True),
-        padding=pad(h=14, v=10),
-        bgcolor="transparent",
-        border_radius=10,
-        on_click=lambda _: _trocar_aba(2),
-    )
-
-    btn_graficos = ft.Container(
-        content=ft.Row([ft.Icon(ft.Icons.DASHBOARD_CUSTOMIZE_ROUNDED, size=16), ft.Text("Gráficos do Dashboard", size=13, weight=ft.FontWeight.W_600)], tight=True),
-        padding=pad(h=14, v=10),
-        bgcolor="transparent",
-        border_radius=10,
-        on_click=lambda _: _trocar_aba(3),
-    )
-
-    btn_categorias = ft.Container(
-        content=ft.Row([ft.Icon(ft.Icons.CATEGORY_OUTLINED, size=16), ft.Text("Categorias", size=13, weight=ft.FontWeight.W_600)], tight=True),
-        padding=pad(h=14, v=10),
-        bgcolor="transparent",
-        border_radius=10,
-        on_click=lambda _: _trocar_aba(4),
-    )
-
-    btn_destinos = ft.Container(
-        content=ft.Row([ft.Icon(ft.Icons.LOCATION_ON_OUTLINED, size=16), ft.Text("Destinos", size=13, weight=ft.FontWeight.W_600)], tight=True),
-        padding=pad(h=14, v=10),
-        bgcolor="transparent",
-        border_radius=10,
-        on_click=lambda _: _trocar_aba(5),
-    )
+    controles_abas: list[ft.Control] = []
+    for idx_a, rotulo_a, icone_a in definicao_abas:
+        btn = ft.Container(
+            content=ft.Row(
+                [ft.Icon(icone_a, size=16), ft.Text(rotulo_a, size=13, weight=ft.FontWeight.W_600)],
+                tight=True,
+                spacing=6,
+            ),
+            padding=pad(h=14, v=10),
+            bgcolor=f"{T.PRIMARY}18" if aba_inicial == idx_a else "transparent",
+            border_radius=10,
+            ink=True,
+            on_click=lambda _, i=idx_a: _trocar_aba(i),
+        )
+        botoes_abas_lista.append((idx_a, btn))
+        controles_abas.append(btn)
 
     seletor_abas = ft.Container(
         padding=pad(all_=4),
         bgcolor=T.SURFACE,
         border_radius=12,
         border=borda(),
-        content=ft.Row(spacing=4, tight=True, scroll=ft.ScrollMode.ADAPTIVE, controls=[btn_perfil, btn_metas, btn_tema, btn_graficos, btn_categorias, btn_destinos]),
+        content=ft.Row(
+            spacing=4,
+            tight=True,
+            scroll=ft.ScrollMode.ADAPTIVE,
+            controls=controles_abas,
+        ),
     )
 
     cabecalho = ft.Row(
@@ -639,7 +601,7 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
                         ft.Text("Configurações & Cadastros Base", color=T.TEXT_PRIMARY, size=22, weight=ft.FontWeight.BOLD),
                         spinner,
                     ]),
-                    ft.Text("Gerencie dados do seu perfil, categorias orçamentárias e destinos", color=T.TEXT_MUTED, size=12),
+                    ft.Text("Gerencie seu perfil, metas dos 6 potes, caixinhas de teto, categorias e aparência", color=T.TEXT_MUTED, size=12),
                 ],
             ),
         ],

@@ -67,7 +67,7 @@ def kpi_clicavel(
     valor_ctrl: ft.Control | None = None,
     cor: str = T.PRIMARY,
     icone: ft.IconData = ft.Icons.TRENDING_UP_ROUNDED,
-    subtitulo: str = "",
+    subtitulo: str | ft.Control = "",
     on_click: Callable | None = None,
     mobile: bool = False,
     col: dict | None = None,
@@ -121,6 +121,19 @@ def kpi_clicavel(
             )
         )
 
+    if isinstance(subtitulo, ft.Control):
+        sub_ctrl = subtitulo
+    elif subtitulo:
+        sub_ctrl = ft.Text(
+            str(subtitulo),
+            color=T.TEXT_MUTED,
+            size=9.5 if is_mob else 11,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+    else:
+        sub_ctrl = ft.Container(height=0)
+
     corpo = ft.Column(
         spacing=0,
         controls=[
@@ -142,15 +155,7 @@ def kpi_clicavel(
             ),
             ft.Container(height=3 if is_mob else 8),
             v_ctrl,
-            ft.Text(
-                subtitulo,
-                color=T.TEXT_MUTED,
-                size=9.5 if is_mob else 11,
-                max_lines=1,
-                overflow=ft.TextOverflow.ELLIPSIS,
-            )
-            if subtitulo
-            else ft.Container(height=0),
+            sub_ctrl,
         ],
     )
 

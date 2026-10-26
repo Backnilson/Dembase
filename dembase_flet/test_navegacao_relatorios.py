@@ -194,15 +194,15 @@ def test_3_router_and_stack():
 
     # 3. Montagem da pilha hierárquica
     # Dashboard
-    pilha_dash = montar_pilha("/dashboard")
+    pilha_dash = montar_pilha("/dashboard", logado=True)
     assert pilha_dash == ["/dashboard"]
 
     # Contas
-    pilha_contas = montar_pilha("/contas")
+    pilha_contas = montar_pilha("/contas", logado=True)
     assert pilha_contas == ["/dashboard", "/contas"]
 
     # Drill-down Conta específica -> ['/dashboard', '/contas?ini=...&fim=...', '/contas/c123?ini=...&fim=...']
-    pilha_conta_det = montar_pilha("/contas/c123?ini=2026-10-01&fim=2026-10-31")
+    pilha_conta_det = montar_pilha("/contas/c123?ini=2026-10-01&fim=2026-10-31", logado=True)
     assert len(pilha_conta_det) == 3
     assert pilha_conta_det[0] == "/dashboard"
     assert pilha_conta_det[1].startswith("/contas?")
@@ -210,20 +210,20 @@ def test_3_router_and_stack():
     assert pilha_conta_det[2].startswith("/contas/c123?")
 
     # Relatório de lançamentos vindo do Dashboard -> ['/dashboard', '/relatorios/lancamentos?origem=dashboard']
-    pilha_lanc_dash = montar_pilha("/relatorios/lancamentos?origem=dashboard&tipo=Receita")
+    pilha_lanc_dash = montar_pilha("/relatorios/lancamentos?origem=dashboard&tipo=Receita", logado=True)
     assert len(pilha_lanc_dash) == 2
     assert pilha_lanc_dash[0] == "/dashboard"
     assert "/relatorios/lancamentos" in pilha_lanc_dash[1]
 
     # Relatório de categoria vindo da Central de Relatórios -> ['/dashboard', '/relatorios', '/relatorios/categoria/cat1?origem=relatorios']
-    pilha_cat_rel = montar_pilha("/relatorios/categoria/cat1?origem=relatorios")
+    pilha_cat_rel = montar_pilha("/relatorios/categoria/cat1?origem=relatorios", logado=True)
     assert len(pilha_cat_rel) == 3
     assert pilha_cat_rel[0] == "/dashboard"
     assert pilha_cat_rel[1] == "/relatorios"
     assert "/relatorios/categoria/cat1" in pilha_cat_rel[2]
 
     # Cartão detalhe -> ['/dashboard', '/cartoes', '/cartoes/cart1']
-    pilha_cart = montar_pilha("/cartoes/cart1")
+    pilha_cart = montar_pilha("/cartoes/cart1", logado=True)
     assert len(pilha_cart) == 3
     assert pilha_cart[0] == "/dashboard"
     assert pilha_cart[1] == "/cartoes"

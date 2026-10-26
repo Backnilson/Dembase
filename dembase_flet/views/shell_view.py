@@ -19,7 +19,8 @@ from core.responsive import is_mobile, setup_responsive_resize
 from core.constants import session_clear, session_get, session_set, formatar_data_br
 from core.periodo import (
     calcular_ciclo as _calcular_ciclo,
-    obter_estado_periodo_atual,
+    obter_estado_periodo_atual,
+    avancar_periodo_estado,
     persistir_estado_periodo as _persistir_estado_periodo,
 )
 from core.nav import voltar
@@ -41,9 +42,9 @@ _NAV_ITEMS = [
     {"rota": ROTA_DASHBOARD,   "icone": ft.Icons.DASHBOARD_ROUNDED,          "label": "Dashboard"},
     {"rota": ROTA_CONTAS,      "icone": ft.Icons.ACCOUNT_BALANCE_ROUNDED,     "label": "Contas"},
     {"rota": ROTA_CARTOES,     "icone": ft.Icons.CREDIT_CARD_ROUNDED,         "label": "Cartões"},
-    {"rota": ROTA_CAIXINHAS,   "icone": ft.Icons.INVENTORY_2_ROUNDED,         "label": "Caixinhas"},
-    {"rota": ROTA_CATEGORIAS,  "icone": ft.Icons.CATEGORY_ROUNDED,            "label": "Categorias"},
-    {"rota": ROTA_LANCAMENTO,  "icone": ft.Icons.ADD_CIRCLE_OUTLINE_ROUNDED,  "label": "Lançamento"},
+
+
+
     {"rota": ROTA_CALENDARIO,  "icone": ft.Icons.CALENDAR_MONTH_ROUNDED,      "label": "Calendário"},
     {"rota": ROTA_RELATORIOS,  "icone": ft.Icons.BAR_CHART_ROUNDED,           "label": "Relatórios"},
 ]
@@ -163,7 +164,11 @@ def criar_shell(
         elif callable(on_mes_ano_change):
             on_mes_ano_change(estado_p["mes"], estado_p["ano"])
 
-    def _passo_periodo(direcao: int):
+    def _passo_periodo(direcao: int):
+        avancar_periodo_estado(estado_p, direcao)
+        _sincronizar_e_emitir()
+
+    def _passo_periodo_legado(direcao: int):
         modo = estado_p["modo"]
         if modo in ("mes", "ciclo"):
             m = estado_p["mes"] + direcao
@@ -202,7 +207,9 @@ def criar_shell(
             estado_p["data_fim"] = novo_estado["data_fim"]
             estado_p["dia_ciclo"] = novo_estado.get("dia_ciclo", estado_p["dia_ciclo"])
             estado_p["mes"] = novo_estado.get("mes", novo_estado["data_fim"].month)
-            estado_p["ano"] = novo_estado.get("ano", novo_estado["data_fim"].year)
+            estado_p["ano"] = novo_estado.get("ano", novo_estado["data_fim"].year)
+            estado_p["ate_fim_mes"] = bool(novo_estado.get("ate_fim_mes", False))
+            estado_p["filtro_id"] = novo_estado.get("filtro_id")
             storage.salvar_dia_ciclo_padrao(page, estado_p["dia_ciclo"])
             _sincronizar_e_emitir()
 
@@ -322,7 +329,7 @@ def criar_shell(
 
         # 2. Drawer (Hambúrguer)
         async def _drawer_change(e):
-            rotas_drawer = [ROTA_DASHBOARD, ROTA_CAIXINHAS, ROTA_CATEGORIAS, ROTA_CONFIG, ROTA_AUTH]
+            rotas_drawer = [ROTA_DASHBOARD, "/configuracoes?aba=caixinhas", "/configuracoes?aba=categorias", ROTA_CONFIG, ROTA_AUTH]
             idx = e.control.selected_index
             if idx is not None and 0 <= idx < len(rotas_drawer):
                 r = rotas_drawer[idx]

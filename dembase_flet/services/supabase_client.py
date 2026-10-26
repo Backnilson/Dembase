@@ -38,7 +38,7 @@ import asyncio
 
 
 
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Dict, List, Union
 
 
 
@@ -766,11 +766,11 @@ async def obter_despesas_por_categoria_async(mes: int = None, ano: int = None, d
 
 
 
-async def listar_faturas_async(cartao_id: str = None, status: str = None) -> list:
+async def listar_faturas_async(cartao_id: str = None, status: str = None, mes: int = None, ano: int = None) -> list:
 
 
 
-    return await asyncio.to_thread(listar_faturas, cartao_id, status)
+    return await asyncio.to_thread(listar_faturas, cartao_id, status, mes, ano)
 
 
 
@@ -3330,11 +3330,11 @@ def obter_total_em_uso_cartao(cartao_id: str) -> float:
 
 
 
-def listar_faturas(cartao_id: str = None, status: str = None) -> list:
+def listar_faturas(cartao_id: str = None, status: str = None, mes: int = None, ano: int = None) -> list:
 
 
 
-    query = supabase.table("faturas").select("*, cartoes(nome, bandeira, cor)")
+    query = supabase.table("faturas").select("*, cartoes(nome, bandeira, cor, limite_total, limite_disponivel, dia_fechamento, dia_vencimento, conta_debito_id)")
 
 
 
@@ -3351,6 +3351,10 @@ def listar_faturas(cartao_id: str = None, status: str = None) -> list:
 
 
         query = query.eq("status", status)
+    if mes is not None:
+        query = query.eq("mes", mes)
+    if ano is not None:
+        query = query.eq("ano", ano)
 
 
 
@@ -3606,26 +3610,59 @@ def atualizar_fatura(fatura_id: str, dados: dict):
 
 
 
-def pagar_fatura(fatura_id: str, valor_pago: float):
+def liquidar_pagamento_fatura(
+    fatura_id: str,
+    conta_id: str,
+    data_pagamento: Optional[str] = None,
+    valor_pago: Optional[float] = None,
+) -> dict:
+    """
+    Executa a baixa em lote e liquidação da fatura do cartão via RPC PostgreSQL:
+    1. Vincula despesas órfãs do período à fatura.
+    2. Altera status de todas as despesas vinculadas de 'Pendente' para 'Pago'.
+    3. Registra débito na conta bancária de origem (tipo 'Transferência', subtipo 'Pagamento de Fatura').
+    4. Marca a fatura como 'paga' com data e valor liquidado.
+    5. Recalcula saldos das contas e restaura o limite disponível do cartão.
+    """
+    params = {
+        "p_fatura_id": str(fatura_id),
+        "p_conta_id": str(conta_id),
+        "p_data_pagamento": str(data_pagamento) if data_pagamento else None,
+        "p_valor_pago": float(valor_pago) if valor_pago is not None else None,
+    }
+    resp = supabase.rpc("liquidar_pagamento_fatura", params).execute()
+    invalidar_cache("contas")
+    invalidar_cache("cartoes")
+    invalidar_cache("lancamentos")
+    invalidar_cache("potes_resumo")
+    return resp.data or {}
 
 
+def estornar_pagamento_fatura(fatura_id: str) -> dict:
+    """
+    Estorna o pagamento de uma fatura liquidada:
+    1. Remove o lançamento de débito na conta bancária.
+    2. Devolve o saldo à conta bancária.
+    3. Reabre a fatura ('aberta' ou 'fechada') e limpa metadados de pagamento.
+    4. Restaura os lançamentos de crédito futuros para 'Pendente'.
+    5. Recalibra o limite utilizado do cartão.
+    """
+    params = {"p_fatura_id": str(fatura_id)}
+    resp = supabase.rpc("estornar_pagamento_fatura", params).execute()
+    invalidar_cache("contas")
+    invalidar_cache("cartoes")
+    invalidar_cache("lancamentos")
+    invalidar_cache("potes_resumo")
+    return resp.data or {}
 
-    """Marca fatura como paga e atualiza valor_pago."""
 
-
-
+def pagar_fatura(fatura_id: str, valor_pago: float, conta_id: Optional[str] = None, data_pagamento: Optional[str] = None):
+    """Marca fatura como paga. Se conta_id for fornecida, utiliza o fluxo completo de liquidação."""
+    if conta_id:
+        return liquidar_pagamento_fatura(fatura_id, conta_id, data_pagamento=data_pagamento, valor_pago=valor_pago)
     return supabase.table("faturas").update({
-
-
-
         "valor_pago": valor_pago,
-
-
-
         "status": "paga",
-
-
-
     }).eq("id", fatura_id).execute()
 
 
@@ -3746,7 +3783,7 @@ def listar_lancamentos(
 
 
 
-        "cartoes(nome,bandeira,cor), subcategorias(nome), faturas(mes,ano,status)"
+        "cartoes(nome,bandeira,cor), subcategorias(nome), faturas!fk_lancamentos_fatura(mes,ano,status)"
 
 
 
@@ -3822,7 +3859,7 @@ def obter_lancamento(lancamento_id: str) -> dict | None:
 
 
 
-                "cartoes(nome,bandeira,cor), subcategorias(nome), faturas(mes,ano,status)"
+                "cartoes(nome,bandeira,cor), subcategorias(nome), faturas!fk_lancamentos_fatura(mes,ano,status)"
 
 
 
@@ -3870,7 +3907,7 @@ def obter_lancamento(lancamento_id: str) -> dict | None:
 
 
 
-                "cartoes(nome,bandeira,cor), subcategorias(nome), faturas(mes,ano,status)"
+                "cartoes(nome,bandeira,cor), subcategorias(nome), faturas!fk_lancamentos_fatura(mes,ano,status)"
 
 
 
@@ -6981,3 +7018,329 @@ def obter_resumo_caixinhas(forcar_atualizacao: bool = False) -> dict:
         "ritmo_diario_total": ritmo_total,
         "caixinhas": itens,
     }
+
+
+
+# =============================================================================
+# CALENDÁRIO FINANCEIRO INTERATIVO (MAPA DE CALOR + ROSCA + FATURAS)
+# =============================================================================
+def _aplicar_filtro_periodo_ao_calendario(
+    dados: dict,
+    d_ini_str: str,
+    d_fim_str: str,
+) -> dict:
+    """
+    Sincroniza o pacote do Calendário Financeiro com o intervalo global [d_ini_str, d_fim_str]
+    (ex: 'Dia 05 a 20' ou 'Dia 20 a 30/31').
+    Marca cada dia com 'no_periodo_filtro' e recalcula KPIs e categorias da rosca
+    estritamente dentro do intervalo filtrado quando este diferir do mês cheio.
+    """
+    ini_mes = str(dados.get("inicio_mes") or d_ini_str)[:10]
+    fim_mes = str(dados.get("fim_mes") or d_fim_str)[:10]
+    eh_parcial = (d_ini_str != ini_mes or d_fim_str != fim_mes)
+
+    dados["filtro_inicio"] = d_ini_str
+    dados["filtro_fim"] = d_fim_str
+    dados["eh_periodo_parcial"] = eh_parcial
+
+    dias_lista = dados.get("dias") or []
+    for d_item in dias_lista:
+        dt_k = str(d_item.get("data") or "")[:10]
+        d_item["no_periodo_filtro"] = bool(dt_k and (d_ini_str <= dt_k <= d_fim_str))
+
+    if not eh_parcial:
+        return dados
+
+    rec_p = 0.0
+    desp_p = 0.0
+    desp_cta_p = 0.0
+    desp_crt_p = 0.0
+    dias_s_set = set()
+    dias_e_set = set()
+    qtd_p = 0
+    maior_s = 0.0
+    desp_cat_map: dict[str, dict] = {}
+    rec_cat_map: dict[str, dict] = {}
+
+    for d_item in dias_lista:
+        if not d_item.get("no_periodo_filtro"):
+            continue
+        dt_k = str(d_item.get("data") or "")[:10]
+        r_d = float(d_item.get("total_receitas", 0) or 0)
+        s_d = float(d_item.get("total_despesas", 0) or 0)
+        sc_d = float(d_item.get("despesas_conta", 0) or 0)
+        sr_d = float(d_item.get("despesas_cartao", 0) or 0)
+        q_d = int(d_item.get("qtd_lancamentos", 0) or 0)
+
+        rec_p += r_d
+        desp_p += s_d
+        desp_cta_p += sc_d
+        desp_crt_p += sr_d
+        qtd_p += q_d
+        if r_d > 0:
+            dias_e_set.add(dt_k)
+        if s_d > 0:
+            dias_s_set.add(dt_k)
+            if s_d > maior_s:
+                maior_s = s_d
+
+        for l_it in (d_item.get("lancamentos") or []):
+            tp_l = str(l_it.get("tipo") or "Despesa")
+            val_l = float(l_it.get("valor", 0) or 0)
+            cat_id_l = l_it.get("categoria_id")
+            cat_nm_l = l_it.get("categoria_nome") or "Sem Categoria"
+            cat_cor_l = l_it.get("categoria_cor") or "#64748B"
+            ch_c = str(cat_id_l or cat_nm_l)
+            if tp_l == "Receita":
+                if ch_c not in rec_cat_map:
+                    rec_cat_map[ch_c] = {"categoria_id": cat_id_l, "categoria": cat_nm_l, "cor": cat_cor_l, "total": 0.0, "qtd": 0}
+                rec_cat_map[ch_c]["total"] += val_l
+                rec_cat_map[ch_c]["qtd"] += 1
+            elif tp_l == "Despesa":
+                if ch_c not in desp_cat_map:
+                    desp_cat_map[ch_c] = {"categoria_id": cat_id_l, "categoria": cat_nm_l, "cor": cat_cor_l, "total": 0.0, "qtd": 0}
+                desp_cat_map[ch_c]["total"] += val_l
+                desp_cat_map[ch_c]["qtd"] += 1
+
+    desp_cats = sorted(desp_cat_map.values(), key=lambda x: x["total"], reverse=True)
+    for dc in desp_cats:
+        dc["percentual"] = round((dc["total"] / desp_p * 100.0), 1) if desp_p > 0 else 0.0
+    rec_cats = sorted(rec_cat_map.values(), key=lambda x: x["total"], reverse=True)
+    for rc in rec_cats:
+        rc["percentual"] = round((rc["total"] / rec_p * 100.0), 1) if rec_p > 0 else 0.0
+
+    dados["kpis"] = {
+        "receitas_mes": rec_p,
+        "despesas_mes": desp_p,
+        "resultado_mes": rec_p - desp_p,
+        "despesas_conta_mes": desp_cta_p,
+        "despesas_cartao_mes": desp_crt_p,
+        "dias_com_saida": len(dias_s_set),
+        "dias_com_entrada": len(dias_e_set),
+        "qtd_lancamentos_mes": qtd_p,
+        "maior_saida_dia": maior_s,
+    }
+    dados["despesas_por_categoria"] = desp_cats
+    dados["receitas_por_categoria"] = rec_cats
+    return dados
+
+
+def obter_calendario_financeiro_mes(
+    mes: int,
+    ano: int,
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+) -> dict:
+    """
+    Chama a RPC 'get_calendario_financeiro_mes' (com fallback em Python) e aplica
+    sincronização com o filtro global de período [data_inicio, data_fim] (ex: Dia 05 a 20,
+    Dia 20 a 30/31 ou mês inteiro).
+    """
+    import calendar as _cal
+    from datetime import date as _date, timedelta as _td
+
+    m = max(1, min(12, int(mes)))
+    a = int(ano)
+    inicio_mes = _date(a, m, 1)
+    ult_dia = _cal.monthrange(a, m)[1]
+    fim_mes = _date(a, m, ult_dia)
+    d_ini_str = str(data_inicio)[:10] if data_inicio else inicio_mes.isoformat()
+    d_fim_str = str(data_fim)[:10] if data_fim else fim_mes.isoformat()
+
+    # Domingo = 0 na grade visual (em Python weekday(): Seg=0..Dom=6 -> offset = (weekday + 1) % 7)
+    offset_dom = (inicio_mes.weekday() + 1) % 7
+    grid_inicio = inicio_mes - _td(days=offset_dom)
+    grid_fim = grid_inicio + _td(days=41)
+
+    vazio = {
+        "mes": m,
+        "ano": a,
+        "inicio_mes": inicio_mes.isoformat(),
+        "fim_mes": fim_mes.isoformat(),
+        "filtro_inicio": d_ini_str,
+        "filtro_fim": d_fim_str,
+        "eh_periodo_parcial": (d_ini_str != inicio_mes.isoformat() or d_fim_str != fim_mes.isoformat()),
+        "grid_inicio": grid_inicio.isoformat(),
+        "grid_fim": grid_fim.isoformat(),
+        "kpis": {
+            "receitas_mes": 0.0,
+            "despesas_mes": 0.0,
+            "resultado_mes": 0.0,
+            "despesas_conta_mes": 0.0,
+            "despesas_cartao_mes": 0.0,
+            "dias_com_saida": 0,
+            "dias_com_entrada": 0,
+            "qtd_lancamentos_mes": 0,
+            "maior_saida_dia": 0.0,
+        },
+        "dias": [],
+        "cartoes_faturas": [],
+        "despesas_por_categoria": [],
+        "receitas_por_categoria": [],
+    }
+
+    try:
+        resp = supabase.rpc("get_calendario_financeiro_mes", {"p_mes": m, "p_ano": a}).execute()
+        if isinstance(resp.data, dict) and "dias" in resp.data:
+            dados = {**vazio, **resp.data}
+            if isinstance(resp.data.get("kpis"), dict):
+                dados["kpis"] = {**vazio["kpis"], **resp.data["kpis"]}
+            return _aplicar_filtro_periodo_ao_calendario(dados, d_ini_str, d_fim_str)
+    except Exception:
+        pass
+
+    # Fallback usando listar_lancamentos + listar_cartoes + listar_faturas
+    try:
+        lancs = listar_lancamentos(
+            data_inicio=grid_inicio.isoformat(),
+            data_fim=grid_fim.isoformat(),
+        )
+        dias_map: dict[str, dict] = {}
+        desp_cat_map: dict[str, dict] = {}
+        rec_cat_map: dict[str, dict] = {}
+        rec_mes = 0.0
+        desp_mes = 0.0
+        desp_conta_mes = 0.0
+        desp_cartao_mes = 0.0
+        dias_saida_set = set()
+        dias_entrada_set = set()
+        qtd_mes = 0
+
+        for it in lancs:
+            if str(it.get("subtipo") or "").lower() == "provisionamento":
+                continue
+            dt_str = str(it.get("data") or "")[:10]
+            if not dt_str:
+                continue
+            try:
+                y_i, m_i, d_i = [int(p) for p in dt_str.split("-")]
+            except Exception:
+                continue
+            no_mes = (y_i == a and m_i == m)
+            tp = str(it.get("tipo") or "Despesa")
+            val = float(it.get("valor", 0) or 0)
+            tem_cartao = bool(it.get("cartao_id"))
+            cat_obj = it.get("categorias") or {}
+            sub_obj = it.get("subcategorias") or {}
+            cta_obj = it.get("contas") or {}
+            crt_obj = it.get("cartoes") or {}
+
+            cat_nome = cat_obj.get("nome") or "Sem Categoria"
+            cat_cor = cat_obj.get("cor") or "#64748B"
+            cat_id = it.get("categoria_id")
+
+            if dt_str not in dias_map:
+                dias_map[dt_str] = {
+                    "data": dt_str,
+                    "dia": d_i,
+                    "mes": m_i,
+                    "ano": y_i,
+                    "no_mes_atual": no_mes,
+                    "total_receitas": 0.0,
+                    "total_despesas": 0.0,
+                    "despesas_conta": 0.0,
+                    "despesas_cartao": 0.0,
+                    "qtd_lancamentos": 0,
+                    "lancamentos": [],
+                }
+            bucket = dias_map[dt_str]
+            bucket["qtd_lancamentos"] += 1
+            if tp == "Receita":
+                bucket["total_receitas"] += val
+            elif tp == "Despesa":
+                bucket["total_despesas"] += val
+                if tem_cartao:
+                    bucket["despesas_cartao"] += val
+                else:
+                    bucket["despesas_conta"] += val
+
+            bucket["lancamentos"].append({
+                "id": it.get("id"),
+                "data": dt_str,
+                "hora": it.get("hora"),
+                "tipo": tp,
+                "subtipo": it.get("subtipo"),
+                "valor": val,
+                "descricao": it.get("descricao"),
+                "status": it.get("status"),
+                "regra": it.get("regra"),
+                "forma_movimentacao": it.get("forma_movimentacao"),
+                "parcela_atual": it.get("parcela_atual"),
+                "total_parcelas": it.get("total_parcelas"),
+                "fatura": it.get("fatura"),
+                "conta_id": it.get("conta_id"),
+                "cartao_id": it.get("cartao_id"),
+                "categoria_id": cat_id,
+                "subcategoria_id": it.get("subcategoria_id"),
+                "categoria_nome": cat_nome,
+                "categoria_cor": cat_cor,
+                "subcategoria_nome": sub_obj.get("nome"),
+                "conta_nome": cta_obj.get("nome"),
+                "cartao_nome": crt_obj.get("nome"),
+                "cartao_cor": crt_obj.get("cor"),
+            })
+
+            if no_mes:
+                qtd_mes += 1
+                if tp == "Receita":
+                    rec_mes += val
+                    if val > 0:
+                        dias_entrada_set.add(dt_str)
+                    ch_c = str(cat_id or cat_nome)
+                    if ch_c not in rec_cat_map:
+                        rec_cat_map[ch_c] = {"categoria_id": cat_id, "categoria": cat_nome, "cor": cat_cor, "total": 0.0, "qtd": 0}
+                    rec_cat_map[ch_c]["total"] += val
+                    rec_cat_map[ch_c]["qtd"] += 1
+                elif tp == "Despesa":
+                    desp_mes += val
+                    if val > 0:
+                        dias_saida_set.add(dt_str)
+                    if tem_cartao:
+                        desp_cartao_mes += val
+                    else:
+                        desp_conta_mes += val
+                    ch_c = str(cat_id or cat_nome)
+                    if ch_c not in desp_cat_map:
+                        desp_cat_map[ch_c] = {"categoria_id": cat_id, "categoria": cat_nome, "cor": cat_cor, "total": 0.0, "qtd": 0}
+                    desp_cat_map[ch_c]["total"] += val
+                    desp_cat_map[ch_c]["qtd"] += 1
+
+        maior_saida = max(
+            (d["total_despesas"] for d in dias_map.values() if d.get("no_mes_atual")),
+            default=0.0,
+        )
+        desp_cats = sorted(desp_cat_map.values(), key=lambda x: x["total"], reverse=True)
+        for dc in desp_cats:
+            dc["percentual"] = round((dc["total"] / desp_mes * 100.0), 1) if desp_mes > 0 else 0.0
+        rec_cats = sorted(rec_cat_map.values(), key=lambda x: x["total"], reverse=True)
+        for rc in rec_cats:
+            rc["percentual"] = round((rc["total"] / rec_mes * 100.0), 1) if rec_mes > 0 else 0.0
+
+        vazio["kpis"] = {
+            "receitas_mes": rec_mes,
+            "despesas_mes": desp_mes,
+            "resultado_mes": rec_mes - desp_mes,
+            "despesas_conta_mes": desp_conta_mes,
+            "despesas_cartao_mes": desp_cartao_mes,
+            "dias_com_saida": len(dias_saida_set),
+            "dias_com_entrada": len(dias_entrada_set),
+            "qtd_lancamentos_mes": qtd_mes,
+            "maior_saida_dia": maior_saida,
+        }
+        vazio["dias"] = sorted(dias_map.values(), key=lambda x: x["data"])
+        vazio["despesas_por_categoria"] = desp_cats
+        vazio["receitas_por_categoria"] = rec_cats
+        return _aplicar_filtro_periodo_ao_calendario(vazio, d_ini_str, d_fim_str)
+    except Exception:
+        pass
+
+    return _aplicar_filtro_periodo_ao_calendario(vazio, d_ini_str, d_fim_str)
+
+
+async def obter_calendario_financeiro_mes_async(
+    mes: int,
+    ano: int,
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+) -> dict:
+    return await asyncio.to_thread(obter_calendario_financeiro_mes, mes, ano, data_inicio, data_fim)

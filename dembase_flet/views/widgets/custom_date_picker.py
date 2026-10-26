@@ -6,10 +6,14 @@ Seletor de Datas e Períodos estilo Mobills:
    mês/ano e suporte a seleção de data única ("single") e intervalo ("range").
 2. abrir_seletor_data_modal: Modal elegante para seleção de data individual
    (Lançamentos, Vencimentos, etc.) com atalhos rápidos (Ontem, Hoje, Amanhã).
-3. abrir_modal_periodo_mobills: Modal definitivo de períodos com 3 abas:
+3. abrir_modal_periodo_mobills: Modal definitivo de períodos com:
+   - Barra de "⭐ Filtros Salvos (Mais Usados)": 'Dia 05 a 20', 'Dia 20 a 30/31',
+     '1ª Quinzena (01 a 15)', '2ª Quinzena (16 a 30/31)', 'Mês Inteiro', mais
+     filtros personalizados salvos pelo usuário.
    - "Mensal": Grade 4x3 de 12 meses com seleção instantânea em 1 toque.
    - "Ciclos & Atalhos": Presets rápidos e ciclo flexível (dia de salário).
-   - "Personalizado": Calendário visual de seleção de intervalo com resumo de dias.
+   - "Personalizado": Calendário visual de seleção de intervalo + botão para
+     salvar qualquer intervalo nos Favoritos ("Mais Usados").
 4. CampoSeletorData: Componente visual de campo para formulários com visual
    premium, atalhos rápidos e abertura integrada do modal.
 =============================================================================
@@ -22,9 +26,10 @@ from typing import Callable
 import flet as ft
 
 from core import theme as T
-from core.theme import pad, borda
+from core.theme import pad, borda, mostrar_feedback
 from core.constants import formatar_data_br
-from core.periodo import calcular_ciclo
+from core.periodo import calcular_ciclo, calcular_intervalo_dias_mes
+from core import storage
 
 # =============================================================================
 # CONSTANTES DE IDIOMA (PORTUGUÊS BRASIL)
@@ -258,7 +263,6 @@ class CustomCalendarGrid(ft.Container):
         cal = calendar.Calendar(firstweekday=6)  # Domingo como primeiro dia da semana
         semanas = cal.monthdatescalendar(self.ano, self.mes)
 
-        # 1. Linha com nomes dos dias da semana
         header_dias = ft.Row(
             spacing=2,
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -282,16 +286,13 @@ class CustomCalendarGrid(ft.Container):
                 if self.modo == "single":
                     eh_selecionado = (d == self.data_selecionada)
                     esta_no_intervalo = False
-                    eh_ponta_intervalo = False
                 else:
                     eh_selecionado = (d == self.range_inicio or d == self.range_fim)
-                    eh_ponta_intervalo = eh_selecionado
                     esta_no_intervalo = (
                         bool(self.range_inicio and self.range_fim)
                         and (self.range_inicio < d < self.range_fim)
                     )
 
-                # Estilização da célula
                 if eh_selecionado:
                     cor_bg = T.PRIMARY
                     cor_txt = T.ON_PRIMARY
@@ -349,7 +350,6 @@ class CustomCalendarGrid(ft.Container):
         self.col_dias.controls = [header_dias, *linhas_semanas]
 
     def _clicar_dia(self, d: date):
-        # Se clicou em dia de outro mês, ajusta mês/ano automaticamente
         if d.month != self.mes:
             self.mes = d.month
             self.ano = d.year
@@ -364,7 +364,6 @@ class CustomCalendarGrid(ft.Container):
             if callable(self.on_date_click):
                 self.on_date_click(d)
         else:
-            # Modo range: lógica de início e fim
             if self.range_inicio is None or (self.range_inicio is not None and self.range_fim is not None):
                 self.range_inicio = d
                 self.range_fim = None
@@ -416,13 +415,6 @@ def abrir_seletor_data_modal(
     on_select: Callable[[date], None] | None = None,
     titulo: str = "Selecionar Data",
 ):
-    """
-    Abre um modal de seleção de data com UX premium no estilo Mobills:
-    - Cabeçalho com data por extenso em destaque.
-    - Atalhos rápidos (Ontem, Hoje, Amanhã).
-    - Calendário visual interativo com navegação rápida de meses.
-    - Confirmação direta.
-    """
     data_sel = [data_inicial or date.today()]
 
     lbl_data_extenso = ft.Text(
@@ -574,7 +566,7 @@ def abrir_seletor_data_modal(
 
 
 # =============================================================================
-# COMPONENTE 3: MODAL DE PERÍODO DEFINITIVO (MOBILLS STYLE)
+# COMPONENTE 3: MODAL DE PERÍODO DEFINITIVO (MOBILLS STYLE + FILTROS SALVOS)
 # =============================================================================
 def abrir_modal_periodo_mobills(
     page: ft.Page,
@@ -583,18 +575,168 @@ def abrir_modal_periodo_mobills(
 ):
     """
     Modal de seleção de período flexível com usabilidade de alta performance:
-    - Aba 'Mensal': Navegação de anos e grade de 12 meses. Clique em 1 mês = seleção imediata em 1 toque!
-    - Aba 'Ciclos & Atalhos': Ciclo Salarial configurável e atalhos rápidos (30d, 7d, Mês atual).
-    - Aba 'Personalizado': Calendário visual com seleção de intervalo (Início → Fim) e contagem de dias.
+    - Barra permanente de '⭐ Filtros Mais Usados (Salvos)':
+      'Dia 05 a 20', 'Dia 20 a 30/31', '1ª Quinzena', '2ª Quinzena', 'Mês Inteiro'
+      + filtros personalizados salvos pelo usuário (aplicação em 1 clique!).
+    - Aba 'Mensal': Navegação de anos e grade de 12 meses.
+    - Aba 'Ciclos & Atalhos': Ciclo Salarial configurável e atalhos rápidos.
+    - Aba 'Personalizado': Calendário visual com seleção de intervalo (Início → Fim)
+      e botão '⭐ Salvar nos Favoritos'.
     """
-    temp_ini = [estado_periodo["data_inicio"]]
-    temp_fim = [estado_periodo["data_fim"]]
+    d_ini_init = estado_periodo["data_inicio"]
+    d_fim_init = estado_periodo["data_fim"]
+    if isinstance(d_ini_init, str):
+        d_ini_init = date.fromisoformat(d_ini_init[:10])
+    if isinstance(d_fim_init, str):
+        d_fim_init = date.fromisoformat(d_fim_init[:10])
+
+    temp_ini = [d_ini_init]
+    temp_fim = [d_fim_init]
     temp_modo = [estado_periodo.get("modo", "mes")]
     temp_dia_ciclo = [estado_periodo.get("dia_ciclo", 1)]
-    temp_ano_mensal = [estado_periodo.get("ano", temp_fim[0].year)]
-    temp_mes_mensal = [estado_periodo.get("mes", temp_fim[0].month)]
+    temp_ano_mensal = [int(estado_periodo.get("ano", temp_fim[0].year))]
+    temp_mes_mensal = [int(estado_periodo.get("mes", temp_fim[0].month))]
+    temp_ate_fim_mes = [bool(estado_periodo.get("ate_fim_mes", False))]
+    temp_filtro_id = [estado_periodo.get("filtro_id")]
 
     aba_ativa = [0 if temp_modo[0] == "mes" else (1 if temp_modo[0] == "ciclo" else 2)]
+
+    # -------------------------------------------------------------------------
+    # SEÇÃO GLOBAL: FILTROS SALVOS / MAIS USADOS (1-CLICK)
+    # -------------------------------------------------------------------------
+    row_filtros_salvos = ft.Row(spacing=6, wrap=True)
+
+    def _aplicar_filtro_salvo(fav: dict):
+        m = temp_mes_mensal[0]
+        a = temp_ano_mensal[0]
+        dia_i = int(fav.get("dia_ini") or 1)
+        dia_f = int(fav.get("dia_fim") or 31)
+        ate_fim = bool(fav.get("ate_fim_mes", False))
+        fid = fav.get("id")
+
+        d_i, d_f = calcular_intervalo_dias_mes(m, a, dia_i, dia_f, ate_fim_mes=ate_fim)
+        ult_m = calendar.monthrange(a, m)[1]
+        eh_mes_cheio = (d_i.day == 1 and d_f.day == ult_m)
+
+        estado_res = {
+            "modo": "mes" if eh_mes_cheio else "faixa_mes",
+            "mes": m,
+            "ano": a,
+            "data_inicio": d_i,
+            "data_fim": d_f,
+            "dia_ciclo": temp_dia_ciclo[0],
+            "ate_fim_mes": ate_fim,
+            "filtro_id": fid,
+        }
+        page.pop_dialog()
+        if callable(on_confirm):
+            on_confirm(estado_res)
+
+    def _remover_favorito_custom(fid: str):
+        storage.remover_filtro_periodo_favorito_sync(page, fid)
+        _reconstruir_chips_favoritos()
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    def _reconstruir_chips_favoritos():
+        favoritos = storage.obter_filtros_periodo_favoritos(page)
+        row_filtros_salvos.controls.clear()
+        m = temp_mes_mensal[0]
+        a = temp_ano_mensal[0]
+        ult_m = calendar.monthrange(a, m)[1]
+
+        for fav in favoritos:
+            fid = str(fav.get("id") or "")
+            nome_f = str(fav.get("nome") or "")
+            d_i_f = int(fav.get("dia_ini") or 1)
+            d_f_f = ult_m if fav.get("ate_fim_mes") else min(ult_m, int(fav.get("dia_fim") or ult_m))
+            eh_fixo = bool(fav.get("fixo", True))
+
+            ativo = (
+                temp_ini[0].month == m
+                and temp_fim[0].month == m
+                and temp_ini[0].day == min(ult_m, d_i_f)
+                and temp_fim[0].day == d_f_f
+            )
+
+            controles_chip: list[ft.Control] = [
+                ft.Icon(
+                    ft.Icons.BOOKMARK_ROUNDED if ativo else ft.Icons.BOOKMARK_BORDER_ROUNDED,
+                    size=13,
+                    color=T.ON_PRIMARY if ativo else T.PRIMARY,
+                ),
+                ft.Text(
+                    nome_f,
+                    size=11.5,
+                    weight=ft.FontWeight.BOLD if ativo else ft.FontWeight.W_600,
+                    color=T.ON_PRIMARY if ativo else T.TEXT_PRIMARY,
+                ),
+            ]
+            if not eh_fixo:
+                controles_chip.append(
+                    ft.GestureDetector(
+                        on_tap=lambda _, id_rm=fid: _remover_favorito_custom(id_rm),
+                        content=ft.Icon(
+                            ft.Icons.CLOSE_ROUNDED,
+                            size=13,
+                            color=T.ON_PRIMARY if ativo else T.TEXT_MUTED,
+                        ),
+                    )
+                )
+
+            row_filtros_salvos.controls.append(
+                ft.Container(
+                    padding=pad(h=10, v=6),
+                    bgcolor=T.PRIMARY if ativo else T.SURFACE_ALT,
+                    border_radius=12,
+                    border=borda(1, T.PRIMARY if ativo else f"{T.PRIMARY}45"),
+                    ink=True,
+                    tooltip=f"Aplicar {nome_f} em {MESES_PT[m - 1]}/{a}",
+                    on_click=lambda _, f_item=fav: _aplicar_filtro_salvo(f_item),
+                    content=ft.Row(spacing=4, tight=True, controls=controles_chip),
+                )
+            )
+
+    _reconstruir_chips_favoritos()
+
+    bloco_filtros_salvos = ft.Container(
+        padding=pad(h=10, v=8),
+        bgcolor=f"{T.SURFACE_ALT}90",
+        border_radius=12,
+        border=borda(),
+        content=ft.Column(
+            spacing=6,
+            tight=True,
+            controls=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    controls=[
+                        ft.Row(
+                            spacing=5,
+                            tight=True,
+                            controls=[
+                                ft.Icon(ft.Icons.STAR_ROUNDED, size=15, color=T.WARNING),
+                                ft.Text(
+                                    "Filtros Salvos (Mais Usados):",
+                                    size=11.5,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=T.TEXT_PRIMARY,
+                                ),
+                            ],
+                        ),
+                        ft.Text(
+                            "1 clique para aplicar",
+                            size=10,
+                            color=T.TEXT_MUTED,
+                        ),
+                    ],
+                ),
+                row_filtros_salvos,
+            ],
+        ),
+    )
 
     # -------------------------------------------------------------------------
     # ABA 1: VISÃO MENSAL (1-TAP INSTANTÂNEO)
@@ -605,6 +747,7 @@ def abrir_modal_periodo_mobills(
         temp_ano_mensal[0] += passo
         lbl_ano_mensal.value = str(temp_ano_mensal[0])
         _reconstruir_grid_12_meses()
+        _reconstruir_chips_favoritos()
         try:
             page.update()
         except Exception:
@@ -613,6 +756,8 @@ def abrir_modal_periodo_mobills(
     def _selecionar_mes_imediato(mes_num: int):
         temp_mes_mensal[0] = mes_num
         a = temp_ano_mensal[0]
+        # Se o usuário estava com uma faixa salva ativa (ex: Dia 05 a 20 ou Dia 20 a 30/31),
+        # mantém o mês atualizado mas aplica o mês cheio (ou permite clicar nos chips salvos acima)
         ult = calendar.monthrange(a, mes_num)[1]
         estado_resultado = {
             "modo": "mes",
@@ -621,6 +766,8 @@ def abrir_modal_periodo_mobills(
             "data_inicio": date(a, mes_num, 1),
             "data_fim": date(a, mes_num, ult),
             "dia_ciclo": temp_dia_ciclo[0],
+            "ate_fim_mes": True,
+            "filtro_id": "mes_inteiro",
         }
         page.pop_dialog()
         if callable(on_confirm):
@@ -715,7 +862,7 @@ def abrir_modal_periodo_mobills(
             ),
             col_12_meses,
             ft.Text(
-                "💡 Dica: Toque em qualquer mês para abrir o relatório instantaneamente.",
+                "💡 Dica: Escolha um filtro salvo acima (ex: Dia 05 a 20 ou Dia 20 a 30/31) ou toque em um mês.",
                 size=11,
                 color=T.TEXT_MUTED,
                 italic=True,
@@ -782,20 +929,24 @@ def abrir_modal_periodo_mobills(
             temp_fim[0] = date(hoje.year, hoje.month, ult)
             temp_mes_mensal[0] = hoje.month
             temp_ano_mensal[0] = hoje.year
+            temp_ate_fim_mes[0] = True
         elif codigo == "30d":
             temp_fim[0] = hoje
             temp_ini[0] = hoje - timedelta(days=29)
+            temp_ate_fim_mes[0] = False
         elif codigo == "7d":
             temp_fim[0] = hoje
             temp_ini[0] = hoje - timedelta(days=6)
+            temp_ate_fim_mes[0] = False
         elif codigo == "ano_atual":
             temp_ini[0] = date(hoje.year, 1, 1)
             temp_fim[0] = date(hoje.year, 12, 31)
+            temp_ate_fim_mes[0] = False
 
         _fechar_e_salvar()
 
     conteudo_aba_ciclos = ft.Column(
-        spacing=14,
+        spacing=12,
         tight=True,
         controls=[
             ft.Text("Atalhos Rápidos:", size=12, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
@@ -837,11 +988,11 @@ def abrir_modal_periodo_mobills(
                         spacing=6,
                         controls=[
                             ft.Icon(ft.Icons.SYNC_ALT_ROUNDED, size=16, color=T.PRIMARY),
-                            ft.Text("Ciclo Salarial / Fatura:", size=12, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                            ft.Text("Ciclo Entre Meses (Ex: 20/Set a 19/Out):", size=12, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
                         ],
                     ),
                     ft.Text(
-                        "Configure o dia em que seu ciclo financeiro se renova (ex: salário cai todo dia 20):",
+                        "Configure o dia em que seu ciclo entre meses se renova:",
                         size=11.5,
                         color=T.TEXT_MUTED,
                     ),
@@ -877,10 +1028,11 @@ def abrir_modal_periodo_mobills(
         temp_ini[0] = d_i
         temp_fim[0] = d_f
         temp_modo[0] = "ciclo"
+        temp_ate_fim_mes[0] = False
         _fechar_e_salvar()
 
     # -------------------------------------------------------------------------
-    # ABA 3: PERSONALIZADO (VISUAL RANGE PICKER)
+    # ABA 3: PERSONALIZADO (VISUAL RANGE PICKER + SALVAR NOS FAVORITOS)
     # -------------------------------------------------------------------------
     lbl_resumo_range = ft.Text("", size=13, weight=ft.FontWeight.BOLD, color=T.PRIMARY)
 
@@ -892,7 +1044,23 @@ def abrir_modal_periodo_mobills(
         elif ini:
             temp_fim[0] = ini
         temp_modo[0] = "custom"
+        temp_mes_mensal[0] = temp_fim[0].month
+        temp_ano_mensal[0] = temp_fim[0].year
+        ult_f = calendar.monthrange(temp_fim[0].year, temp_fim[0].month)[1]
+        temp_ate_fim_mes[0] = (
+            temp_ini[0].month == temp_fim[0].month
+            and temp_fim[0].day == ult_f
+        )
         _atualizar_resumo_range()
+
+    def _ao_mudar_mes_grid_custom(novo_m: int, novo_a: int):
+        temp_mes_mensal[0] = novo_m
+        temp_ano_mensal[0] = novo_a
+        _reconstruir_chips_favoritos()
+        try:
+            row_filtros_salvos.update()
+        except Exception:
+            pass
 
     def _atualizar_resumo_range():
         d_i, d_f = temp_ini[0], temp_fim[0]
@@ -914,7 +1082,29 @@ def abrir_modal_periodo_mobills(
         range_fim=temp_fim[0],
         modo="range",
         on_range_change=_ao_mudar_range,
+        on_month_change=_ao_mudar_mes_grid_custom,
     )
+
+    def _salvar_intervalo_atual_nos_favoritos(_=None):
+        d_i, d_f = temp_ini[0], temp_fim[0]
+        if d_f < d_i:
+            d_i, d_f = d_f, d_i
+        ult_m = calendar.monthrange(d_f.year, d_f.month)[1]
+        ate_fim = (d_i.month == d_f.month and d_f.day == ult_m)
+        nome_sug = f"Dia {d_i.day:02d} a 30/31" if ate_fim else f"Dia {d_i.day:02d} a {d_f.day:02d}"
+        storage.salvar_filtro_periodo_favorito_sync(
+            page=page,
+            nome=nome_sug,
+            dia_ini=d_i.day,
+            dia_fim=d_f.day,
+            ate_fim_mes=ate_fim,
+        )
+        _reconstruir_chips_favoritos()
+        mostrar_feedback(page, f"Filtro '{nome_sug}' salvo nos Mais Usados!", "sucesso")
+        try:
+            page.update()
+        except Exception:
+            pass
 
     conteudo_aba_custom = ft.Column(
         spacing=10,
@@ -931,28 +1121,55 @@ def abrir_modal_periodo_mobills(
                 border_radius=10,
                 border=borda(1, f"{T.PRIMARY}35"),
                 content=ft.Row(
-                    spacing=6,
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
-                        ft.Icon(ft.Icons.DATE_RANGE_ROUNDED, color=T.PRIMARY, size=16),
-                        lbl_resumo_range,
+                        ft.Row(
+                            spacing=6,
+                            controls=[
+                                ft.Icon(ft.Icons.DATE_RANGE_ROUNDED, color=T.PRIMARY, size=16),
+                                lbl_resumo_range,
+                            ],
+                        ),
                     ],
                 ),
             ),
             grid_range,
-            ft.FilledButton(
-                content=ft.Row(
-                    spacing=6,
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    controls=[
-                        ft.Icon(ft.Icons.CHECK_ROUNDED, color=T.ON_PRIMARY, size=16),
-                        ft.Text("Aplicar Intervalo", color=T.ON_PRIMARY, weight=ft.FontWeight.BOLD),
-                    ],
-                ),
-                style=ft.ButtonStyle(
-                    bgcolor=T.PRIMARY,
-                    shape=ft.RoundedRectangleBorder(radius=10),
-                ),
-                on_click=lambda _: _fechar_e_salvar(),
+            ft.Row(
+                spacing=8,
+                controls=[
+                    ft.OutlinedButton(
+                        content=ft.Row(
+                            spacing=4,
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            tight=True,
+                            controls=[
+                                ft.Icon(ft.Icons.STAR_BORDER_ROUNDED, color=T.WARNING, size=16),
+                                ft.Text("Salvar Filtro", color=T.TEXT_PRIMARY, size=12, weight=ft.FontWeight.W_600),
+                            ],
+                        ),
+                        style=ft.ButtonStyle(
+                            shape=ft.RoundedRectangleBorder(radius=10),
+                        ),
+                        tooltip="Salvar este intervalo de dias nos Filtros Mais Usados",
+                        on_click=_salvar_intervalo_atual_nos_favoritos,
+                    ),
+                    ft.FilledButton(
+                        expand=True,
+                        content=ft.Row(
+                            spacing=6,
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            controls=[
+                                ft.Icon(ft.Icons.CHECK_ROUNDED, color=T.ON_PRIMARY, size=16),
+                                ft.Text("Aplicar Intervalo", color=T.ON_PRIMARY, weight=ft.FontWeight.BOLD),
+                            ],
+                        ),
+                        style=ft.ButtonStyle(
+                            bgcolor=T.PRIMARY,
+                            shape=ft.RoundedRectangleBorder(radius=10),
+                        ),
+                        on_click=lambda _: _fechar_e_salvar(),
+                    ),
+                ],
             ),
         ],
     )
@@ -1024,12 +1241,16 @@ def abrir_modal_periodo_mobills(
         if d_f < d_i:
             d_i, d_f = d_f, d_i
 
-        # Se for exatamente o mês inteiro, normaliza para modo 'mes'
         ult_dia = calendar.monthrange(d_i.year, d_i.month)[1]
         if d_i.day == 1 and d_f == date(d_i.year, d_i.month, ult_dia) and temp_modo[0] != "ciclo":
             modo_final = "mes"
+            ate_fim_final = True
+        elif d_i.month == d_f.month and d_i.year == d_f.year and temp_modo[0] != "ciclo":
+            modo_final = "faixa_mes"
+            ate_fim_final = (d_f.day == ult_dia) or bool(temp_ate_fim_mes[0])
         else:
             modo_final = temp_modo[0]
+            ate_fim_final = False
 
         res = {
             "modo": modo_final,
@@ -1038,6 +1259,8 @@ def abrir_modal_periodo_mobills(
             "dia_ciclo": temp_dia_ciclo[0],
             "mes": d_f.month,
             "ano": d_f.year,
+            "ate_fim_mes": ate_fim_final,
+            "filtro_id": temp_filtro_id[0],
         }
         page.pop_dialog()
         if callable(on_confirm):
@@ -1065,11 +1288,13 @@ def abrir_modal_periodo_mobills(
             ],
         ),
         content=ft.Container(
-            width=380,
+            width=400,
             content=ft.Column(
                 tight=True,
-                spacing=12,
+                spacing=10,
+                scroll=ft.ScrollMode.AUTO,
                 controls=[
+                    bloco_filtros_salvos,
                     ft.Container(
                         padding=pad(all_=3),
                         bgcolor=T.SURFACE_ALT,

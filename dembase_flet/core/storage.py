@@ -421,3 +421,261 @@ def carregar_ultima_rota_sync(page: ft.Page) -> str:
         return str(val_sess).strip()
 
     return "/dashboard"
+
+
+# =============================================================================
+# GESTÃO DE SOBRA / CAIXA LIVRE DO PERÍODO (SEPARADA DOS 6 POTES)
+# =============================================================================
+def obter_percentual_sobra_investimento(page: ft.Page, padrao: float = 50.0) -> float:
+    """Retorna o percentual (0.0 a 100.0) da sobra destinado para Investimento/Poupança."""
+    val_sess = session_get(page, "sobra_pct_investimento")
+    if isinstance(val_sess, (int, float)):
+        return max(0.0, min(100.0, float(val_sess)))
+    local = _ler_local_json()
+    val_local = local.get("sobra_pct_investimento")
+    if isinstance(val_local, (int, float)):
+        pct = max(0.0, min(100.0, float(val_local)))
+        session_set(page, "sobra_pct_investimento", pct)
+        return pct
+    return max(0.0, min(100.0, float(padrao)))
+
+
+def salvar_percentual_sobra_investimento_sync(page: ft.Page, percentual: float) -> None:
+    """Persiste de forma síncrona o percentual da sobra destinado para Investimento/Poupança."""
+    pct = round(max(0.0, min(100.0, float(percentual))), 1)
+    session_set(page, "sobra_pct_investimento", pct)
+    dados = _ler_local_json()
+    dados["sobra_pct_investimento"] = pct
+    _salvar_local_json(dados)
+
+
+def obter_painel_sobra_expandido(page: ft.Page, padrao: bool = False) -> bool:
+    """Retorna se o painel inline de Destinação da Sobra está expandido."""
+    val_sess = session_get(page, "sobra_painel_expandido")
+    if isinstance(val_sess, bool):
+        return val_sess
+    local = _ler_local_json()
+    val_local = local.get("sobra_painel_expandido")
+    if isinstance(val_local, bool):
+        session_set(page, "sobra_painel_expandido", val_local)
+        return val_local
+    return bool(padrao)
+
+
+def salvar_painel_sobra_expandido_sync(page: ft.Page, expandido: bool) -> None:
+    """Salva o estado de expansão do painel de Destinação da Sobra."""
+    exp = bool(expandido)
+    session_set(page, "sobra_painel_expandido", exp)
+    dados = _ler_local_json()
+    dados["sobra_painel_expandido"] = exp
+    _salvar_local_json(dados)
+
+
+
+# =============================================================================
+# ORDEM PERSONALIZÁVEL DAS SEÇÕES E KPIS DO DASHBOARD
+# =============================================================================
+SECOES_DASHBOARD_PADRAO = ["kpis", "potes", "calendario", "graficos", "acoes"]
+KPIS_DASHBOARD_PADRAO = ["caixa_livre", "receitas", "despesas", "faturas"]
+
+
+def obter_ordem_secoes_dashboard(page: ft.Page, padrao: list[str] | None = None) -> list[str]:
+    """Retorna a lista ordenada de seções visíveis no Dashboard."""
+    base = list(padrao or SECOES_DASHBOARD_PADRAO)
+    val_sess = session_get(page, "ordem_secoes_dashboard")
+    if isinstance(val_sess, list) and val_sess:
+        validos = [s for s in val_sess if s in SECOES_DASHBOARD_PADRAO]
+        if validos:
+            return validos
+    local = _ler_local_json()
+    val_local = local.get("ordem_secoes_dashboard")
+    if isinstance(val_local, list) and val_local:
+        validos = [s for s in val_local if s in SECOES_DASHBOARD_PADRAO]
+        # Migração automática única: inclui 'calendario' em instalações existentes
+        if "calendario" not in validos and not local.get("calendario_migrado_dashboard"):
+            idx = validos.index("potes") + 1 if "potes" in validos else len(validos)
+            validos.insert(idx, "calendario")
+            local["ordem_secoes_dashboard"] = validos
+            local["calendario_migrado_dashboard"] = True
+            _salvar_local_json(local)
+        if validos:
+            session_set(page, "ordem_secoes_dashboard", validos)
+            return validos
+    return base
+
+
+def salvar_ordem_secoes_dashboard_sync(page: ft.Page, secoes: list[str]) -> None:
+    """Salva a ordem personalizada das seções do Dashboard."""
+    validos = [s for s in secoes if s in SECOES_DASHBOARD_PADRAO]
+    if not validos:
+        validos = list(SECOES_DASHBOARD_PADRAO)
+    session_set(page, "ordem_secoes_dashboard", validos)
+    dados = _ler_local_json()
+    dados["ordem_secoes_dashboard"] = validos
+    dados["calendario_migrado_dashboard"] = True
+    _salvar_local_json(dados)
+
+
+def obter_ordem_kpis_dashboard(page: ft.Page, padrao: list[str] | None = None) -> list[str]:
+    """Retorna a ordem dos 4 cards de KPI no topo do Dashboard."""
+    base = list(padrao or KPIS_DASHBOARD_PADRAO)
+    val_sess = session_get(page, "ordem_kpis_dashboard")
+    if isinstance(val_sess, list) and val_sess:
+        validos = [k for k in val_sess if k in KPIS_DASHBOARD_PADRAO]
+        for k in KPIS_DASHBOARD_PADRAO:
+            if k not in validos:
+                validos.append(k)
+        return validos
+    local = _ler_local_json()
+    val_local = local.get("ordem_kpis_dashboard")
+    if isinstance(val_local, list) and val_local:
+        validos = [k for k in val_local if k in KPIS_DASHBOARD_PADRAO]
+        for k in KPIS_DASHBOARD_PADRAO:
+            if k not in validos:
+                validos.append(k)
+        session_set(page, "ordem_kpis_dashboard", validos)
+        return validos
+    return base
+
+
+def salvar_ordem_kpis_dashboard_sync(page: ft.Page, kpis_ids: list[str]) -> None:
+    """Salva a ordem personalizada dos cards de KPI no topo do Dashboard."""
+    validos = [k for k in kpis_ids if k in KPIS_DASHBOARD_PADRAO]
+    for k in KPIS_DASHBOARD_PADRAO:
+        if k not in validos:
+            validos.append(k)
+    session_set(page, "ordem_kpis_dashboard", validos)
+    dados = _ler_local_json()
+    dados["ordem_kpis_dashboard"] = validos
+    _salvar_local_json(dados)
+
+
+# =============================================================================
+# FILTROS DE PERÍODO SALVOS / FAVORITOS (EX: DIA 05 A 20, DIA 20 A 30/31)
+# =============================================================================
+FILTROS_PERIODO_FAVORITOS_PADRAO: list[dict] = [
+    {
+        "id": "dia_05_20",
+        "nome": "Dia 05 a 20",
+        "dia_ini": 5,
+        "dia_fim": 20,
+        "ate_fim_mes": False,
+        "fixo": True,
+    },
+    {
+        "id": "dia_20_fim",
+        "nome": "Dia 20 a 30/31",
+        "dia_ini": 20,
+        "dia_fim": 31,
+        "ate_fim_mes": True,
+        "fixo": True,
+    },
+    {
+        "id": "dia_01_15",
+        "nome": "1ª Quinzena (01 a 15)",
+        "dia_ini": 1,
+        "dia_fim": 15,
+        "ate_fim_mes": False,
+        "fixo": True,
+    },
+    {
+        "id": "dia_16_fim",
+        "nome": "2ª Quinzena (16 a 30/31)",
+        "dia_ini": 16,
+        "dia_fim": 31,
+        "ate_fim_mes": True,
+        "fixo": True,
+    },
+    {
+        "id": "mes_inteiro",
+        "nome": "Mês Inteiro (01 a 30/31)",
+        "dia_ini": 1,
+        "dia_fim": 31,
+        "ate_fim_mes": True,
+        "fixo": True,
+    },
+]
+
+
+def obter_filtros_periodo_favoritos(page: ft.Page | None = None) -> list[dict]:
+    """
+    Retorna a lista de filtros de período salvos (incluindo 'Dia 05 a 20' e 'Dia 20 a 30/31'
+    por padrão, mais quaisquer filtros personalizados salvos pelo usuário).
+    """
+    base = [dict(f) for f in FILTROS_PERIODO_FAVORITOS_PADRAO]
+    ids_base = {f["id"] for f in base}
+
+    custom: list[dict] = []
+    if page is not None:
+        val_sess = session_get(page, "filtros_periodo_favoritos_custom")
+        if isinstance(val_sess, list):
+            custom = [dict(x) for x in val_sess if isinstance(x, dict)]
+
+    if not custom:
+        local = _ler_local_json()
+        val_local = local.get("filtros_periodo_favoritos_custom")
+        if isinstance(val_local, list):
+            custom = [dict(x) for x in val_local if isinstance(x, dict)]
+            if page is not None:
+                session_set(page, "filtros_periodo_favoritos_custom", custom)
+
+    for item in custom:
+        fid = str(item.get("id") or "")
+        if fid and fid not in ids_base:
+            base.append(item)
+            ids_base.add(fid)
+
+    return base
+
+
+def salvar_filtro_periodo_favorito_sync(
+    page: ft.Page | None,
+    nome: str,
+    dia_ini: int,
+    dia_fim: int,
+    ate_fim_mes: bool = False,
+) -> list[dict]:
+    """
+    Salva um novo filtro de período personalizado (ex: Dia 10 a 25) nos favoritos.
+    """
+    d_i = max(1, min(31, int(dia_ini)))
+    d_f = max(d_i, min(31, int(dia_fim)))
+    fid = f"custom_{d_i:02d}_{'fim' if ate_fim_mes else f'{d_f:02d}'}"
+    rotulo = (nome or "").strip() or (
+        f"Dia {d_i:02d} a 30/31" if ate_fim_mes else f"Dia {d_i:02d} a {d_f:02d}"
+    )
+
+    local = _ler_local_json()
+    atuais = local.get("filtros_periodo_favoritos_custom")
+    lista_custom = [dict(x) for x in atuais if isinstance(x, dict)] if isinstance(atuais, list) else []
+
+    novo_obj = {
+        "id": fid,
+        "nome": rotulo,
+        "dia_ini": d_i,
+        "dia_fim": d_f,
+        "ate_fim_mes": bool(ate_fim_mes),
+        "fixo": False,
+    }
+    lista_custom = [x for x in lista_custom if x.get("id") != fid]
+    lista_custom.append(novo_obj)
+
+    local["filtros_periodo_favoritos_custom"] = lista_custom
+    _salvar_local_json(local)
+    if page is not None:
+        session_set(page, "filtros_periodo_favoritos_custom", lista_custom)
+
+    return obter_filtros_periodo_favoritos(page)
+
+
+def remover_filtro_periodo_favorito_sync(page: ft.Page | None, filtro_id: str) -> list[dict]:
+    """Remove um filtro personalizado salvo pelo usuário."""
+    local = _ler_local_json()
+    atuais = local.get("filtros_periodo_favoritos_custom")
+    if isinstance(atuais, list):
+        lista_custom = [dict(x) for x in atuais if isinstance(x, dict) and x.get("id") != filtro_id]
+        local["filtros_periodo_favoritos_custom"] = lista_custom
+        _salvar_local_json(local)
+        if page is not None:
+            session_set(page, "filtros_periodo_favoritos_custom", lista_custom)
+    return obter_filtros_periodo_favoritos(page)
