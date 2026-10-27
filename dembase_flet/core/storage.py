@@ -426,12 +426,53 @@ def carregar_ultima_rota_sync(page: ft.Page) -> str:
 # =============================================================================
 # GESTÃO DE SOBRA / CAIXA LIVRE DO PERÍODO (SEPARADA DOS 6 POTES)
 # =============================================================================
-def obter_percentual_sobra_investimento(page: ft.Page, padrao: float = 50.0) -> float:
-    """Retorna o percentual (0.0 a 100.0) da sobra destinado para Investimento/Poupança."""
+def _chave_mes_sobra(mes: int | None, ano: int | None) -> str | None:
+    if mes is not None and ano is not None:
+        try:
+            m = max(1, min(12, int(mes)))
+            a = int(ano)
+            return f"{a:04d}-{m:02d}"
+        except Exception:
+            return None
+    return None
+
+
+def obter_percentual_sobra_investimento(
+    page: ft.Page,
+    padrao: float = 50.0,
+    mes: int | None = None,
+    ano: int | None = None,
+) -> float:
+    """
+    Retorna o percentual (0.0 a 100.0) da sobra destinado para Investimento/Poupança
+    para o mês/ano específico. Se aquele mês ainda não tiver configuração própria,
+    herda do mês anterior mais recente configurado ou do padrão (50%).
+    """
+    chave_m = _chave_mes_sobra(mes, ano)
+    local = _ler_local_json()
+    mapa_mensal = local.get("sobra_pct_por_mes")
+    if not isinstance(mapa_mensal, dict):
+        mapa_mensal = {}
+
+    if chave_m:
+        sess_k = f"sobra_pct_{chave_m}"
+        val_s = session_get(page, sess_k)
+        if isinstance(val_s, (int, float)):
+            return max(0.0, min(100.0, float(val_s)))
+
+        if chave_m in mapa_mensal and isinstance(mapa_mensal[chave_m], (int, float)):
+            pct = max(0.0, min(100.0, float(mapa_mensal[chave_m])))
+            session_set(page, sess_k, pct)
+            return pct
+
+        anteriores = sorted([k for k in mapa_mensal.keys() if k < chave_m], reverse=True)
+        for k_ant in anteriores:
+            if isinstance(mapa_mensal.get(k_ant), (int, float)):
+                return max(0.0, min(100.0, float(mapa_mensal[k_ant])))
+
     val_sess = session_get(page, "sobra_pct_investimento")
     if isinstance(val_sess, (int, float)):
         return max(0.0, min(100.0, float(val_sess)))
-    local = _ler_local_json()
     val_local = local.get("sobra_pct_investimento")
     if isinstance(val_local, (int, float)):
         pct = max(0.0, min(100.0, float(val_local)))
@@ -440,12 +481,53 @@ def obter_percentual_sobra_investimento(page: ft.Page, padrao: float = 50.0) -> 
     return max(0.0, min(100.0, float(padrao)))
 
 
-def salvar_percentual_sobra_investimento_sync(page: ft.Page, percentual: float) -> None:
-    """Persiste de forma síncrona o percentual da sobra destinado para Investimento/Poupança."""
+def salvar_percentual_sobra_investimento_sync(
+    page: ft.Page,
+    percentual: float,
+    mes: int | None = None,
+    ano: int | None = None,
+) -> None:
+    """
+    Persiste de forma síncrona o percentual da sobra destinado para Investimento/Poupança
+    exclusivamente para o mês/ano informado (sem sobrescrever outros meses).
+    """
     pct = round(max(0.0, min(100.0, float(percentual))), 1)
-    session_set(page, "sobra_pct_investimento", pct)
+    chave_m = _chave_mes_sobra(mes, ano)
     dados = _ler_local_json()
-    dados["sobra_pct_investimento"] = pct
+    mapa_mensal = dados.get("sobra_pct_por_mes")
+    if not isinstance(mapa_mensal, dict):
+        mapa_mensal = {}
+
+    if chave_m:
+        session_set(page, f"sobra_pct_{chave_m}", pct)
+        mapa_mensal[chave_m] = pct
+        dados["sobra_pct_por_mes"] = mapa_mensal
+    else:
+        session_set(page, "sobra_pct_investimento", pct)
+        dados["sobra_pct_investimento"] = pct
+
+    _salvar_local_json(dados)
+
+
+def obter_trava_teto_seguro_sobra(page: ft.Page, padrao: bool = True) -> bool:
+    """Retorna se a trava de Teto Seguro (Pior Dia) está ativa no módulo de Caixa Livre."""
+    val_sess = session_get(page, "sobra_trava_teto_seguro")
+    if isinstance(val_sess, bool):
+        return val_sess
+    local = _ler_local_json()
+    val_local = local.get("sobra_trava_teto_seguro")
+    if isinstance(val_local, bool):
+        session_set(page, "sobra_trava_teto_seguro", val_local)
+        return val_local
+    return bool(padrao)
+
+
+def salvar_trava_teto_seguro_sobra_sync(page: ft.Page, travado: bool) -> None:
+    """Salva o estado da trava de Teto Seguro (Pior Dia) no módulo de Caixa Livre."""
+    trv = bool(travado)
+    session_set(page, "sobra_trava_teto_seguro", trv)
+    dados = _ler_local_json()
+    dados["sobra_trava_teto_seguro"] = trv
     _salvar_local_json(dados)
 
 

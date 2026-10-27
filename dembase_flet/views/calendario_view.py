@@ -325,10 +325,15 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         desp_tot_ac = float(acum.get("despesas_total_acum", 0) or 0)
         desp_crt_ac = float(acum.get("despesas_cartao_acum", 0) or 0)
         saldo_ac = float(acum.get("saldo_acum", rec_ac - desp_tot_ac) or 0)
+        teto_apos = float(acum.get("teto_seguro_apos_dia", max(0.0, saldo_ac)) or 0)
+        menor_apos = float(acum.get("menor_saldo_apos_dia", saldo_ac) or 0)
+        dt_garg_apos = acum.get("data_gargalo_apos_dia")
+        eh_garg_princ = bool(dia_info.get("eh_gargalo_principal") or acum.get("eh_gargalo_principal"))
 
+        tag_garg = " · ⚠️ GARGALO DO PERÍODO" if eh_garg_princ else ""
         txt_hover_data.value = (
             f"📅 Acumulado {formatar_data_br(d_ini_ac)[:5]} → {formatar_data_br(dt_str)} "
-            f"(Dia: {qtd_d} mov. | {formatar_moeda(saldo_d)})"
+            f"(Dia: {qtd_d} mov. | {formatar_moeda(saldo_d)}){tag_garg}"
         )
         chips = [
             ft.Container(
@@ -359,6 +364,19 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                     size=11.5,
                     weight=ft.FontWeight.BOLD,
                     color=T.RECEITA if saldo_ac >= 0 else T.DESPESA,
+                ),
+            ),
+            ft.Container(
+                padding=pad(h=9, v=3),
+                border_radius=6,
+                bgcolor="#06B6D422" if menor_apos >= 0 else f"{T.DESPESA}22",
+                border=borda(1.2, "#06B6D4" if menor_apos >= 0 else T.DESPESA),
+                content=ft.Text(
+                    f"🛡️ Teto Seguro: {formatar_moeda(teto_apos)}"
+                    + (f" (Piso {formatar_data_br(dt_garg_apos)[:5]})" if dt_garg_apos and abs(menor_apos - saldo_ac) > 0.01 else ""),
+                    size=11.5,
+                    weight=ft.FontWeight.BOLD,
+                    color="#06B6D4" if menor_apos >= 0 else T.DESPESA,
                 ),
             ),
         ]
@@ -416,13 +434,19 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         desp_crt_ac = float(acum.get("despesas_cartao_acum", 0) or 0)
         desp_tot_ac = float(acum.get("despesas_total_acum", 0) or 0)
         saldo_ac = float(acum.get("saldo_acum", rec_ac - desp_tot_ac) or 0)
+        teto_apos = float(acum.get("teto_seguro_apos_dia", max(0.0, saldo_ac)) or 0)
+        menor_apos = float(acum.get("menor_saldo_apos_dia", saldo_ac) or 0)
+        dt_garg_apos = acum.get("data_gargalo_apos_dia")
+        eh_garg_princ = bool(dia_info.get("eh_gargalo_principal") or acum.get("eh_gargalo_principal"))
 
         linhas = [
-            f"📅 {formatar_data_br(dt_str)} ({qtd_d} mov. no dia)",
+            f"📅 {formatar_data_br(dt_str)} ({qtd_d} mov. no dia)" + (" · ⚠️ PIOR DIA (GARGALO)" if eh_garg_princ else ""),
             f"── Acumulado ({formatar_data_br(d_ini_ac)} até {formatar_data_br(dt_str)}) ──",
             f"🟢 Receitas Acum.: {formatar_moeda(rec_ac)}",
             f"🔴 Despesas Acum.: {formatar_moeda(desp_tot_ac)} (Conta: {formatar_moeda(desp_cta_ac)} | Faturas: {formatar_moeda(desp_crt_ac)})",
             f"💰 SALDO ACUMULADO: {formatar_moeda(saldo_ac)}",
+            f"🛡️ TETO SEGURO A PARTIR DAQUI: {formatar_moeda(teto_apos)}"
+            + (f" (Menor saldo futuro: {formatar_moeda(menor_apos)} em {formatar_data_br(dt_garg_apos)})" if dt_garg_apos else ""),
             f"── Movimento Isolado do Dia ──",
             f"   • Entradas Dia: {formatar_moeda(rec_d)} | Saídas Dia: {formatar_moeda(desp_d)} (Conta: {formatar_moeda(desp_cta)} | Cartão: {formatar_moeda(desp_crt)})",
             f"   • Saldo do Dia: {formatar_moeda(saldo_d)}",
@@ -952,6 +976,48 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                         size=9.5 if mobile else 11,
                         color=cor_ic_cx,
                     ),
+                )
+            )
+
+        # Destaque visual de Gargalo (Pior Dia) ou Dia Negativo
+        acum_cel = _obter_acum_dia(dt_iso, dia_info)
+        eh_garg_princ = bool(dia_info.get("eh_gargalo_principal") or acum_cel.get("eh_gargalo_principal"))
+        eh_garg_jan = bool(dia_info.get("eh_gargalo_janela") or acum_cel.get("eh_gargalo_janela"))
+        eh_neg_dia = bool(dia_info.get("eh_dia_negativo") or acum_cel.get("eh_dia_negativo"))
+
+        if ativo_visual and (eh_garg_princ or eh_neg_dia):
+            cor_garg = T.DESPESA if eh_neg_dia else "#F59E0B"
+            borda_normal = borda(2.0, cor_garg)
+            icones_topo_dir.append(
+                ft.Container(
+                    padding=pad(h=4, v=1),
+                    border_radius=5,
+                    bgcolor=f"{cor_garg}28",
+                    content=ft.Row(
+                        spacing=2,
+                        tight=True,
+                        controls=[
+                            ft.Icon(
+                                ft.Icons.WARNING_AMBER_ROUNDED if eh_neg_dia else ft.Icons.SHIELD_ROUNDED,
+                                size=9.5 if mobile else 11,
+                                color=cor_garg,
+                            ),
+                            ft.Text(
+                                "Piso" if mobile else ("Negativo" if eh_neg_dia else "Gargalo"),
+                                size=8 if mobile else 9,
+                                weight=ft.FontWeight.BOLD,
+                                color=cor_garg,
+                            ),
+                        ],
+                    ),
+                )
+            )
+        elif ativo_visual and eh_garg_jan:
+            icones_topo_dir.append(
+                ft.Icon(
+                    ft.Icons.SHIELD_OUTLINED,
+                    size=9.5 if mobile else 11,
+                    color="#06B6D4",
                 )
             )
 
@@ -1667,6 +1733,236 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
             ),
         )
 
+        # ── Painel de Inteligência de Proteção de Fluxo de Caixa (Contra Sobra Falsa) ──
+        prot_fluxo = pacote_calendario.get("protecao_fluxo") or {}
+        sobra_proj_cal = float(prot_fluxo.get("sobra_projetada", rec_mes - desp_mes) or 0.0)
+        teto_seg_cal = float(prot_fluxo.get("teto_seguro_gasto", max(0.0, sobra_proj_cal)) or 0.0)
+        sobra_falsa_cal = float(prot_fluxo.get("sobra_falsa_travada", max(0.0, sobra_proj_cal - teto_seg_cal)) or 0.0)
+        menor_saldo_cal = float(prot_fluxo.get("menor_saldo_futuro", sobra_proj_cal) or 0.0)
+        dt_garg_cal = prot_fluxo.get("data_gargalo")
+        prox_dt_cal = prot_fluxo.get("proxima_entrada_data")
+        prox_val_cal = float(prot_fluxo.get("proxima_entrada_valor", 0.0) or 0.0)
+        tem_arm_cal = bool(prot_fluxo.get("tem_armadilha_fluxo", False))
+        fica_neg_cal = bool(prot_fluxo.get("fica_negativo_no_meio", False))
+        janelas_sob = prot_fluxo.get("janelas_sobrevivencia") or []
+
+        cor_status_prot = T.DESPESA if fica_neg_cal else ("#F59E0B" if tem_arm_cal else T.RECEITA)
+        txt_status_prot = (
+            f"🚨 Gargalo Negativo em {formatar_data_br(dt_garg_cal)} ({formatar_moeda(menor_saldo_cal)})"
+            if (fica_neg_cal and dt_garg_cal)
+            else (
+                f"⚠️ Armadilha de Sobra Falsa · Gargalo em {formatar_data_br(dt_garg_cal)}"
+                if (tem_arm_cal and dt_garg_cal)
+                else "✅ Fluxo Blindado s/ Sobra Falsa"
+            )
+        )
+
+        chips_janelas: list[ft.Control] = []
+        for j_it in janelas_sob[:6]:
+            st_j = str(j_it.get("status") or "seguro")
+            cor_j = T.DESPESA if st_j == "critico" else ("#F59E0B" if st_j == "atencao" else "#06B6D4")
+            di_j = formatar_data_br(str(j_it.get("data_inicio") or ""))[:5]
+            df_j = formatar_data_br(str(j_it.get("data_fim") or ""))[:5]
+            teto_j = float(j_it.get("teto_livre_janela", 0.0) or 0.0)
+            menor_j = float(j_it.get("menor_saldo_janela", 0.0) or 0.0)
+            desp_j = float(j_it.get("despesas_janela", 0.0) or 0.0)
+            rec_i_j = float(j_it.get("receita_inicio", 0.0) or 0.0)
+            eh_garg_m = bool(j_it.get("eh_gargalo_do_mes"))
+
+            chips_janelas.append(
+                ft.Container(
+                    padding=pad(h=10, v=7),
+                    bgcolor=f"{cor_j}14" if eh_garg_m else T.BG,
+                    border_radius=10,
+                    border=borda(1.4 if eh_garg_m else 1, f"{cor_j}75" if eh_garg_m else f"{cor_j}38"),
+                    content=ft.Column(
+                        spacing=2,
+                        tight=True,
+                        controls=[
+                            ft.Row(
+                                spacing=5,
+                                tight=True,
+                                controls=[
+                                    ft.Icon(
+                                        ft.Icons.WARNING_AMBER_ROUNDED if eh_garg_m else ft.Icons.TIMELINE_ROUNDED,
+                                        size=12,
+                                        color=cor_j,
+                                    ),
+                                    ft.Text(
+                                        f"Janela {di_j} → {df_j}" + (" (Pior Trecho)" if eh_garg_m else ""),
+                                        size=11,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=T.TEXT_PRIMARY,
+                                    ),
+                                ],
+                            ),
+                            ft.Text(
+                                f"Piso: {formatar_moeda(menor_j)} · Livre no trecho: {formatar_moeda(teto_j)}",
+                                size=10.5,
+                                weight=ft.FontWeight.W_600,
+                                color=cor_j,
+                            ),
+                            ft.Text(
+                                f"Entrada: {formatar_moeda(rec_i_j)} | Contas: {formatar_moeda(desp_j)}",
+                                size=9.5,
+                                color=T.TEXT_MUTED,
+                            ),
+                        ],
+                    ),
+                )
+            )
+
+        faixa_protecao_fluxo = ft.Container(
+            padding=pad(h=16, v=14),
+            bgcolor=T.SURFACE,
+            border_radius=16,
+            border=borda(1.2, f"{cor_status_prot}55"),
+            content=ft.Column(
+                spacing=10,
+                controls=[
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        wrap=True,
+                        spacing=8,
+                        controls=[
+                            ft.Row(
+                                spacing=8,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Container(
+                                        padding=pad(all_=7),
+                                        border_radius=9,
+                                        bgcolor=f"{cor_status_prot}1F",
+                                        content=ft.Icon(ft.Icons.SHIELD_ROUNDED, color=cor_status_prot, size=18),
+                                    ),
+                                    ft.Column(
+                                        spacing=1,
+                                        controls=[
+                                            ft.Text(
+                                                "Blindagem de Fluxo de Caixa · Janelas de Sobrevivência & Pior Dia",
+                                                size=13.5 if not mobile else 12.5,
+                                                weight=ft.FontWeight.BOLD,
+                                                color=T.TEXT_PRIMARY,
+                                            ),
+                                            ft.Text(
+                                                "Evita a ilusão da 'Sobra Falsa' mostrando exatamente quanto você pode gastar antes de cada pagamento cair.",
+                                                size=11,
+                                                color=T.TEXT_MUTED,
+                                            ),
+                                        ],
+                                    ),
+                                ],
+                            ),
+                            ft.Container(
+                                padding=pad(h=10, v=4),
+                                border_radius=16,
+                                bgcolor=f"{cor_status_prot}18",
+                                border=borda(1, f"{cor_status_prot}55"),
+                                content=ft.Text(
+                                    txt_status_prot,
+                                    size=11,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=cor_status_prot,
+                                ),
+                            ),
+                        ],
+                    ),
+                    ft.ResponsiveRow(
+                        spacing=10,
+                        run_spacing=8,
+                        controls=[
+                            ft.Container(
+                                col={"xs": 6, "sm": 3},
+                                padding=pad(h=12, v=8),
+                                bgcolor=T.BG,
+                                border_radius=10,
+                                border=borda(),
+                                content=ft.Column(
+                                    spacing=2,
+                                    controls=[
+                                        ft.Text("SOBRA PROJETADA (FIM DO MÊS)", size=9.5, weight=ft.FontWeight.BOLD, color=T.TEXT_MUTED),
+                                        ft.Text(formatar_moeda(sobra_proj_cal), size=15, weight=ft.FontWeight.BOLD, color=T.PRIMARY),
+                                        ft.Text("Soma de todas as receitas − despesas", size=10, color=T.TEXT_MUTED),
+                                    ],
+                                ),
+                            ),
+                            ft.Container(
+                                col={"xs": 6, "sm": 3},
+                                padding=pad(h=12, v=8),
+                                bgcolor=T.BG,
+                                border_radius=10,
+                                border=borda(1, "#06B6D455"),
+                                content=ft.Column(
+                                    spacing=2,
+                                    controls=[
+                                        ft.Text("🛡️ TETO SEGURO AGORA (PIOR DIA)", size=9.5, weight=ft.FontWeight.BOLD, color="#06B6D4"),
+                                        ft.Text(formatar_moeda(teto_seg_cal), size=15, weight=ft.FontWeight.BOLD, color="#06B6D4"),
+                                        ft.Text(
+                                            f"Menor saldo em {formatar_data_br(dt_garg_cal)}" if dt_garg_cal else "Disponível s/ negativar",
+                                            size=10,
+                                            color=T.TEXT_MUTED,
+                                        ),
+                                    ],
+                                ),
+                            ),
+                            ft.Container(
+                                col={"xs": 6, "sm": 3},
+                                padding=pad(h=12, v=8),
+                                bgcolor=T.BG,
+                                border_radius=10,
+                                border=borda(1, "#F59E0B55" if sobra_falsa_cal > 0 else T.BORDER),
+                                content=ft.Column(
+                                    spacing=2,
+                                    controls=[
+                                        ft.Text("🔒 SOBRA FALSA / RETIDA", size=9.5, weight=ft.FontWeight.BOLD, color="#F59E0B"),
+                                        ft.Text(formatar_moeda(sobra_falsa_cal), size=15, weight=ft.FontWeight.BOLD, color="#F59E0B"),
+                                        ft.Text("Só entra após o gargalo do período", size=10, color=T.TEXT_MUTED),
+                                    ],
+                                ),
+                            ),
+                            ft.Container(
+                                col={"xs": 6, "sm": 3},
+                                padding=pad(h=12, v=8),
+                                bgcolor=T.BG,
+                                border_radius=10,
+                                border=borda(),
+                                content=ft.Column(
+                                    spacing=2,
+                                    controls=[
+                                        ft.Text("PRÓXIMA ENTRADA DE RECEITA", size=9.5, weight=ft.FontWeight.BOLD, color=T.RECEITA),
+                                        ft.Text(
+                                            formatar_moeda(prox_val_cal) if prox_dt_cal else "—",
+                                            size=15,
+                                            weight=ft.FontWeight.BOLD,
+                                            color=T.RECEITA if prox_dt_cal else T.TEXT_MUTED,
+                                        ),
+                                        ft.Text(
+                                            f"Prevista p/ {formatar_data_br(prox_dt_cal)}" if prox_dt_cal else "Sem novas entradas no filtro",
+                                            size=10,
+                                            color=T.TEXT_MUTED,
+                                        ),
+                                    ],
+                                ),
+                            ),
+                        ],
+                    ),
+                    *(
+                        [
+                            ft.Row(
+                                spacing=8,
+                                scroll=ft.ScrollMode.ADAPTIVE,
+                                controls=chips_janelas,
+                            )
+                        ]
+                        if chips_janelas
+                        else []
+                    ),
+                ],
+            ),
+        )
+
+        col_visao_calendario.controls.append(faixa_protecao_fluxo)
         col_visao_calendario.controls.append(
             ft.ResponsiveRow(
                 spacing=14,

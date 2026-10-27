@@ -23,6 +23,11 @@ FORMAS_TRANSFERENCIA  = ["Débito", "Pix", "Dinheiro"]
 
 STATUS_OPCOES = ["Pago", "Pendente"]
 
+MESES_NOMES = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+]
+
 # Regra 50/30/20 — só aparece em Despesas
 REGRAS_5030 = ["Essencial", "Estilo de Vida", "Investimento"]
 REGRAS_META = {

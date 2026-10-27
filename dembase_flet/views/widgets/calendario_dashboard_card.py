@@ -155,10 +155,14 @@ def secao_calendario_dashboard(
         desp_tot_ac = float(acum.get("despesas_total_acum", 0) or 0)
         desp_crt_ac = float(acum.get("despesas_cartao_acum", 0) or 0)
         saldo_ac = float(acum.get("saldo_acum", rec_ac - desp_tot_ac) or 0)
+        teto_apos = float(acum.get("teto_seguro_apos_dia", max(0.0, saldo_ac)) or 0)
+        menor_apos = float(acum.get("menor_saldo_apos_dia", saldo_ac) or 0)
+        eh_garg_princ = bool(dia_info.get("eh_gargalo_principal") or acum.get("eh_gargalo_principal"))
 
         txt_hover_info.value = (
             f"📅 Acum. {formatar_data_br(d_ini_ac)[:5]} → {formatar_data_br(dt_s)} "
             f"(Dia: {qtd_d} mov. | {formatar_moeda(saldo_d)})"
+            + (" · ⚠️ GARGALO" if eh_garg_princ else "")
         )
         txt_hover_info.color = T.TEXT_PRIMARY
         row_hover_chips.controls = [
@@ -175,6 +179,18 @@ def secao_calendario_dashboard(
                     size=11,
                     weight=ft.FontWeight.BOLD,
                     color=T.RECEITA if saldo_ac >= 0 else T.DESPESA,
+                ),
+            ),
+            ft.Container(
+                padding=pad(h=7, v=2),
+                border_radius=6,
+                bgcolor="#06B6D422" if menor_apos >= 0 else f"{T.DESPESA}22",
+                border=borda(1, "#06B6D4" if menor_apos >= 0 else T.DESPESA),
+                content=ft.Text(
+                    f"🛡️ Teto Seguro: {formatar_moeda(teto_apos)}",
+                    size=11,
+                    weight=ft.FontWeight.BOLD,
+                    color="#06B6D4" if menor_apos >= 0 else T.DESPESA,
                 ),
             ),
         ]
@@ -206,13 +222,19 @@ def secao_calendario_dashboard(
         desp_crt_ac = float(acum.get("despesas_cartao_acum", 0) or 0)
         desp_tot_ac = float(acum.get("despesas_total_acum", 0) or 0)
         saldo_ac = float(acum.get("saldo_acum", rec_ac - desp_tot_ac) or 0)
+        teto_apos = float(acum.get("teto_seguro_apos_dia", max(0.0, saldo_ac)) or 0)
+        menor_apos = float(acum.get("menor_saldo_apos_dia", saldo_ac) or 0)
+        dt_garg_apos = acum.get("data_gargalo_apos_dia")
+        eh_garg_princ = bool(dia_info.get("eh_gargalo_principal") or acum.get("eh_gargalo_principal"))
 
         linhas = [
-            f"📅 {formatar_data_br(dt_s)}",
+            f"📅 {formatar_data_br(dt_s)}" + (" · ⚠️ PIOR DIA (GARGALO)" if eh_garg_princ else ""),
             f"── Acumulado ({formatar_data_br(d_ini_ac)} até {formatar_data_br(dt_s)}) ──",
             f"🟢 Receitas Acum.: {formatar_moeda(rec_ac)}",
             f"🔴 Despesas Acum.: {formatar_moeda(desp_tot_ac)} (Conta: {formatar_moeda(desp_cta_ac)} | Faturas: {formatar_moeda(desp_crt_ac)})",
             f"💰 SALDO ACUMULADO: {formatar_moeda(saldo_ac)}",
+            f"🛡️ TETO SEGURO A PARTIR DAQUI: {formatar_moeda(teto_apos)}"
+            + (f" (Menor saldo: {formatar_moeda(menor_apos)} em {formatar_data_br(dt_garg_apos)})" if dt_garg_apos else ""),
             f"── Movimento do Dia ──",
             f"   • Receita: {formatar_moeda(rec_d)} | Despesa: {formatar_moeda(desp_d)} (Conta: {formatar_moeda(desp_cta)} | Cartão: {formatar_moeda(desp_crt)})",
             f"   • Saldo do Dia: {formatar_moeda(saldo_d)}",
@@ -543,6 +565,20 @@ def secao_calendario_dashboard(
                         )
                     )
 
+                acum_cel = _obter_acum_dash(dt_iso, info_d)
+                eh_garg_princ = bool(info_d.get("eh_gargalo_principal") or acum_cel.get("eh_gargalo_principal"))
+                eh_neg_dia = bool(info_d.get("eh_dia_negativo") or acum_cel.get("eh_dia_negativo"))
+                if ativo_visual and (eh_garg_princ or eh_neg_dia):
+                    cor_g_cel = T.DESPESA if eh_neg_dia else "#F59E0B"
+                    borda_norm = borda(1.8, cor_g_cel)
+                    ic_venc.append(
+                        ft.Icon(
+                            ft.Icons.WARNING_AMBER_ROUNDED if eh_neg_dia else ft.Icons.SHIELD_ROUNDED,
+                            size=9.5 if mobile else 10.5,
+                            color=cor_g_cel,
+                        )
+                    )
+
                 rotulo_d = (
                     f"{dt_cel.day} {MESES_NOMES[dt_cel.month - 1][:3]}"
                     if (eh_multi_mes and (dt_cel.day == 1 or dt_iso == d_ini_ef))
@@ -636,6 +672,91 @@ def secao_calendario_dashboard(
 
     _render_grade()
 
+    prot_fluxo = (pacote_cal or {}).get("protecao_fluxo") or {}
+    sobra_proj_d = float(prot_fluxo.get("sobra_projetada", rec_mes - desp_mes) or 0.0)
+    teto_seg_d = float(prot_fluxo.get("teto_seguro_gasto", max(0.0, sobra_proj_d)) or 0.0)
+    sobra_falsa_d = float(prot_fluxo.get("sobra_falsa_travada", max(0.0, sobra_proj_d - teto_seg_d)) or 0.0)
+    menor_saldo_d = float(prot_fluxo.get("menor_saldo_futuro", sobra_proj_d) or 0.0)
+    dt_garg_d = prot_fluxo.get("data_gargalo")
+    prox_dt_d = prot_fluxo.get("proxima_entrada_data")
+    prox_val_d = float(prot_fluxo.get("proxima_entrada_valor", 0.0) or 0.0)
+    tem_arm_d = bool(prot_fluxo.get("tem_armadilha_fluxo", False))
+    fica_neg_d = bool(prot_fluxo.get("fica_negativo_no_meio", False))
+
+    cor_prot_d = T.DESPESA if fica_neg_d else ("#F59E0B" if tem_arm_d else "#06B6D4")
+    faixa_gargalo_dash = ft.Container(
+        padding=pad(h=12, v=8),
+        bgcolor=f"{cor_prot_d}12",
+        border_radius=10,
+        border=borda(1, f"{cor_prot_d}45"),
+        content=ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            wrap=True,
+            spacing=8,
+            controls=[
+                ft.Row(
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Icon(
+                            ft.Icons.WARNING_AMBER_ROUNDED if (fica_neg_d or tem_arm_d) else ft.Icons.SHIELD_ROUNDED,
+                            color=cor_prot_d,
+                            size=15,
+                        ),
+                        ft.Text(
+                            (
+                                f"🛡️ Teto Seguro Agora: {formatar_moeda(teto_seg_d)} "
+                                f"(Pior dia: {formatar_moeda(menor_saldo_d)} em {formatar_data_br(dt_garg_d)[:5]})"
+                            )
+                            if dt_garg_d
+                            else f"🛡️ Teto Seguro Agora: {formatar_moeda(teto_seg_d)}",
+                            size=11.5,
+                            weight=ft.FontWeight.BOLD,
+                            color=T.TEXT_PRIMARY,
+                        ),
+                    ],
+                ),
+                ft.Row(
+                    spacing=8,
+                    wrap=True,
+                    controls=[
+                        ft.Text(
+                            f"Sobra Mês: {formatar_moeda(sobra_proj_d)}",
+                            size=11,
+                            weight=ft.FontWeight.W_600,
+                            color=T.PRIMARY,
+                        ),
+                        *(
+                            [
+                                ft.Text(
+                                    f"🔒 Retido: {formatar_moeda(sobra_falsa_d)}",
+                                    size=11,
+                                    weight=ft.FontWeight.BOLD,
+                                    color="#F59E0B",
+                                )
+                            ]
+                            if sobra_falsa_d > 0.005
+                            else []
+                        ),
+                        *(
+                            [
+                                ft.Text(
+                                    f"Próx. Entrada: {formatar_moeda(prox_val_d)} ({formatar_data_br(prox_dt_d)[:5]})",
+                                    size=11,
+                                    weight=ft.FontWeight.W_600,
+                                    color=T.RECEITA,
+                                )
+                            ]
+                            if prox_dt_d and prox_val_d > 0
+                            else []
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    )
+
     return ft.Container(
         padding=pad(all_=14 if mobile else 18),
         bgcolor=T.SURFACE,
@@ -712,6 +833,7 @@ def secao_calendario_dashboard(
                         ),
                     ],
                 ),
+                faixa_gargalo_dash,
                 barra_hover,
                 col_grade_semanas,
             ],

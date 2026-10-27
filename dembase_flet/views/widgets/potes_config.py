@@ -1,8 +1,9 @@
 """
 =============================================================================
 DemBase v3 — views/widgets/potes_config.py  (Flet 1.0.1)
-Aba "Metas": renda de referência, gráfico de rosca em tempo real e sliders dos
-6 potes amarrados à validação de 100%. Sem acesso direto ao banco: usa apenas
+Aba "Metas": renda de referência, seletor de Mês/Ano independente,
+gráfico de rosca em tempo real e sliders dos 6 potes amarrados à validação
+de 100% por período. Sem acesso direto ao banco: usa apenas
 services/potes_service.py e core/potes.py.
 =============================================================================
 """
@@ -13,9 +14,10 @@ import flet_charts as fch
 
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback
-from core.constants import formatar_moeda
+from core.constants import formatar_moeda, MESES_NOMES
 from core import potes as P
 from services import potes_service as svc
+from views.shell_view import obter_estado_periodo_atual
 
 COR_ALERTA = "#F97316"
 
@@ -25,9 +27,15 @@ def _fmt_perc(v: Decimal) -> str:
 
 
 def montar_aba_potes(page: ft.Page) -> ft.Control:
-    # ── Estado ───────────────────────────────────────────────────────────────
+    # ── Estado do Mês/Ano selecionado ─────────────────────────────────────────
+    _, _, mes_ini, ano_ini = obter_estado_periodo_atual(page)
+    estado_periodo = {"mes": int(mes_ini), "ano": int(ano_ini), "herdado": False}
+
     try:
-        potes = svc.carregar_potes()
+        potes, herdado_ini = svc.carregar_potes_com_meta_mes(
+            mes=estado_periodo["mes"], ano=estado_periodo["ano"]
+        )
+        estado_periodo["herdado"] = herdado_ini
         renda = svc.ler_renda_referencia()
     except Exception as ex:
         mostrar_feedback(page, f"Erro ao carregar metas: {ex}", "erro")
@@ -38,6 +46,89 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
 
     renda_ref = [renda]                       # renda de referência atual
     linhas: list[dict] = []                   # uma por pote (controles + estado)
+
+    # ── Seletor de Mês/Ano independente ──────────────────────────────────────
+    txt_mes_ano = ft.Text(
+        "",
+        size=15,
+        weight=ft.FontWeight.BOLD,
+        color=T.TEXT_PRIMARY,
+    )
+    txt_badge_escopo = ft.Text(
+        "",
+        size=11,
+        weight=ft.FontWeight.W_600,
+        color=T.RECEITA,
+    )
+    box_badge_escopo = ft.Container(
+        padding=pad(h=10, v=4),
+        border_radius=20,
+        bgcolor=f"{T.RECEITA}18",
+        border=borda(color=f"{T.RECEITA}55"),
+        content=ft.Row(
+            spacing=5,
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Icon(ft.Icons.CALENDAR_MONTH_ROUNDED, size=13, color=T.RECEITA),
+                txt_badge_escopo,
+            ],
+        ),
+    )
+
+    def _nome_mes_ano(m: int, a: int) -> str:
+        nm = MESES_NOMES[m - 1] if 1 <= m <= 12 else f"Mês {m}"
+        return f"{nm} / {a}"
+
+    def _atualizar_cabecalho_mes():
+        m = estado_periodo["mes"]
+        a = estado_periodo["ano"]
+        rot = _nome_mes_ano(m, a)
+        txt_mes_ano.value = rot
+        if estado_periodo["herdado"]:
+            txt_badge_escopo.value = f"Herdado do mês anterior · Salve para fixar em {rot}"
+            txt_badge_escopo.color = T.WARNING
+            box_badge_escopo.bgcolor = f"{T.WARNING}18"
+            box_badge_escopo.border = borda(color=f"{T.WARNING}55")
+        else:
+            txt_badge_escopo.value = f"Metas exclusivas de {rot}"
+            txt_badge_escopo.color = T.RECEITA
+            box_badge_escopo.bgcolor = f"{T.RECEITA}18"
+            box_badge_escopo.border = borda(color=f"{T.RECEITA}55")
+        btn_salvar.content = f"Salvar Metas de {rot}"
+
+    def _recarregar_mes_selecionado():
+        m = estado_periodo["mes"]
+        a = estado_periodo["ano"]
+        try:
+            novos_potes, herd = svc.carregar_potes_com_meta_mes(mes=m, ano=a)
+            estado_periodo["herdado"] = herd
+            por_pos = {p.posicao: p for p in novos_potes}
+            for l in linhas:
+                pos = l["pote"].posicao
+                if pos in por_pos:
+                    np = por_pos[pos]
+                    l["pote"] = np
+                    l["nome"].value = np.nome
+                    l["slider"].value = int(np.percentual)
+                    l["perc"].value = str(int(np.percentual))
+            _atualizar_cabecalho_mes()
+            _atualizar_tela(montado=True)
+        except Exception as ex:
+            mostrar_feedback(page, f"Erro ao carregar metas de {_nome_mes_ano(m, a)}: {ex}", "erro")
+
+    def _mudar_mes(delta: int):
+        m = estado_periodo["mes"] + delta
+        a = estado_periodo["ano"]
+        if m < 1:
+            m = 12
+            a -= 1
+        elif m > 12:
+            m = 1
+            a += 1
+        estado_periodo["mes"] = m
+        estado_periodo["ano"] = a
+        _recarregar_mes_selecionado()
 
     # ── Renda de referência ──────────────────────────────────────────────────
     def _ao_alterar_renda(e):
@@ -209,11 +300,14 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
 
     def _salvar_metas(_):
         itens = _itens()
+        m_alvo = estado_periodo["mes"]
+        a_alvo = estado_periodo["ano"]
+        rot_alvo = _nome_mes_ano(m_alvo, a_alvo)
         try:
             nova = svc.salvar_renda_referencia(txt_renda.value)
             renda_ref[0] = nova
             txt_renda.value = formatar_moeda(float(nova))
-            salvos = svc.salvar_configuracao(itens)   # revalida soma == 100
+            salvos = svc.salvar_configuracao(itens, mes=m_alvo, ano=a_alvo)   # revalida soma == 100 e salva só neste mês/ano
         except P.ErroPotes as ex:
             mostrar_feedback(page, " ".join(ex.erros), "alerta")
             return
@@ -222,7 +316,13 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             return
         for l, novo in zip(linhas, salvos):
             l["pote"] = novo
-        mostrar_feedback(page, "Metas e valor base salvos com sucesso!", "sucesso")
+        estado_periodo["herdado"] = False
+        _atualizar_cabecalho_mes()
+        mostrar_feedback(
+            page,
+            f"Metas de {rot_alvo} salvas com sucesso! (Os demais meses permanecem intactos)",
+            "sucesso",
+        )
         _atualizar_tela()
 
     def _resetar(_):
@@ -236,6 +336,89 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
 
     btn_renda.on_click = _salvar_renda
     btn_salvar.on_click = _salvar_metas
+
+    # ── Barra de Escopo Mensal ───────────────────────────────────────────────
+    card_escopo_mes = ft.Container(
+        padding=pad(h=18, v=14),
+        bgcolor=T.SURFACE,
+        border_radius=16,
+        border=borda(color=f"{T.PRIMARY}55"),
+        content=ft.ResponsiveRow(
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
+            run_spacing=10,
+            controls=[
+                ft.Column(
+                    col={"xs": 12, "md": 6},
+                    spacing=4,
+                    controls=[
+                        ft.Row(
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[
+                                ft.Icon(ft.Icons.SHIELD_OUTLINED, size=18, color=T.PRIMARY),
+                                ft.Text(
+                                    "METAS INDEPENDENTES POR MÊS / PERÍODO",
+                                    size=11,
+                                    color=T.PRIMARY,
+                                    weight=ft.FontWeight.BOLD,
+                                ),
+                            ],
+                        ),
+                        ft.Text(
+                            "Alterar as porcentagens deste mês aplica-se exclusivamente a ele, sem alterar meses anteriores ou futuros.",
+                            size=11,
+                            color=T.TEXT_MUTED,
+                        ),
+                    ],
+                ),
+                ft.Container(
+                    col={"xs": 12, "md": 6},
+                    alignment=ft.Alignment(1, 0),
+                    content=ft.Row(
+                        alignment=ft.MainAxisAlignment.END,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=10,
+                        wrap=True,
+                        controls=[
+                            box_badge_escopo,
+                            ft.Container(
+                                padding=pad(h=6, v=4),
+                                bgcolor=T.SURFACE_ALT,
+                                border_radius=10,
+                                border=borda(),
+                                content=ft.Row(
+                                    spacing=4,
+                                    tight=True,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                    controls=[
+                                        ft.IconButton(
+                                            icon=ft.Icons.CHEVRON_LEFT_ROUNDED,
+                                            icon_size=18,
+                                            icon_color=T.TEXT_PRIMARY,
+                                            tooltip="Mês anterior",
+                                            on_click=lambda _: _mudar_mes(-1),
+                                        ),
+                                        ft.Container(
+                                            padding=pad(h=8, v=2),
+                                            content=txt_mes_ano,
+                                        ),
+                                        ft.IconButton(
+                                            icon=ft.Icons.CHEVRON_RIGHT_ROUNDED,
+                                            icon_size=18,
+                                            icon_color=T.TEXT_PRIMARY,
+                                            tooltip="Próximo mês",
+                                            on_click=lambda _: _mudar_mes(1),
+                                        ),
+                                    ],
+                                ),
+                            ),
+                        ],
+                    ),
+                ),
+            ],
+        ),
+    )
 
     # ── Layout ───────────────────────────────────────────────────────────────
     def _linha_ui(l: dict) -> ft.Column:
@@ -321,18 +504,20 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED, size=16, color=T.PRIMARY),
             ft.Text(
                 "Regra do Dashboard: Os limites dos 6 potes são calculados aplicando as porcentagens "
-                "configuradas diretamente sobre o dinheiro que realmente entrou na conta no período filtrado.",
+                "configuradas neste mês exclusivamente sobre o dinheiro que entrou na conta no período filtrado.",
                 size=11, color=T.TEXT_PRIMARY, expand=True,
             ),
         ]),
     )
 
     conteudo = ft.Column(spacing=16, controls=[
+        card_escopo_mes,
         card_renda,
         ft.ResponsiveRow(spacing=16, run_spacing=16, controls=[card_donut, card_controle]),
         nota,
     ])
 
+    _atualizar_cabecalho_mes()
     # Estado visual inicial (controles ainda não montados na página)
     _atualizar_tela(montado=False)
     return conteudo

@@ -621,4 +621,9 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
 
     renderizar_aba()
 
-    return criar_shell(page, rota_ativa=ROTA_CONFIG, conteudo=conteudo)
+    return criar_shell(
+        page,
+        rota_ativa=ROTA_CONFIG,
+        conteudo=conteudo,
+        on_periodo_change=lambda d_ini, d_fim, m, a: renderizar_aba(),
+    )

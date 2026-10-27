@@ -8,7 +8,7 @@ Apresentação puramente reativa — consome o dict de db.obter_resumo_potes().
 import flet as ft
 from core import theme as T
 from core.theme import pad, borda
-from core.constants import formatar_moeda
+from core.constants import formatar_moeda, MESES_NOMES
 
 COR_EXCEDIDO = "#DC2626"
 
@@ -133,10 +133,21 @@ def card_pote(pote: dict, on_click=None) -> ft.Container:
 
 
 def secao_potes(resumo: dict, nav_func=None, on_ajustar=None) -> ft.Column:
-    """Seção 'Metas financeiras (6 Potes)' baseada na receita real do período."""
+    """Seção 'Metas financeiras (6 Potes)' baseada na receita real do período e metas exclusivas do mês."""
     potes = resumo.get("potes") or []
     sem_pote = resumo.get("sem_pote") or {}
     renda = float(resumo.get("renda") or 0)
+    mes_ref = resumo.get("mes_referencia")
+    ano_ref = resumo.get("ano_referencia")
+
+    rot_mes = ""
+    if mes_ref and ano_ref:
+        try:
+            m_idx = int(mes_ref)
+            nm = MESES_NOMES[m_idx - 1][:3] if 1 <= m_idx <= 12 else str(mes_ref)
+            rot_mes = f"Metas de {nm}/{ano_ref}"
+        except Exception:
+            pass
 
     if renda > 0:
         subtitulo = f"Limite calculado sobre a receita real do período ({formatar_moeda(renda)})"
@@ -145,19 +156,23 @@ def secao_potes(resumo: dict, nav_func=None, on_ajustar=None) -> ft.Column:
         subtitulo = "Sem receitas registradas no período selecionado — orçamentos zerados"
         badge_header = _badge("0 Receitas", T.WARNING)
 
+    badges_row = [
+        ft.Text("Metas Financeiras (6 Potes)", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
+        badge_header,
+    ]
+    if rot_mes:
+        badges_row.append(_badge(rot_mes, T.RECEITA))
+
     cabecalho = ft.Row(
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         vertical_alignment=ft.CrossAxisAlignment.END,
         controls=[
             ft.Column(spacing=3, controls=[
-                ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-                    ft.Text("Metas Financeiras (6 Potes)", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
-                    badge_header,
-                ]),
+                ft.Row(spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=badges_row),
                 ft.Text(subtitulo, color=T.TEXT_MUTED, size=12),
             ]),
             ft.TextButton(
-                content=ft.Text("Ajustar metas ›", color=T.WARNING, size=12, weight=ft.FontWeight.W_600),
+                content=ft.Text("Ajustar metas do mês ›", color=T.WARNING, size=12, weight=ft.FontWeight.W_600),
                 on_click=on_ajustar,
             ) if on_ajustar else ft.Container(),
         ],

@@ -1,12 +1,15 @@
 """
 =============================================================================
 DemBase v3 — views/widgets/sobra_card.py  (Flet 1.0.1)
-Módulo de Gestão de Sobra / Caixa Livre do Período.
+Módulo de Gestão de Sobra / Caixa Livre do Período + Blindagem contra Sobra Falsa.
 Independente dos 6 Potes originais: calcula estritamente
-    Sobra = Total de Receitas do Período - Total de Despesas do Período
-e permite ratear dinamicamente o lucro/resíduo entre dois Mini-Potes:
-  1. "Destinado para Investimento/Poupança"
-  2. "Livre de Culpa (Para Torrar)"
+    Sobra Projetada = Total de Receitas do Período - Total de Despesas do Período
+e cruza com a Inteligência de Proteção de Fluxo de Caixa (Teto Seguro baseado no
+Pior Dia / Gargalo de saldo acumulado), diferenciando visualmente:
+  - Sobra Projetada do Período (Fim do Mês)
+  - Disponível Agora sem Ficar Negativo (Teto Seguro — Pior Dia)
+  - Sobra Falsa Travada (Receitas que só entram depois do gargalo)
+Além disso, salva e aplica o percentual de retenção exclusivamente por Mês/Ano.
 =============================================================================
 """
 from __future__ import annotations
@@ -17,23 +20,26 @@ import flet as ft
 from core import theme as T
 from core import storage
 from core.theme import pad, borda
-from core.constants import formatar_moeda
+from core.constants import formatar_moeda, formatar_data_br, MESES_NOMES
+import services.supabase_client as db
 
 
 COR_INVESTIMENTO = "#10B981"  # Esmeralda — patrimônio / poupança
 COR_LIVRE_CULPA  = "#8B5CF6"  # Violeta — livre para torrar sem culpa
+COR_BLINDAGEM    = "#06B6D4"  # Ciano — proteção de fluxo de caixa / teto seguro
+COR_GARGALO      = "#F59E0B"  # Âmbar — alerta de gargalo / sobra falsa
 
 
 def calcular_rateio_sobra(
     receitas: float,
     despesas: float,
     pct_investimento: float = 50.0,
+    protecao_fluxo: dict | None = None,
+    travar_pelo_teto_seguro: bool = True,
 ) -> dict:
     """
-    Calcula a Sobra do Período e a divisão dinâmica nos dois Mini-Potes.
-    Regra estrita:
-        Sobra = Total de Receitas do Período - Total de Despesas do Período
-    Não interfere nos 6 Potes originais.
+    Calcula a Sobra Projetada do Período, a divisão nos dois Mini-Potes e a
+    Blindagem contra Sobra Falsa (Teto Seguro baseado no Pior Dia).
     """
     rec = round(float(receitas or 0.0), 2)
     desp = round(float(despesas or 0.0), 2)
@@ -43,26 +49,85 @@ def calcular_rateio_sobra(
     pct_livre = round(100.0 - pct_inv, 1)
 
     if sobra > 0:
-        val_inv = round(sobra * (pct_inv / 100.0), 2)
-        val_livre = round(sobra - val_inv, 2)
+        val_inv_proj = round(sobra * (pct_inv / 100.0), 2)
+        val_livre_proj = round(sobra - val_inv_proj, 2)
         deficit = 0.0
     else:
-        val_inv = 0.0
-        val_livre = 0.0
+        val_inv_proj = 0.0
+        val_livre_proj = 0.0
         deficit = round(abs(sobra), 2) if sobra < 0 else 0.0
+
+    # Inteligência de Proteção de Fluxo de Caixa (Contra Sobra Falsa)
+    pf = protecao_fluxo if isinstance(protecao_fluxo, dict) else {}
+    tem_dados_pf = bool(pf and ("teto_seguro_gasto" in pf or "menor_saldo_futuro" in pf))
+
+    if tem_dados_pf:
+        menor_saldo_futuro = round(float(pf.get("menor_saldo_futuro", sobra) or 0.0), 2)
+        teto_seguro = round(max(0.0, min(max(0.0, sobra), float(pf.get("teto_seguro_gasto", max(0.0, sobra)) or 0.0))), 2)
+        sobra_falsa = round(max(0.0, max(0.0, sobra) - teto_seguro), 2)
+        tem_armadilha = bool(sobra_falsa > 0.005 or menor_saldo_futuro < -0.005)
+        fica_negativo_meio = bool(menor_saldo_futuro < -0.005)
+        data_gargalo = pf.get("data_gargalo")
+        prox_entrada_dt = pf.get("proxima_entrada_data")
+        prox_entrada_val = round(float(pf.get("proxima_entrada_valor", 0.0) or 0.0), 2)
+    else:
+        menor_saldo_futuro = sobra
+        teto_seguro = max(0.0, sobra)
+        sobra_falsa = 0.0
+        tem_armadilha = False
+        fica_negativo_meio = sobra < -0.005
+        data_gargalo = None
+        prox_entrada_dt = None
+        prox_entrada_val = 0.0
+
+    # Quando a trava está ativa, o valor disponível para gastar AGORA sem ficar negativo
+    # nunca pode ultrapassar o Teto Seguro (Pior Dia).
+    if sobra > 0:
+        if travar_pelo_teto_seguro and tem_dados_pf:
+            base_segura = teto_seguro
+            val_inv_seguro = round(base_segura * (pct_inv / 100.0), 2)
+            val_livre_seguro = round(base_segura - val_inv_seguro, 2)
+            # Limite máximo absoluto que pode sair da conta hoje sem negativar no gargalo:
+            val_livre_teto_absoluto = round(min(val_livre_proj, teto_seguro), 2)
+        else:
+            val_inv_seguro = val_inv_proj
+            val_livre_seguro = val_livre_proj
+            val_livre_teto_absoluto = val_livre_proj
+    else:
+        val_inv_seguro = 0.0
+        val_livre_seguro = 0.0
+        val_livre_teto_absoluto = 0.0
+
+    val_inv_efetivo = val_inv_seguro if (travar_pelo_teto_seguro and tem_armadilha) else val_inv_proj
+    val_livre_efetivo = val_livre_seguro if (travar_pelo_teto_seguro and tem_armadilha) else val_livre_proj
 
     return {
         "receitas": rec,
         "despesas": desp,
         "sobra": sobra,
+        "sobra_projetada": sobra,
         "tem_sobra": sobra > 0,
         "zerada": abs(sobra) < 0.005,
         "em_deficit": sobra < -0.005,
         "deficit": deficit,
         "pct_investimento": pct_inv,
         "pct_livre": pct_livre,
-        "valor_investimento": val_inv,
-        "valor_livre_culpa": val_livre,
+        "valor_investimento": val_inv_efetivo,
+        "valor_livre_culpa": val_livre_efetivo,
+        "valor_investimento_projetado": val_inv_proj,
+        "valor_livre_projetado": val_livre_proj,
+        "valor_investimento_seguro": val_inv_seguro,
+        "valor_livre_seguro": val_livre_seguro,
+        "valor_livre_teto_absoluto": val_livre_teto_absoluto,
+        "menor_saldo_futuro": menor_saldo_futuro,
+        "teto_seguro_gasto": teto_seguro,
+        "sobra_falsa_travada": sobra_falsa,
+        "tem_armadilha_fluxo": tem_armadilha,
+        "fica_negativo_no_meio": fica_negativo_meio,
+        "data_gargalo": data_gargalo,
+        "proxima_entrada_data": prox_entrada_dt,
+        "proxima_entrada_valor": prox_entrada_val,
+        "travar_pelo_teto_seguro": bool(travar_pelo_teto_seguro),
     }
 
 
@@ -76,8 +141,9 @@ class PainelGestaoSobra:
     """
     Controlador visual e reativo do módulo de Destinação da Sobra (Caixa Livre).
     Mantém referências mutáveis para atualizar valores instantaneamente quando:
-      - O filtro global de datas do Dashboard muda (novas receitas/despesas)
-      - O usuário move o Slider, digita uma porcentagem ou clica em um atalho
+      - O filtro global de datas do Dashboard muda (novas receitas/despesas/mês/ano e proteção de fluxo)
+      - O usuário move o Slider, digita uma porcentagem ou clica em um atalho (salvo por Mês/Ano!)
+      - O usuário alterna a Trava de Teto Seguro (Pior Dia)
       - O usuário clica no card KPI "Caixa Livre" para expandir/recolher
     """
 
@@ -95,7 +161,13 @@ class PainelGestaoSobra:
 
         self.receitas: float = 0.0
         self.despesas: float = 0.0
+        self.mes_atual: int | None = None
+        self.ano_atual: int | None = None
+        self.herdado_mes: bool = False
+        self.protecao_fluxo: dict = {}
+
         self.pct_investimento: float = storage.obter_percentual_sobra_investimento(page, 50.0)
+        self.travar_teto_seguro: bool = storage.obter_trava_teto_seguro_sobra(page, True)
         self.expandido: bool = storage.obter_painel_sobra_expandido(page, False)
 
         # ── Controles mutáveis do cabeçalho e equação ─────────────────────────
@@ -117,8 +189,85 @@ class PainelGestaoSobra:
             bgcolor=f"{T.PRIMARY}18",
             content=self.txt_badge_status,
         )
+        self.txt_badge_mes = ft.Text(
+            "",
+            size=10.5,
+            weight=ft.FontWeight.W_600,
+            color=COR_INVESTIMENTO,
+        )
+        self.box_badge_mes = ft.Container(
+            visible=False,
+            padding=pad(h=9, v=3),
+            border_radius=16,
+            bgcolor=f"{COR_INVESTIMENTO}16",
+            border=borda(1, f"{COR_INVESTIMENTO}45"),
+            content=self.txt_badge_mes,
+        )
+
+        # ── Painel de Blindagem de Fluxo de Caixa (Contra a "Sobra Falsa") ────
+        self.txt_sobra_proj_card = ft.Text(
+            "R$ 0,00",
+            size=15 if mobile else 17,
+            weight=ft.FontWeight.BOLD,
+            color=T.TEXT_PRIMARY,
+        )
+        self.txt_sobra_proj_sub = ft.Text(
+            "Se nada mudar até o fim do período",
+            size=10.5,
+            color=T.TEXT_MUTED,
+        )
+
+        self.txt_teto_seguro_card = ft.Text(
+            "R$ 0,00",
+            size=16 if mobile else 18,
+            weight=ft.FontWeight.BOLD,
+            color=COR_BLINDAGEM,
+        )
+        self.txt_teto_seguro_sub = ft.Text(
+            "Menor saldo acumulado (Pior Dia)",
+            size=10.5,
+            color=T.TEXT_MUTED,
+        )
+
+        self.txt_sobra_falsa_card = ft.Text(
+            "R$ 0,00",
+            size=15 if mobile else 17,
+            weight=ft.FontWeight.BOLD,
+            color=COR_GARGALO,
+        )
+        self.txt_sobra_falsa_sub = ft.Text(
+            "Receita que só entra após o gargalo",
+            size=10.5,
+            color=T.TEXT_MUTED,
+        )
+
+        self.txt_alerta_gargalo = ft.Text(
+            "",
+            size=11.5,
+            color=T.TEXT_PRIMARY,
+            weight=ft.FontWeight.W_500,
+        )
+        self.icone_alerta_gargalo = ft.Icon(
+            ft.Icons.SHIELD_ROUNDED,
+            color=COR_BLINDAGEM,
+            size=18,
+        )
+        self.sw_trava_teto = ft.Switch(
+            value=self.travar_teto_seguro,
+            active_color=COR_BLINDAGEM,
+            scale=0.82,
+            tooltip="Quando ativo, limita o Caixa Livre e os Mini-Potes ao Teto Seguro do Pior Dia para impedir saldo negativo no meio do mês.",
+            on_change=self._on_toggle_trava_teto,
+        )
+        self.box_trava_fluxo = self._construir_box_blindagem_fluxo()
 
         # ── Controles de ajuste de percentual (Slider + Input + Chips) ────────
+        self.txt_titulo_slider = ft.Text(
+            "Quanto da sobra você quer guardar/investir?",
+            size=12.5 if self.mobile else 13,
+            weight=ft.FontWeight.W_600,
+            color=T.TEXT_PRIMARY,
+        )
         self.txt_pct_destaque = ft.Text(
             _fmt_pct(self.pct_investimento),
             size=15 if mobile else 16,
@@ -252,6 +401,12 @@ class PainelGestaoSobra:
             size=11,
             color=T.TEXT_MUTED,
         )
+        self.txt_badge_livre_status = ft.Text(
+            "100% Livre no Caixa",
+            color=COR_LIVRE_CULPA,
+            size=11,
+            weight=ft.FontWeight.W_600,
+        )
         self.badge_livre_status = ft.Container(
             padding=pad(h=10, v=6),
             border_radius=8,
@@ -263,12 +418,7 @@ class PainelGestaoSobra:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
                     ft.Icon(ft.Icons.VERIFIED_ROUNDED, color=COR_LIVRE_CULPA, size=14),
-                    ft.Text(
-                        "100% Livre no Caixa",
-                        color=COR_LIVRE_CULPA,
-                        size=11,
-                        weight=ft.FontWeight.W_600,
-                    ),
+                    self.txt_badge_livre_status,
                 ],
             ),
         )
@@ -298,6 +448,132 @@ class PainelGestaoSobra:
 
         self.container = self._construir_container()
         self._sincronizar_ui(notificar_kpi=False)
+
+    def _construir_box_blindagem_fluxo(self) -> ft.Container:
+        def _mini_metrica(
+            rotulo: str,
+            icone: ft.IconData,
+            cor: str,
+            txt_val: ft.Text,
+            txt_sub: ft.Text,
+        ) -> ft.Container:
+            return ft.Container(
+                col={"xs": 12, "sm": 4},
+                padding=pad(h=12, v=10),
+                bgcolor=T.SURFACE,
+                border_radius=10,
+                border=borda(1, f"{cor}40"),
+                content=ft.Column(
+                    spacing=3,
+                    controls=[
+                        ft.Row(
+                            spacing=6,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[
+                                ft.Icon(icone, color=cor, size=14),
+                                ft.Text(
+                                    rotulo,
+                                    size=10,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=cor,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    expand=True,
+                                ),
+                            ],
+                        ),
+                        txt_val,
+                        txt_sub,
+                    ],
+                ),
+            )
+
+        return ft.Container(
+            padding=pad(h=14, v=12),
+            bgcolor=T.BG,
+            border_radius=12,
+            border=borda(1.2, f"{COR_BLINDAGEM}45"),
+            content=ft.Column(
+                spacing=10,
+                controls=[
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        wrap=True,
+                        controls=[
+                            ft.Row(
+                                spacing=8,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    self.icone_alerta_gargalo,
+                                    ft.Text(
+                                        "Blindagem de Fluxo de Caixa (Contra Sobra Falsa)",
+                                        size=12.5 if self.mobile else 13,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=T.TEXT_PRIMARY,
+                                    ),
+                                ],
+                            ),
+                            ft.Row(
+                                spacing=4,
+                                tight=True,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Icon(ft.Icons.LOCK_ROUNDED, size=13, color=COR_BLINDAGEM),
+                                    ft.Text(
+                                        "Travar pelo Pior Dia (Teto Seguro)",
+                                        size=11,
+                                        weight=ft.FontWeight.W_600,
+                                        color=T.TEXT_PRIMARY,
+                                    ),
+                                    self.sw_trava_teto,
+                                ],
+                            ),
+                        ],
+                    ),
+                    ft.ResponsiveRow(
+                        spacing=10,
+                        run_spacing=8,
+                        controls=[
+                            _mini_metrica(
+                                "SOBRA PROJETADA DO MÊS INTEIRO",
+                                ft.Icons.CALENDAR_MONTH_ROUNDED,
+                                T.PRIMARY,
+                                self.txt_sobra_proj_card,
+                                self.txt_sobra_proj_sub,
+                            ),
+                            _mini_metrica(
+                                "DISPONÍVEL AGORA S/ FICAR NEGATIVO",
+                                ft.Icons.VERIFIED_USER_ROUNDED,
+                                COR_BLINDAGEM,
+                                self.txt_teto_seguro_card,
+                                self.txt_teto_seguro_sub,
+                            ),
+                            _mini_metrica(
+                                "RETIDO / AGUARDANDO ENTRADA FUTURA",
+                                ft.Icons.HOURGLASS_TOP_ROUNDED,
+                                COR_GARGALO,
+                                self.txt_sobra_falsa_card,
+                                self.txt_sobra_falsa_sub,
+                            ),
+                        ],
+                    ),
+                    ft.Container(
+                        padding=pad(h=10, v=7),
+                        border_radius=8,
+                        bgcolor=f"{COR_BLINDAGEM}12",
+                        content=ft.Row(
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[
+                                ft.Icon(ft.Icons.TIPS_AND_UPDATES_ROUNDED, size=15, color=COR_BLINDAGEM),
+                                ft.Container(expand=True, content=self.txt_alerta_gargalo),
+                            ],
+                        ),
+                    ),
+                ],
+            ),
+        )
 
     def _construir_chips_atalho(self) -> list[ft.Control]:
         opcoes = [
@@ -453,12 +729,7 @@ class PainelGestaoSobra:
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 controls=[
                                     ft.Icon(ft.Icons.TUNE_ROUNDED, color=COR_INVESTIMENTO, size=16),
-                                    ft.Text(
-                                        "Quanto da sobra você quer guardar/investir?",
-                                        size=12.5 if self.mobile else 13,
-                                        weight=ft.FontWeight.W_600,
-                                        color=T.TEXT_PRIMARY,
-                                    ),
+                                    self.txt_titulo_slider,
                                 ],
                             ),
                             ft.Row(
@@ -535,6 +806,7 @@ class PainelGestaoSobra:
                                                         color=T.TEXT_PRIMARY,
                                                     ),
                                                     self.box_badge_status,
+                                                    self.box_badge_mes,
                                                 ],
                                             ),
                                             self.txt_equacao,
@@ -550,6 +822,7 @@ class PainelGestaoSobra:
                             ),
                         ],
                     ),
+                    self.box_trava_fluxo,
                     self.banner_sem_sobra,
                     bloco_controle_slider,
                     ft.ResponsiveRow(
@@ -560,6 +833,15 @@ class PainelGestaoSobra:
                 ],
             ),
         )
+
+    def _on_toggle_trava_teto(self, e: ft.ControlEvent):
+        self.travar_teto_seguro = bool(e.control.value)
+        storage.salvar_trava_teto_seguro_sobra_sync(self.page, self.travar_teto_seguro)
+        self._sincronizar_ui(notificar_kpi=True)
+        try:
+            self.page.update()
+        except Exception:
+            pass
 
     def _on_slider_change(self, e: ft.ControlEvent):
         try:
@@ -579,7 +861,15 @@ class PainelGestaoSobra:
     def definir_percentual(self, novo_pct: float, atualizar_slider: bool = True):
         pct_limpo = round(max(0.0, min(100.0, float(novo_pct))), 1)
         self.pct_investimento = pct_limpo
-        storage.salvar_percentual_sobra_investimento_sync(self.page, pct_limpo)
+        self.herdado_mes = False
+        storage.salvar_percentual_sobra_investimento_sync(
+            self.page, pct_limpo, mes=self.mes_atual, ano=self.ano_atual
+        )
+        if self.mes_atual is not None and self.ano_atual is not None:
+            try:
+                db.salvar_config_caixa_livre_mes(self.mes_atual, self.ano_atual, pct_limpo)
+            except Exception:
+                pass
         if atualizar_slider:
             self.slider_pct.value = pct_limpo
         self.tf_pct.value = str(int(round(pct_limpo)))
@@ -590,10 +880,47 @@ class PainelGestaoSobra:
         except Exception:
             pass
 
-    def atualizar_periodo(self, receitas: float, despesas: float):
-        """Atualiza receitas e despesas do período selecionado e recalcula a Sobra e os Mini-Potes."""
+    def atualizar_periodo(
+        self,
+        receitas: float,
+        despesas: float,
+        mes: int | None = None,
+        ano: int | None = None,
+        protecao_fluxo: dict | None = None,
+    ):
+        """
+        Atualiza receitas, despesas, escopo de mês/ano e dados de proteção de fluxo de caixa
+        do período selecionado, recalculando a Sobra Projetada, o Teto Seguro e os Mini-Potes.
+        """
         self.receitas = float(receitas or 0.0)
         self.despesas = float(despesas or 0.0)
+        if isinstance(protecao_fluxo, dict):
+            self.protecao_fluxo = protecao_fluxo
+
+        if mes is not None and ano is not None:
+            mudou_mes = (int(mes) != self.mes_atual or int(ano) != self.ano_atual)
+            self.mes_atual = int(mes)
+            self.ano_atual = int(ano)
+            if mudou_mes:
+                pct_carregado = storage.obter_percentual_sobra_investimento(
+                    self.page, 50.0, mes=self.mes_atual, ano=self.ano_atual
+                )
+                try:
+                    cfg_db = db.obter_config_caixa_livre_mes(self.mes_atual, self.ano_atual)
+                    if isinstance(cfg_db, dict) and "pct_investimento" in cfg_db:
+                        self.herdado_mes = bool(cfg_db.get("herdado", False))
+                        if not self.herdado_mes or pct_carregado == 50.0:
+                            pct_carregado = float(cfg_db.get("pct_investimento", pct_carregado))
+                            storage.salvar_percentual_sobra_investimento_sync(
+                                self.page, pct_carregado, mes=self.mes_atual, ano=self.ano_atual
+                            )
+                except Exception:
+                    pass
+                self.pct_investimento = round(max(0.0, min(100.0, float(pct_carregado))), 1)
+                self.slider_pct.value = self.pct_investimento
+                self.tf_pct.value = str(int(round(self.pct_investimento)))
+                self.row_chips_atalho.controls = self._construir_chips_atalho()
+
         self._sincronizar_ui(notificar_kpi=True)
 
     def alternar_expansao(self, forcar: bool | None = None):
@@ -613,7 +940,13 @@ class PainelGestaoSobra:
             pass
 
     def obter_dados_atuais(self) -> dict:
-        return calcular_rateio_sobra(self.receitas, self.despesas, self.pct_investimento)
+        return calcular_rateio_sobra(
+            self.receitas,
+            self.despesas,
+            self.pct_investimento,
+            protecao_fluxo=self.protecao_fluxo,
+            travar_pelo_teto_seguro=self.travar_teto_seguro,
+        )
 
     def _acao_lancar_investimento(self, _e=None):
         dados = self.obter_dados_atuais()
@@ -630,16 +963,92 @@ class PainelGestaoSobra:
         pct_livre = dados["pct_livre"]
         val_inv = dados["valor_investimento"]
         val_livre = dados["valor_livre_culpa"]
+        val_inv_proj = dados["valor_investimento_projetado"]
+        val_livre_proj = dados["valor_livre_projetado"]
+
+        teto_seguro = dados["teto_seguro_gasto"]
+        sobra_falsa = dados["sobra_falsa_travada"]
+        menor_saldo = dados["menor_saldo_futuro"]
+        tem_armadilha = dados["tem_armadilha_fluxo"]
+        fica_negativo = dados["fica_negativo_no_meio"]
+        dt_gargalo = dados.get("data_gargalo")
+        prox_dt = dados.get("proxima_entrada_data")
+        prox_val = dados.get("proxima_entrada_valor", 0.0)
+
+        # Badge de escopo mensal
+        if self.mes_atual and self.ano_atual:
+            nm = MESES_NOMES[self.mes_atual - 1][:3] if 1 <= self.mes_atual <= 12 else str(self.mes_atual)
+            rot_m = f"{nm}/{self.ano_atual}"
+            self.txt_badge_mes.value = f"Regra de {rot_m}: {_fmt_pct(pct_inv)} guardar / {_fmt_pct(pct_livre)} livre"
+            self.box_badge_mes.visible = True
+            self.txt_titulo_slider.value = f"Quanto da sobra de {rot_m} você quer guardar/investir?"
+        else:
+            self.box_badge_mes.visible = False
+            self.txt_titulo_slider.value = "Quanto da sobra você quer guardar/investir?"
 
         self.txt_equacao.value = (
             f"Receitas ({formatar_moeda(rec)}) − Despesas ({formatar_moeda(desp)}) "
-            f"= {formatar_moeda(sobra)}"
+            f"= Sobra Projetada {formatar_moeda(sobra)}"
         )
 
+        # Atualiza o Painel de Blindagem contra Sobra Falsa
+        self.txt_sobra_proj_card.value = formatar_moeda(sobra)
+        self.txt_teto_seguro_card.value = formatar_moeda(teto_seguro)
+        self.txt_sobra_falsa_card.value = formatar_moeda(sobra_falsa)
+
+        dt_g_br = formatar_data_br(dt_gargalo) if dt_gargalo else "—"
+        if fica_negativo:
+            self.txt_teto_seguro_card.color = T.DESPESA
+            self.txt_teto_seguro_sub.value = f"Vale crítico de {formatar_moeda(menor_saldo)} em {dt_g_br}"
+            self.icone_alerta_gargalo.name = ft.Icons.WARNING_AMBER_ROUNDED
+            self.icone_alerta_gargalo.color = T.DESPESA
+            self.txt_alerta_gargalo.value = (
+                f"🚨 Alerta de Descasamento: mesmo que o mês termine com {formatar_moeda(sobra)}, "
+                f"seu saldo acumulado chega a {formatar_moeda(menor_saldo)} em {dt_g_br}. "
+                f"Teto seguro para gastar agora sem agravar o negativo: R$ 0,00."
+            )
+        elif tem_armadilha:
+            self.txt_teto_seguro_card.color = COR_BLINDAGEM
+            self.txt_teto_seguro_sub.value = f"Menor saldo (Gargalo) em {dt_g_br}"
+            self.icone_alerta_gargalo.name = ft.Icons.SHIELD_ROUNDED
+            self.icone_alerta_gargalo.color = COR_GARGALO
+            complemento_prox = (
+                f" Próxima entrada: {formatar_moeda(prox_val)} em {formatar_data_br(prox_dt)}."
+                if prox_dt and prox_val > 0
+                else ""
+            )
+            self.txt_alerta_gargalo.value = (
+                f"🛡️ Sobra Falsa detectada! Dos {formatar_moeda(sobra)} previstos no mês, "
+                f"{formatar_moeda(sobra_falsa)} só entram depois do gargalo de {dt_g_br}. "
+                f"Seu limite real hoje sem ficar negativo em nenhum dia futuro é {formatar_moeda(teto_seguro)}."
+                + complemento_prox
+            )
+        else:
+            self.txt_teto_seguro_card.color = COR_INVESTIMENTO
+            self.txt_teto_seguro_sub.value = "Fluxo saudável sem gargalo intermediário"
+            self.icone_alerta_gargalo.name = ft.Icons.VERIFIED_USER_ROUNDED
+            self.icone_alerta_gargalo.color = COR_INVESTIMENTO
+            self.txt_alerta_gargalo.value = (
+                f"✅ Fluxo de caixa blindado: toda a sobra projetada ({formatar_moeda(max(0.0, sobra))}) "
+                "já está livre de gargalos futuros neste período."
+            )
+
+        if prox_dt and prox_val > 0:
+            self.txt_sobra_falsa_sub.value = f"Aguarda {formatar_moeda(prox_val)} em {formatar_data_br(prox_dt)}"
+        elif dt_gargalo and sobra_falsa > 0:
+            self.txt_sobra_falsa_sub.value = f"Bloqueado até passar o dia {dt_g_br}"
+        else:
+            self.txt_sobra_falsa_sub.value = "Nenhuma receita retida por descasamento"
+
         if dados["tem_sobra"]:
-            self.txt_badge_status.value = f"Sobra Positiva: {formatar_moeda(sobra)}"
-            self.txt_badge_status.color = COR_INVESTIMENTO
-            self.box_badge_status.bgcolor = f"{COR_INVESTIMENTO}18"
+            if tem_armadilha and self.travar_teto_seguro:
+                self.txt_badge_status.value = f"🛡️ Teto Seguro: {formatar_moeda(teto_seguro)} (Mês: {formatar_moeda(sobra)})"
+                self.txt_badge_status.color = COR_BLINDAGEM
+                self.box_badge_status.bgcolor = f"{COR_BLINDAGEM}18"
+            else:
+                self.txt_badge_status.value = f"Sobra Positiva: {formatar_moeda(sobra)}"
+                self.txt_badge_status.color = COR_INVESTIMENTO
+                self.box_badge_status.bgcolor = f"{COR_INVESTIMENTO}18"
             self.banner_sem_sobra.visible = False
         elif dados["em_deficit"]:
             self.txt_badge_status.value = f"Déficit no Período: {formatar_moeda(sobra)}"
@@ -666,6 +1075,21 @@ class PainelGestaoSobra:
 
         self.txt_inv_valor.value = formatar_moeda(val_inv)
         self.txt_livre_valor.value = formatar_moeda(val_livre)
+
+        if tem_armadilha and self.travar_teto_seguro and sobra > 0:
+            self.txt_inv_dica.value = (
+                f"Disponível agora s/ negativar. (No fim do mês será {formatar_moeda(val_inv_proj)})"
+            )
+            self.txt_livre_dica.value = (
+                f"Blindado pelo Pior Dia ({dt_g_br}). (Projetado do mês: {formatar_moeda(val_livre_proj)})"
+            )
+            self.txt_badge_livre_status.value = f"Blindado · Teto {formatar_moeda(teto_seguro)}"
+        else:
+            self.txt_inv_dica.value = "Separado da sobra do período para multiplicar seu patrimônio."
+            self.txt_livre_dica.value = (
+                "Disponível no Caixa Livre para gastar sem culpa e sem afetar os 6 Potes."
+            )
+            self.txt_badge_livre_status.value = "100% Livre no Caixa"
 
         self.pb_inv.value = max(0.0, min(1.0, pct_inv / 100.0))
         self.pb_livre.value = max(0.0, min(1.0, pct_livre / 100.0))

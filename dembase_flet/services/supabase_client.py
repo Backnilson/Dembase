@@ -606,11 +606,8 @@ async def executar_async(func: Callable, *args, **kwargs) -> Any:
 
 
 
-async def listar_potes_async() -> list:
-
-
-
-    return await asyncio.to_thread(listar_potes)
+async def listar_potes_async(mes: int | None = None, ano: int | None = None) -> list:
+    return await asyncio.to_thread(listar_potes, False, mes, ano)
 
 
 
@@ -6158,103 +6155,147 @@ def garantir_potes() -> None:
 
 
 
-def listar_potes(forcar_atualizacao: bool = False) -> list:
-
-
-
-    """Retorna os 6 potes do usuário ordenados por posição (RAM cache de alta performance)."""
-
-
-
+def listar_potes(
+    forcar_atualizacao: bool = False,
+    mes: int | None = None,
+    ano: int | None = None,
+) -> list:
+    """
+    Retorna os 6 potes do usuário ordenados por posição para o mês/ano informado
+    (ou mês/ano atual caso omitido). Usa `listar_potes_mes` no Supabase com herança inteligente.
+    """
+    sub_k = f"{int(ano)}_{int(mes)}" if (mes is not None and ano is not None) else None
     if not forcar_atualizacao:
-
-
-
-        cached = obter_cache("potes")
-
-
-
+        cached = obter_cache("potes", subchave=sub_k)
         if cached is not None:
-
-
-
             return list(cached)
 
+    dados: list = []
+    try:
+        params: dict[str, Any] = {}
+        if mes is not None:
+            params["p_mes"] = int(mes)
+        if ano is not None:
+            params["p_ano"] = int(ano)
+        resp_m = supabase.rpc("listar_potes_mes", params).execute()
+        if isinstance(resp_m.data, list) and len(resp_m.data) == 6:
+            dados = resp_m.data
+    except Exception:
+        dados = []
 
-
-    resp = supabase.table("potes").select("*").order("posicao").execute()
-
-
-
-    if not resp.data:
-
-
-
-        garantir_potes()
-
-
-
+    if not dados:
         resp = supabase.table("potes").select("*").order("posicao").execute()
+        if not resp.data:
+            garantir_potes()
+            resp = supabase.table("potes").select("*").order("posicao").execute()
+        dados = resp.data or []
 
-
-
-    dados = resp.data or []
-
-
-
-    salvar_cache("potes", dados, ttl=TTL_CADASTROS_BASE)
-
-
-
+    salvar_cache("potes", dados, subchave=sub_k, ttl=TTL_CADASTROS_BASE)
     return dados
 
 
-
-
-
-
-
-
-
-
-
-def salvar_potes(itens: list[dict]) -> list:
-
-
-
+def salvar_potes(
+    itens: list[dict],
+    mes: int | None = None,
+    ano: int | None = None,
+) -> list:
     """
-
-
-
-    Atualiza nome/percentual dos 6 potes de forma atômica.
-
-
-
+    Atualiza nome/percentual dos 6 potes de forma atômica para o mês/ano específico
+    (sem sobrescrever as metas de outros meses).
     itens: [{"id", "nome", "percentual"}]. O banco revalida a soma == 100.
-
-
-
     """
-
-
-
-    resp = supabase.rpc("salvar_potes", {"p_potes": itens}).execute()
-
-
-
-    dados = resp.data or []
-
-
-
-    salvar_cache("potes", dados, ttl=TTL_CADASTROS_BASE)
-
-
+    dados: list = []
+    try:
+        params: dict[str, Any] = {"p_potes": itens}
+        if mes is not None:
+            params["p_mes"] = int(mes)
+        if ano is not None:
+            params["p_ano"] = int(ano)
+        resp = supabase.rpc("salvar_potes_mes", params).execute()
+        dados = resp.data or []
+    except Exception:
+        resp = supabase.rpc("salvar_potes", {"p_potes": itens}).execute()
+        dados = resp.data or []
 
     invalidar_cache("potes")
-
-
-
+    invalidar_cache("potes_resumo")
+    sub_k = f"{int(ano)}_{int(mes)}" if (mes is not None and ano is not None) else None
+    salvar_cache("potes", dados, subchave=sub_k, ttl=TTL_CADASTROS_BASE)
     return dados
+
+
+def obter_config_caixa_livre_mes(
+    mes: int | None = None,
+    ano: int | None = None,
+    forcar_atualizacao: bool = False,
+) -> dict:
+    """
+    Retorna a configuração mensal de retenção do Caixa Livre (Sobra do Período)
+    para o mês/ano informado ({mes, ano, pct_investimento, personalizado_no_mes}).
+    """
+    from datetime import date as _date
+    hoje_d = _date.today()
+    m = int(mes) if mes is not None else hoje_d.month
+    a = int(ano) if ano is not None else hoje_d.year
+    sub_k = f"{a}_{m}"
+
+    if not forcar_atualizacao:
+        cached = obter_cache("caixa_livre_config", subchave=sub_k)
+        if isinstance(cached, dict):
+            return dict(cached)
+
+    padrao = {
+        "mes": m,
+        "ano": a,
+        "pct_investimento": 50.0,
+        "personalizado_no_mes": False,
+        "mes_origem": m,
+        "ano_origem": a,
+    }
+    try:
+        resp = supabase.rpc("obter_config_caixa_livre_mes", {"p_mes": m, "p_ano": a}).execute()
+        if isinstance(resp.data, dict):
+            res = {**padrao, **resp.data}
+            salvar_cache("caixa_livre_config", res, subchave=sub_k, ttl=TTL_CADASTROS_BASE)
+            return res
+    except Exception:
+        pass
+    return padrao
+
+
+def salvar_config_caixa_livre_mes(
+    mes: int,
+    ano: int,
+    pct_investimento: float,
+) -> dict:
+    """
+    Salva no Supabase o percentual de retenção (Investimento/Poupança vs Livre)
+    do Caixa Livre exclusivamente para o mês/ano informado.
+    """
+    m = max(1, min(12, int(mes)))
+    a = int(ano)
+    pct = round(max(0.0, min(100.0, float(pct_investimento))), 1)
+    sub_k = f"{a}_{m}"
+    res = {
+        "mes": m,
+        "ano": a,
+        "pct_investimento": pct,
+        "personalizado_no_mes": True,
+        "mes_origem": m,
+        "ano_origem": a,
+    }
+    try:
+        resp = supabase.rpc(
+            "salvar_config_caixa_livre_mes",
+            {"p_mes": m, "p_ano": a, "p_pct_investimento": pct},
+        ).execute()
+        if isinstance(resp.data, dict):
+            res.update(resp.data)
+    except Exception:
+        pass
+    invalidar_cache("caixa_livre_config")
+    salvar_cache("caixa_livre_config", res, subchave=sub_k, ttl=TTL_CADASTROS_BASE)
+    return res
 
 
 
@@ -7210,6 +7251,318 @@ def _calcular_acumulados_calendario(
     return acumulados
 
 
+def calcular_protecao_fluxo_caixa(
+    dias_lista: list[dict],
+    acumulados_por_dia: dict[str, dict],
+    d_ini_str: str,
+    d_fim_str: str,
+    data_ref_str: str | None = None,
+) -> dict:
+    """
+    Calcula em O(N) a Inteligência de Proteção de Fluxo de Caixa (Contra a "Sobra Falsa"):
+    - Teto Seguro de Gasto (Baseado no Pior Dia / Gargalo entre a data de referência e o fim do período).
+    - Sobra Falsa Travada (Receitas que só entram depois do gargalo e não podem ser gastas antes).
+    - Janelas de Sobrevivência entre entradas de receita (dias de pagamento).
+    - Anota em cada dia de `dias_lista` e `acumulados_por_dia`:
+      `teto_seguro_apos_dia`, `menor_saldo_apos_dia`, `data_gargalo_apos_dia`,
+      `eh_gargalo_principal`, `eh_gargalo_janela`, `eh_dia_negativo`.
+    """
+    from datetime import date as _date, timedelta as _td
+
+    vazio_prot = {
+        "sobra_projetada": 0.0,
+        "menor_saldo_futuro": 0.0,
+        "data_gargalo": None,
+        "data_inicio_gargalo": None,
+        "teto_seguro_gasto": 0.0,
+        "sobra_falsa_travada": 0.0,
+        "tem_armadilha_fluxo": False,
+        "fica_negativo_no_meio": False,
+        "proxima_entrada_data": None,
+        "proxima_entrada_valor": 0.0,
+        "teto_ate_proxima_entrada": 0.0,
+        "data_referencia": d_ini_str[:10] if d_ini_str else "",
+        "janelas_sobrevivencia": [],
+        "dias_criticos": [],
+    }
+
+    try:
+        dt_ini = _date.fromisoformat(str(d_ini_str)[:10])
+        dt_fim = _date.fromisoformat(str(d_fim_str)[:10])
+        if dt_fim < dt_ini:
+            dt_ini, dt_fim = dt_fim, dt_ini
+    except Exception:
+        return vazio_prot
+
+    hoje = _date.today()
+    if data_ref_str:
+        try:
+            dt_ref = _date.fromisoformat(str(data_ref_str)[:10])
+        except Exception:
+            dt_ref = hoje if (dt_ini <= hoje <= dt_fim) else dt_ini
+    else:
+        dt_ref = hoje if (dt_ini <= hoje <= dt_fim) else dt_ini
+
+    if dt_ref < dt_ini or dt_ref > dt_fim:
+        dt_ref = dt_ini
+
+    mapa_dias: dict[str, dict] = {}
+    for d_it in (dias_lista or []):
+        dt_k = str(d_it.get("data") or "")[:10]
+        if dt_k:
+            mapa_dias[dt_k] = d_it
+            d_it["eh_gargalo_principal"] = False
+            d_it["eh_gargalo_janela"] = False
+            d_it["eh_dia_negativo"] = False
+
+    # Constrói série diária ordenada no intervalo [dt_ini, dt_fim]
+    serie: list[dict] = []
+    cur = dt_ini
+    rec_tot = 0.0
+    desp_tot = 0.0
+    primeiro_mov_dt: _date | None = None
+
+    while cur <= dt_fim:
+        iso_c = cur.isoformat()
+        d_info = mapa_dias.get(iso_c) or {}
+        ac_info = (acumulados_por_dia or {}).get(iso_c) or {}
+
+        r_d = float(d_info.get("total_receitas", 0) or 0)
+        sc_d = float(d_info.get("despesas_conta", 0) or 0)
+        sr_d = float(d_info.get("despesas_cartao", 0) or 0)
+        s_d = float(d_info.get("total_despesas", sc_d + sr_d) or 0)
+
+        rec_tot += r_d
+        desp_tot += s_d
+        saldo_c = float(ac_info.get("saldo_acum", round(rec_tot - desp_tot, 2)))
+
+        if (r_d > 0.005 or s_d > 0.005) and primeiro_mov_dt is None:
+            primeiro_mov_dt = cur
+
+        serie.append({
+            "date": cur,
+            "iso": iso_c,
+            "receita": round(r_d, 2),
+            "despesa": round(s_d, 2),
+            "saldo_acum": round(saldo_c, 2),
+        })
+        cur += _td(days=1)
+
+    if not serie:
+        return vazio_prot
+
+    sobra_projetada = round(serie[-1]["saldo_acum"], 2)
+
+    # Passo reverso O(N): para cada dia d, encontra o menor saldo acumulado em [d, dt_fim].
+    # Em caso de empate de saldo mínimo (vale plano entre uma saída e a próxima receita),
+    # prioriza o último dia do vale imediatamente anterior a uma entrada (ex: dia 29 antes do dia 30).
+    n_dias = len(serie)
+    min_val_running = float("inf")
+    min_iso_running = serie[-1]["iso"]
+
+    for idx in range(n_dias - 1, -1, -1):
+        item = serie[idx]
+        s_val = item["saldo_acum"]
+        prox_tem_rec = (idx + 1 < n_dias and serie[idx + 1]["receita"] > 0.005)
+
+        if s_val < min_val_running - 0.005:
+            min_val_running = s_val
+            min_iso_running = item["iso"]
+        elif abs(s_val - min_val_running) <= 0.005:
+            if prox_tem_rec:
+                min_iso_running = item["iso"]
+
+        teto_apos = round(max(0.0, min_val_running), 2)
+        menor_apos = round(min_val_running, 2)
+        item["menor_saldo_apos_dia"] = menor_apos
+        item["teto_seguro_apos_dia"] = teto_apos
+        item["data_gargalo_apos_dia"] = min_iso_running
+
+        iso_k = item["iso"]
+        if iso_k in (acumulados_por_dia or {}):
+            acumulados_por_dia[iso_k]["menor_saldo_apos_dia"] = menor_apos
+            acumulados_por_dia[iso_k]["teto_seguro_apos_dia"] = teto_apos
+            acumulados_por_dia[iso_k]["data_gargalo_apos_dia"] = min_iso_running
+            acumulados_por_dia[iso_k]["eh_dia_negativo"] = bool(s_val < -0.005)
+        if iso_k in mapa_dias:
+            mapa_dias[iso_k]["menor_saldo_apos_dia"] = menor_apos
+            mapa_dias[iso_k]["teto_seguro_apos_dia"] = teto_apos
+            mapa_dias[iso_k]["data_gargalo_apos_dia"] = min_iso_running
+            mapa_dias[iso_k]["eh_dia_negativo"] = bool(s_val < -0.005)
+
+    # Determina o início efetivo da análise de gargalo para evitar falso zero
+    # em dias vazios no início do mês antes do primeiro lançamento existir.
+    if primeiro_mov_dt is None:
+        return {
+            **vazio_prot,
+            "sobra_projetada": sobra_projetada,
+            "data_referencia": dt_ref.isoformat(),
+        }
+
+    dt_inicio_analise = max(dt_ref, primeiro_mov_dt)
+    serie_analise = [x for x in serie if x["date"] >= dt_inicio_analise]
+    if not serie_analise:
+        serie_analise = serie
+
+    # Menor saldo futuro no intervalo [dt_inicio_analise, dt_fim]
+    menor_saldo_futuro = min(x["saldo_acum"] for x in serie_analise)
+    menor_saldo_futuro = round(menor_saldo_futuro, 2)
+
+    # Identifica o primeiro dia em que atinge esse piso e a véspera da recuperação (gargalo principal)
+    candidatos_min = [
+        i for i, x in enumerate(serie_analise)
+        if abs(x["saldo_acum"] - menor_saldo_futuro) <= 0.005
+    ]
+    data_inicio_gargalo = serie_analise[candidatos_min[0]]["iso"] if candidatos_min else serie_analise[0]["iso"]
+    data_gargalo = data_inicio_gargalo
+
+    for idx_c in candidatos_min:
+        # Se o dia seguinte tem entrada de receita, este candidato é o ápice da pressão (ex: dia 29 antes do dia 30)
+        if idx_c + 1 < len(serie_analise) and serie_analise[idx_c + 1]["receita"] > 0.005:
+            data_gargalo = serie_analise[idx_c]["iso"]
+            break
+    else:
+        if candidatos_min:
+            # Se nenhum tem receita imediatamente no dia seguinte, pega o primeiro dia em que houve saída para chegar ao vale
+            escolhido = serie_analise[candidatos_min[0]]["iso"]
+            for idx_c in candidatos_min:
+                if serie_analise[idx_c]["despesa"] > 0.005:
+                    escolhido = serie_analise[idx_c]["iso"]
+            data_gargalo = escolhido
+
+    teto_seguro_gasto = round(max(0.0, min(sobra_projetada, menor_saldo_futuro)), 2)
+    sobra_falsa_travada = round(max(0.0, sobra_projetada - teto_seguro_gasto), 2)
+    fica_negativo_no_meio = bool(menor_saldo_futuro < -0.005)
+    tem_armadilha_fluxo = bool(sobra_falsa_travada > 0.005 or fica_negativo_no_meio)
+
+    # Próxima entrada de receita após dt_ref (ou após dt_inicio_analise)
+    proxima_entrada_data: str | None = None
+    proxima_entrada_valor: float = 0.0
+    for x in serie:
+        if x["date"] > dt_ref and x["receita"] > 0.005:
+            proxima_entrada_data = x["iso"]
+            proxima_entrada_valor = x["receita"]
+            break
+
+    if proxima_entrada_data:
+        ate_prox = [
+            x["saldo_acum"] for x in serie
+            if dt_inicio_analise <= x["date"] < _date.fromisoformat(proxima_entrada_data)
+        ]
+        if ate_prox:
+            teto_ate_proxima_entrada = round(max(0.0, min(ate_prox)), 2)
+        else:
+            teto_ate_proxima_entrada = teto_seguro_gasto
+    else:
+        teto_ate_proxima_entrada = teto_seguro_gasto
+
+    # Construção das Janelas de Sobrevivência entre entradas de receita
+    indices_entradas = [i for i, x in enumerate(serie) if x["receita"] > 0.005]
+    pontos_corte: list[int] = []
+    idx_primeiro_mov = next((i for i, x in enumerate(serie) if x["date"] >= primeiro_mov_dt), 0)
+    if not indices_entradas or indices_entradas[0] > idx_primeiro_mov:
+        pontos_corte.append(idx_primeiro_mov)
+    for ie in indices_entradas:
+        if ie not in pontos_corte:
+            pontos_corte.append(ie)
+
+    janelas_sobrevivencia: list[dict] = []
+    for w_idx, start_i in enumerate(pontos_corte):
+        end_i = (pontos_corte[w_idx + 1] - 1) if (w_idx + 1 < len(pontos_corte)) else (len(serie) - 1)
+        if end_i < start_i:
+            end_i = start_i
+        fatia = serie[start_i : end_i + 1]
+        if not fatia:
+            continue
+
+        rec_ini = round(fatia[0]["receita"], 2)
+        desp_jan = round(sum(f["despesa"] for f in fatia), 2)
+        menor_jan = round(min(f["saldo_acum"] for f in fatia), 2)
+
+        # Escolhe a data do gargalo da janela (preferindo o último dia da janela se empatado antes da próxima receita)
+        cands_j = [f for f in fatia if abs(f["saldo_acum"] - menor_jan) <= 0.005]
+        dt_garg_jan = cands_j[-1]["iso"] if cands_j else fatia[-1]["iso"]
+
+        prox_dt_w = serie[end_i + 1]["iso"] if (end_i + 1 < len(serie)) else None
+        prox_val_w = round(serie[end_i + 1]["receita"], 2) if (end_i + 1 < len(serie)) else 0.0
+        teto_livre_jan = round(max(0.0, menor_jan), 2)
+        eh_atual = bool(fatia[0]["date"] <= dt_ref <= fatia[-1]["date"])
+
+        if menor_jan < -0.005:
+            st_jan = "critico"
+        elif menor_jan < sobra_projetada - 0.005 or (rec_ini > 0 and menor_jan < rec_ini * 0.25):
+            st_jan = "atencao"
+        else:
+            st_jan = "seguro"
+
+        janelas_sobrevivencia.append({
+            "indice": w_idx + 1,
+            "data_inicio": fatia[0]["iso"],
+            "data_fim": fatia[-1]["iso"],
+            "dias_janela": len(fatia),
+            "receita_inicio": rec_ini,
+            "despesas_janela": desp_jan,
+            "menor_saldo_janela": menor_jan,
+            "data_gargalo_janela": dt_garg_jan,
+            "proxima_entrada_data": prox_dt_w,
+            "proxima_entrada_valor": prox_val_w,
+            "teto_livre_janela": teto_livre_jan,
+            "eh_janela_atual": eh_atual,
+            "eh_gargalo_do_mes": bool(abs(menor_jan - menor_saldo_futuro) <= 0.005),
+            "status": st_jan,
+        })
+
+        # Marca gargalo de janela nos mapas diários
+        if dt_garg_jan in mapa_dias and (desp_jan > 0.005 or menor_jan < sobra_projetada - 0.005):
+            mapa_dias[dt_garg_jan]["eh_gargalo_janela"] = True
+        if dt_garg_jan in (acumulados_por_dia or {}) and (desp_jan > 0.005 or menor_jan < sobra_projetada - 0.005):
+            acumulados_por_dia[dt_garg_jan]["eh_gargalo_janela"] = True
+
+    # Marca o gargalo principal do período
+    if data_gargalo:
+        if data_gargalo in mapa_dias:
+            mapa_dias[data_gargalo]["eh_gargalo_principal"] = True
+        if data_gargalo in (acumulados_por_dia or {}):
+            acumulados_por_dia[data_gargalo]["eh_gargalo_principal"] = True
+        # Garante que se o dia do gargalo não tinha lançamento próprio (ex: dia 29 véspera do dia 30),
+        # ele também exista ou seja referenciado em dias_criticos
+    if data_inicio_gargalo and data_inicio_gargalo != data_gargalo:
+        if data_inicio_gargalo in mapa_dias:
+            mapa_dias[data_inicio_gargalo]["eh_gargalo_janela"] = True
+        if data_inicio_gargalo in (acumulados_por_dia or {}):
+            acumulados_por_dia[data_inicio_gargalo]["eh_gargalo_janela"] = True
+
+    dias_criticos = [
+        {
+            "data": x["iso"],
+            "saldo_acum": x["saldo_acum"],
+            "despesa_dia": x["despesa"],
+            "receita_dia": x["receita"],
+            "eh_negativo": bool(x["saldo_acum"] < -0.005),
+            "eh_gargalo_principal": bool(x["iso"] == data_gargalo or x["iso"] == data_inicio_gargalo),
+        }
+        for x in serie_analise
+        if x["saldo_acum"] < -0.005 or x["iso"] in (data_gargalo, data_inicio_gargalo)
+    ]
+
+    return {
+        "sobra_projetada": sobra_projetada,
+        "menor_saldo_futuro": menor_saldo_futuro,
+        "data_gargalo": data_gargalo,
+        "data_inicio_gargalo": data_inicio_gargalo,
+        "teto_seguro_gasto": teto_seguro_gasto,
+        "sobra_falsa_travada": sobra_falsa_travada,
+        "tem_armadilha_fluxo": tem_armadilha_fluxo,
+        "fica_negativo_no_meio": fica_negativo_no_meio,
+        "proxima_entrada_data": proxima_entrada_data,
+        "proxima_entrada_valor": proxima_entrada_valor,
+        "teto_ate_proxima_entrada": teto_ate_proxima_entrada,
+        "data_referencia": dt_ref.isoformat(),
+        "janelas_sobrevivencia": janelas_sobrevivencia,
+        "dias_criticos": dias_criticos,
+    }
+
+
 def _aplicar_filtro_periodo_ao_calendario(
     dados: dict,
     d_ini_str: str,
@@ -7239,6 +7592,9 @@ def _aplicar_filtro_periodo_ao_calendario(
     grid_fim_s = str(dados.get("grid_fim") or d_fim_str)[:10]
     dados["acumulados_por_dia"] = _calcular_acumulados_calendario(
         dias_lista, d_ini_str, d_fim_str, grid_ini_s, grid_fim_s
+    )
+    dados["protecao_fluxo"] = calcular_protecao_fluxo_caixa(
+        dias_lista, dados["acumulados_por_dia"], d_ini_str, d_fim_str
     )
 
     if not eh_parcial:

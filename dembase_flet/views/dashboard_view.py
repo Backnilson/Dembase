@@ -169,17 +169,30 @@ def criar_view_dashboard(
     def _atualizar_subtitulo_kpi_sobra(dados: dict, expandido: bool):
         sobra_val = float(dados.get("sobra", 0.0) or 0.0)
         livre_val = float(dados.get("valor_livre_culpa", 0.0) or 0.0)
+        tem_armadilha = bool(dados.get("tem_armadilha_fluxo", False))
+        travado = bool(dados.get("travar_pelo_teto_seguro", True))
+        teto_seguro = float(dados.get("teto_seguro_gasto", sobra_val) or 0.0)
+        livre_proj = float(dados.get("valor_livre_projetado", livre_val) or 0.0)
 
         if dados.get("tem_sobra"):
-            # Destaca em tamanho maior APENAS o valor Livre no card Caixa Livre!
+            # Destaca em tamanho maior o valor Livre no card Caixa Livre (blindado pelo Teto Seguro se ativo)
             txt_caixa_livre.value = formatar_moeda(livre_val)
-            txt_caixa_livre.color = T.PRIMARY
-            txt_sub_caixa_livre.value = (
-                "Livre p/ gastar · Ocultar total e guardar"
-                if expandido
-                else "Livre p/ gastar · Toque p/ ver total e guardar"
-            )
-            txt_sub_caixa_livre.color = T.TEXT_MUTED
+            if tem_armadilha and travado:
+                txt_caixa_livre.color = "#06B6D4" if teto_seguro > 0 else T.WARNING
+                txt_sub_caixa_livre.value = (
+                    f"🛡️ Seguro hoje (Mês: {formatar_moeda(livre_proj)})"
+                    if not expandido
+                    else f"🛡️ Blindado pelo Pior Dia · Teto {formatar_moeda(teto_seguro)}"
+                )
+                txt_sub_caixa_livre.color = "#06B6D4" if teto_seguro > 0 else T.WARNING
+            else:
+                txt_caixa_livre.color = T.PRIMARY
+                txt_sub_caixa_livre.value = (
+                    "Livre p/ gastar · Ocultar total e guardar"
+                    if expandido
+                    else "Livre p/ gastar · Toque p/ ver total e guardar"
+                )
+                txt_sub_caixa_livre.color = T.TEXT_MUTED
         elif dados.get("em_deficit"):
             txt_caixa_livre.value = formatar_moeda(sobra_val)
             txt_caixa_livre.color = T.DESPESA
@@ -266,8 +279,11 @@ def criar_view_dashboard(
             txt_despesas.value = formatar_moeda(desp)
             txt_faturas.value  = formatar_moeda(faturas_ab)
 
-            # Atualiza o painel de sobra (que por sua vez atualiza txt_caixa_livre com o valor Livre!)
-            painel_sobra.atualizar_periodo(rec, desp)
+            pacote_cal_efetivo = r_cal if isinstance(r_cal, dict) else db.obter_calendario_financeiro_mes(m, a, di, df)
+            prot_fluxo = pacote_cal_efetivo.get("protecao_fluxo") if isinstance(pacote_cal_efetivo, dict) else None
+
+            # Atualiza o painel de sobra com o escopo de mês/ano e proteção de fluxo de caixa
+            painel_sobra.atualizar_periodo(rec, desp, mes=m, ano=a, protecao_fluxo=prot_fluxo)
 
             ultimo_pacote.clear()
             ultimo_pacote.update({
@@ -310,7 +326,6 @@ def criar_view_dashboard(
             else:
                 area_potes.controls = []
 
-            pacote_cal_efetivo = r_cal if isinstance(r_cal, dict) else db.obter_calendario_financeiro_mes(m, a, di, df)
             area_calendario.controls = [
                 secao_calendario_dashboard(
                     page=page,

@@ -13,13 +13,29 @@ from core import potes as P
 from services import supabase_client as db
 
 
-def carregar_potes() -> list[P.Pote]:
-    return P.potes_de_registros(db.listar_potes())
+def carregar_potes(mes: int | None = None, ano: int | None = None) -> list[P.Pote]:
+    return P.potes_de_registros(db.listar_potes(mes=mes, ano=ano))
 
 
-def salvar_configuracao(itens: list[dict]) -> list[P.Pote]:
+def carregar_potes_com_meta_mes(mes: int | None = None, ano: int | None = None) -> tuple[list[P.Pote], bool]:
     """
-    Valida (soma == 100, nomes únicos...) e só então persiste, de forma atômica.
+    Retorna `(lista_potes, herdado)` para o mês/ano informado.
+    `herdado=True` indica que este mês ainda não possui snapshot próprio salvo
+    e está herdando as porcentagens do mês anterior configurado (ou padrão base).
+    """
+    regs = db.listar_potes(mes=mes, ano=ano)
+    herdado = bool(regs and any(bool(r.get("herdado")) for r in regs if isinstance(r, dict)))
+    return P.potes_de_registros(regs), herdado
+
+
+def salvar_configuracao(
+    itens: list[dict],
+    mes: int | None = None,
+    ano: int | None = None,
+) -> list[P.Pote]:
+    """
+    Valida (soma == 100, nomes únicos...) e só então persiste de forma atômica,
+    aplicando exclusivamente ao mês/ano informado (quando fornecido).
     itens: [{"id", "nome", "percentual"}]. Levanta P.ErroPotes se inválido.
     """
     P.exigir_configuracao_valida(itens)
@@ -32,17 +48,29 @@ def salvar_configuracao(itens: list[dict]) -> list[P.Pote]:
         for i in itens
     ]
     try:
-        return P.potes_de_registros(db.salvar_potes(payload))
+        return P.potes_de_registros(db.salvar_potes(payload, mes=mes, ano=ano))
     except Exception as ex:
         # Última barreira: o banco também rejeita configurações divergentes
         raise P.ErroPotes([_mensagem_banco(ex)]) from ex
 
 
+def _extrair_mes_ano_data(data_str: str | None) -> tuple[int | None, int | None]:
+    if not data_str:
+        return None, None
+    try:
+        partes = str(data_str)[:10].split("-")
+        if len(partes) >= 2:
+            return int(partes[1]), int(partes[0])
+    except Exception:
+        pass
+    return None, None
+
+
 def registrar_receita(dados_lancamento: dict) -> dict:
     """
-    Entrada de receita com distribuição automática entre os 6 potes.
+    Entrada de receita com distribuição automática entre os 6 potes do mês da receita.
 
-    1. Lê a configuração atual dos potes e distribui o valor (centavos exatos).
+    1. Lê a configuração dos potes do mês/ano do lançamento e distribui o valor (centavos exatos).
     2. Insere o lançamento (tipo Receita; pote_id fica NULL).
     3. Grava a distribuição atomicamente via RPC. Se falhar, desfaz o lançamento
        (compensação) para nunca deixar receita sem distribuição.
@@ -53,7 +81,8 @@ def registrar_receita(dados_lancamento: dict) -> dict:
     if valor <= Decimal("0"):
         raise P.ErroPotes(["O valor da receita deve ser maior que zero."])
 
-    potes = carregar_potes()
+    m_rec, a_rec = _extrair_mes_ano_data(dados_lancamento.get("data"))
+    potes = carregar_potes(mes=m_rec, ano=a_rec)
     distribuicao = P.distribuir_valor(valor, potes)  # valida soma == 100
 
     dados = dict(dados_lancamento)
@@ -99,9 +128,11 @@ def salvar_renda_referencia(valor) -> Decimal:
     db.salvar_renda_referencia(float(renda))
     return renda
 
-def redistribuir_receita(lancamento_id: str, valor) -> list[dict]:
+
+def redistribuir_receita(lancamento_id: str, valor, data: str | None = None) -> list[dict]:
     """Recalcula e regrava a distribuição de uma receita editada (valor novo)."""
-    distribuicao = P.distribuir_valor(valor, carregar_potes())
+    m_rec, a_rec = _extrair_mes_ano_data(data)
+    distribuicao = P.distribuir_valor(valor, carregar_potes(mes=m_rec, ano=a_rec))
     try:
         db.registrar_distribuicao_receita(lancamento_id, distribuicao)
     except Exception as ex:
