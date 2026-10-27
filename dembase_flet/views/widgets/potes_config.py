@@ -7,6 +7,7 @@ de 100% por período. Sem acesso direto ao banco: usa apenas
 services/potes_service.py e core/potes.py.
 =============================================================================
 """
+from datetime import date
 from decimal import Decimal
 
 import flet as ft
@@ -28,8 +29,10 @@ def _fmt_perc(v: Decimal) -> str:
 
 def montar_aba_potes(page: ft.Page) -> ft.Control:
     # ── Estado do Mês/Ano selecionado ─────────────────────────────────────────
-    _, _, mes_ini, ano_ini = obter_estado_periodo_atual(page)
-    estado_periodo = {"mes": int(mes_ini), "ano": int(ano_ini), "herdado": False}
+    est_periodo = obter_estado_periodo_atual(page)
+    mes_ini = int(est_periodo.get("mes") or date.today().month)
+    ano_ini = int(est_periodo.get("ano") or date.today().year)
+    estado_periodo = {"mes": mes_ini, "ano": ano_ini, "herdado": False}
 
     try:
         potes, herdado_ini = svc.carregar_potes_com_meta_mes(
