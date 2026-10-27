@@ -426,10 +426,33 @@ class LancamentoForm(ft.Column):
             visible=(not self.state.is_fixa),
         )
 
+        # Badge indicativo de edição de parcela da compra
+        self.lbl_badge_parcela = ft.Text(
+            "",
+            size=11.5,
+            weight=ft.FontWeight.W_600,
+            color=T.PRIMARY,
+        )
+        self.badge_edicao_parcela = ft.Container(
+            content=ft.Row(
+                spacing=6,
+                tight=True,
+                controls=[
+                    ft.Icon(ft.Icons.LAYERS_ROUNDED, size=15, color=T.PRIMARY),
+                    self.lbl_badge_parcela,
+                ],
+            ),
+            padding=pad(h=10, v=6),
+            bgcolor=f"{T.PRIMARY}18",
+            border_radius=8,
+            border=borda(1, f"{T.PRIMARY}40"),
+            visible=False,
+        )
+
         self.dd_parcelas = ft.Dropdown(
             label="Número de Parcelas *",
             value=str(self.state.quantidade if self.state.quantidade > 1 else 1),
-            options=[ft.dropdown.Option(key=str(i), text=f"{i}x") for i in range(1, 25)],
+            options=[ft.dropdown.Option(key=str(i), text=f"{i}x") for i in range(1, 49)],
             width=160,
             on_select=self._ao_mudar_parcelas,
             **T.dropdown_estilo(),
@@ -446,6 +469,12 @@ class LancamentoForm(ft.Column):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=12,
             visible=(not self.state.is_fixa),
+        )
+        self.lbl_aviso_mudanca_parcelas = ft.Text(
+            "",
+            size=11.5,
+            weight=ft.FontWeight.W_500,
+            visible=False,
         )
         self.card_credito_recorrente_info = ft.Container(
             padding=pad(h=12, v=8),
@@ -480,9 +509,11 @@ class LancamentoForm(ft.Column):
         )
         self.row_parcelas = ft.Column(
             controls=[
+                self.badge_edicao_parcela,
                 self.seg_credito_tipo,
                 self.row_modo_parcela,
                 self.row_detalhe_parcelas,
+                self.lbl_aviso_mudanca_parcelas,
                 self.card_credito_recorrente_info,
             ],
             spacing=8,
@@ -927,6 +958,7 @@ class LancamentoForm(ft.Column):
             self.row_modo_parcela.visible = not self.state.is_fixa
             self.row_detalhe_parcelas.visible = not self.state.is_fixa
             self.card_credito_recorrente_info.visible = self.state.is_fixa
+            self.dd_parcelas.value = str(self.state.quantidade if self.state.quantidade > 0 else 1)
             self._atualizar_resumo_parcelas(atualizar_ui=False)
             self._atualizar_opcoes_fatura(atualizar_ui=False)
 
@@ -1148,6 +1180,10 @@ class LancamentoForm(ft.Column):
         if self.state.is_fixa:
             self.lbl_resumo_parcelas.value = "Cobrança contínua todo mês na fatura do cartão."
             self.lbl_resumo_parcelas.color = T.PRIMARY
+            if hasattr(self, "badge_edicao_parcela"):
+                self.badge_edicao_parcela.visible = False
+            if hasattr(self, "lbl_aviso_mudanca_parcelas"):
+                self.lbl_aviso_mudanca_parcelas.visible = False
         else:
             qtd = max(1, self.state.quantidade)
             total = self.state.valor
@@ -1164,8 +1200,45 @@ class LancamentoForm(ft.Column):
                     self.lbl_resumo_parcelas.value = f"Total {t_str} em {qtd}x de {p_str}"
                 self.lbl_resumo_parcelas.color = T.PRIMARY
 
+            # Atualiza Badge de Edição de Parcela
+            if hasattr(self, "badge_edicao_parcela") and hasattr(self, "lbl_badge_parcela"):
+                if self.state.is_compra_parcelada and self.state.parcela_atual:
+                    tot_exib = self.state.total_parcelas_original or self.state.quantidade
+                    self.lbl_badge_parcela.value = f"Editando Parcela {self.state.parcela_atual} de {tot_exib}x"
+                    self.badge_edicao_parcela.visible = True
+                else:
+                    self.badge_edicao_parcela.visible = False
+
+            # Atualiza Aviso de Mudança na Quantidade de Parcelas
+            if hasattr(self, "lbl_aviso_mudanca_parcelas"):
+                if self.state.is_compra_parcelada and self.state.total_parcelas_original:
+                    orig = self.state.total_parcelas_original
+                    novo = self.state.quantidade
+                    if novo < orig:
+                        self.lbl_aviso_mudanca_parcelas.value = (
+                            f"⚠️ Reduzir de {orig}x para {novo}x: as parcelas pendentes excedentes "
+                            f"({orig - novo}) serão canceladas ao salvar."
+                        )
+                        self.lbl_aviso_mudanca_parcelas.color = T.WARNING
+                        self.lbl_aviso_mudanca_parcelas.visible = True
+                    elif novo > orig:
+                        self.lbl_aviso_mudanca_parcelas.value = (
+                            f"✨ Expandir de {orig}x para {novo}x: {novo - orig} novas parcelas "
+                            f"serão geradas nos meses seguintes ao salvar."
+                        )
+                        self.lbl_aviso_mudanca_parcelas.color = T.PRIMARY
+                        self.lbl_aviso_mudanca_parcelas.visible = True
+                    else:
+                        self.lbl_aviso_mudanca_parcelas.visible = False
+                else:
+                    self.lbl_aviso_mudanca_parcelas.visible = False
+
         if atualizar_ui:
             self._safe_update(self.lbl_resumo_parcelas)
+            if hasattr(self, "badge_edicao_parcela"):
+                self._safe_update(self.badge_edicao_parcela)
+            if hasattr(self, "lbl_aviso_mudanca_parcelas"):
+                self._safe_update(self.lbl_aviso_mudanca_parcelas)
 
     def _atualizar_resumo_repetir(self, atualizar_ui: bool = True):
         res = resumo_parcelas(

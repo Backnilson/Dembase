@@ -551,25 +551,9 @@ def salvar_ordem_kpis_dashboard_sync(page: ft.Page, kpis_ids: list[str]) -> None
 
 
 # =============================================================================
-# FILTROS DE PERÍODO SALVOS / FAVORITOS (EX: DIA 05 A 20, DIA 20 A 30/31)
+# FILTROS DE PERÍODO SALVOS / FAVORITOS (EX: 1ª QUINZENA, 2ª QUINZENA, MÊS INTEIRO)
 # =============================================================================
 FILTROS_PERIODO_FAVORITOS_PADRAO: list[dict] = [
-    {
-        "id": "dia_05_20",
-        "nome": "Dia 05 a 20",
-        "dia_ini": 5,
-        "dia_fim": 20,
-        "ate_fim_mes": False,
-        "fixo": True,
-    },
-    {
-        "id": "dia_20_fim",
-        "nome": "Dia 20 a 30/31",
-        "dia_ini": 20,
-        "dia_fim": 31,
-        "ate_fim_mes": True,
-        "fixo": True,
-    },
     {
         "id": "dia_01_15",
         "nome": "1ª Quinzena (01 a 15)",
@@ -596,11 +580,14 @@ FILTROS_PERIODO_FAVORITOS_PADRAO: list[dict] = [
     },
 ]
 
+_IDS_FILTROS_LEGADOS_REMOVIDOS = {"dia_05_20", "dia_20_fim"}
+
 
 def obter_filtros_periodo_favoritos(page: ft.Page | None = None) -> list[dict]:
     """
-    Retorna a lista de filtros de período salvos (incluindo 'Dia 05 a 20' e 'Dia 20 a 30/31'
-    por padrão, mais quaisquer filtros personalizados salvos pelo usuário).
+    Retorna a lista de filtros de período salvos (incluindo '1ª Quinzena', '2ª Quinzena'
+    e 'Mês Inteiro' por padrão, mais quaisquer filtros personalizados salvos pelo usuário).
+    Remove automaticamente atalhos legados redundantes ('dia_05_20' e 'dia_20_fim').
     """
     base = [dict(f) for f in FILTROS_PERIODO_FAVORITOS_PADRAO]
     ids_base = {f["id"] for f in base}
@@ -621,7 +608,7 @@ def obter_filtros_periodo_favoritos(page: ft.Page | None = None) -> list[dict]:
 
     for item in custom:
         fid = str(item.get("id") or "")
-        if fid and fid not in ids_base:
+        if fid and fid not in ids_base and fid not in _IDS_FILTROS_LEGADOS_REMOVIDOS:
             base.append(item)
             ids_base.add(fid)
 

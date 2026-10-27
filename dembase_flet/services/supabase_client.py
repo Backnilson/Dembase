@@ -4439,6 +4439,88 @@ def excluir_serie(serie_id: str, a_partir_de: str = None) -> dict:
     return resp.data or {}
 
 
+def recalcular_totais_faturas(faturas_ids: list[str]) -> dict:
+    """
+    Recalcula atomicamente o valor_total de uma lista de faturas via RPC no Supabase.
+    """
+    if not faturas_ids:
+        return {"sucesso": True}
+    try:
+        clean_ids = [str(f) for f in faturas_ids if f]
+        resp = supabase.rpc("fn_recalcular_totais_faturas", {"p_faturas_ids": clean_ids}).execute()
+        return {"sucesso": True, "data": resp.data}
+    except Exception as ex:
+        print(f"[Supabase] Erro ao recalcular totais das faturas: {ex}")
+        return {"sucesso": False, "erro": str(ex)}
+
+
+def deslocar_faturas_parcelamento(lancamento_id: str, nova_fatura_id: str, aplicar_cascata: bool = True) -> dict:
+    """
+    Desloca a fatura do lançamento informado e, opcionalmente, de todas as parcelas
+    subsequentes da mesma série em efeito cascata.
+    """
+    if not lancamento_id or not nova_fatura_id:
+        return {"sucesso": False, "erro": "Parâmetros inválidos"}
+    try:
+        resp = supabase.rpc("fn_deslocar_faturas_parcelamento", {
+            "p_lancamento_id": lancamento_id,
+            "p_nova_fatura_id": nova_fatura_id,
+            "p_aplicar_cascata": aplicar_cascata,
+        }).execute()
+        return resp.data or {}
+    except Exception as ex:
+        print(f"[Supabase] Erro ao deslocar faturas parcelamento: {ex}")
+        return {"sucesso": False, "erro": str(ex)}
+
+
+def redimensionar_parcelamento(serie_id: str, novo_total: int, novo_valor_parcela: float = None) -> dict:
+    """
+    Altera o número total de parcelas de uma compra parcelada (redução segura ou extensão).
+    """
+    if not serie_id or novo_total < 1:
+        return {"sucesso": False, "erro": "Parâmetros inválidos"}
+    try:
+        params = {
+            "p_serie_id": serie_id,
+            "p_novo_total": int(novo_total),
+        }
+        if novo_valor_parcela is not None:
+            params["p_novo_valor_parcela"] = float(novo_valor_parcela)
+        resp = supabase.rpc("fn_redimensionar_parcelamento", params).execute()
+        return resp.data or {}
+    except Exception as ex:
+        print(f"[Supabase] Erro ao redimensionar parcelamento: {ex}")
+        return {"sucesso": False, "erro": str(ex)}
+
+
+def obter_resumo_serie_parcelamento(serie_id: str) -> dict:
+    """
+    Retorna o resumo detalhado das parcelas de uma compra parcelada pelo serie_id.
+    """
+    if not serie_id:
+        return {"sucesso": False, "total": 0, "pagas": 0, "parcelas": []}
+    try:
+        resp = supabase.table("lancamentos") \
+            .select("id, parcela_atual, total_parcelas, fatura_id, status, data, valor, descricao, cartao_id") \
+            .eq("serie_id", serie_id) \
+            .order("parcela_atual", desc=False) \
+            .execute()
+        parcelas = resp.data or []
+        pagas = sum(1 for p in parcelas if p.get("status") == "Pago")
+        return {
+            "sucesso": True,
+            "total": len(parcelas),
+            "max_parcela": max((p.get("parcela_atual") or 0) for p in parcelas) if parcelas else 0,
+            "pagas": pagas,
+            "pendentes": len(parcelas) - pagas,
+            "parcelas": parcelas,
+        }
+    except Exception as ex:
+        print(f"[Supabase] Erro ao obter resumo da série: {ex}")
+        return {"sucesso": False, "total": 0, "pagas": 0, "parcelas": []}
+
+
+
 
 
 
@@ -7024,29 +7106,140 @@ def obter_resumo_caixinhas(forcar_atualizacao: bool = False) -> dict:
 # =============================================================================
 # CALENDÁRIO FINANCEIRO INTERATIVO (MAPA DE CALOR + ROSCA + FATURAS)
 # =============================================================================
+def _calcular_acumulados_calendario(
+    dias_lista: list[dict],
+    d_ini_str: str,
+    d_fim_str: str,
+    grid_ini_str: str,
+    grid_fim_str: str,
+) -> dict[str, dict]:
+    """
+    Pré-calcula em O(N) a soma contínua acumulada (Running Sum) de receitas,
+    despesas em conta, despesas no cartão e saldo líquido desde o primeiro dia
+    do filtro ativo (`d_ini_str`) até cada data da grade.
+    Garante performance instantânea (O(1)) no Hover/Tooltip sem recalcular nada no movimento do mouse.
+    """
+    from datetime import date as _date, timedelta as _td
+
+    mapa_por_data: dict[str, dict] = {}
+    for d_it in (dias_lista or []):
+        dt_k = str(d_it.get("data") or "")[:10]
+        if dt_k:
+            mapa_por_data[dt_k] = d_it
+
+    try:
+        dt_ini_f = _date.fromisoformat(d_ini_str[:10])
+        dt_fim_f = _date.fromisoformat(d_fim_str[:10])
+        dt_grid_i = _date.fromisoformat(grid_ini_str[:10])
+        dt_grid_f = _date.fromisoformat(grid_fim_str[:10])
+    except Exception:
+        return {}
+
+    dt_start = min(dt_ini_f, dt_grid_i)
+    dt_end = max(dt_fim_f, dt_grid_f)
+
+    acumulados: dict[str, dict] = {}
+    rec_acum = 0.0
+    desp_cta_acum = 0.0
+    desp_crt_acum = 0.0
+    desp_tot_acum = 0.0
+    qtd_acum = 0
+
+    cur = dt_start
+    while cur <= dt_end:
+        iso_c = cur.isoformat()
+        info_c = mapa_por_data.get(iso_c) or {}
+        r_d = float(info_c.get("total_receitas", 0) or 0)
+        sc_d = float(info_c.get("despesas_conta", 0) or 0)
+        sr_d = float(info_c.get("despesas_cartao", 0) or 0)
+        st_d = float(info_c.get("total_despesas", sc_d + sr_d) or 0)
+        q_d = int(info_c.get("qtd_lancamentos", 0) or 0)
+
+        if dt_ini_f <= cur <= dt_fim_f:
+            rec_acum += r_d
+            desp_cta_acum += sc_d
+            desp_crt_acum += sr_d
+            desp_tot_acum += st_d
+            qtd_acum += q_d
+            acum_item = {
+                "data_inicio_filtro": d_ini_str[:10],
+                "data_ate": iso_c,
+                "no_periodo_filtro": True,
+                "dias_corridos": (cur - dt_ini_f).days + 1,
+                "receitas_acum": round(rec_acum, 2),
+                "despesas_conta_acum": round(desp_cta_acum, 2),
+                "despesas_cartao_acum": round(desp_crt_acum, 2),
+                "despesas_total_acum": round(desp_tot_acum, 2),
+                "saldo_acum": round(rec_acum - desp_tot_acum, 2),
+                "qtd_lancamentos_acum": qtd_acum,
+            }
+        elif cur < dt_ini_f:
+            acum_item = {
+                "data_inicio_filtro": d_ini_str[:10],
+                "data_ate": iso_c,
+                "no_periodo_filtro": False,
+                "dias_corridos": 0,
+                "receitas_acum": round(r_d, 2),
+                "despesas_conta_acum": round(sc_d, 2),
+                "despesas_cartao_acum": round(sr_d, 2),
+                "despesas_total_acum": round(st_d, 2),
+                "saldo_acum": round(r_d - st_d, 2),
+                "qtd_lancamentos_acum": q_d,
+            }
+        else:
+            # Data após o fim do filtro mantém o acumulado final fechado do período
+            acum_item = {
+                "data_inicio_filtro": d_ini_str[:10],
+                "data_ate": iso_c,
+                "no_periodo_filtro": False,
+                "dias_corridos": (dt_fim_f - dt_ini_f).days + 1,
+                "receitas_acum": round(rec_acum, 2),
+                "despesas_conta_acum": round(desp_cta_acum, 2),
+                "despesas_cartao_acum": round(desp_crt_acum, 2),
+                "despesas_total_acum": round(desp_tot_acum, 2),
+                "saldo_acum": round(rec_acum - desp_tot_acum, 2),
+                "qtd_lancamentos_acum": qtd_acum,
+            }
+
+        acumulados[iso_c] = acum_item
+        if iso_c in mapa_por_data:
+            mapa_por_data[iso_c]["acumulado"] = acum_item
+
+        cur += _td(days=1)
+
+    return acumulados
+
+
 def _aplicar_filtro_periodo_ao_calendario(
     dados: dict,
     d_ini_str: str,
     d_fim_str: str,
 ) -> dict:
     """
-    Sincroniza o pacote do Calendário Financeiro com o intervalo global [d_ini_str, d_fim_str]
-    (ex: 'Dia 05 a 20' ou 'Dia 20 a 30/31').
-    Marca cada dia com 'no_periodo_filtro' e recalcula KPIs e categorias da rosca
-    estritamente dentro do intervalo filtrado quando este diferir do mês cheio.
+    Sincroniza o pacote do Calendário Financeiro com o intervalo global [d_ini_str, d_fim_str].
+    Marca cada dia com 'no_periodo_filtro', calcula o mapa O(1) de saldos acumulativos
+    ('acumulados_por_dia') e recalcula KPIs e categorias da rosca estritamente dentro do intervalo filtrado.
     """
     ini_mes = str(dados.get("inicio_mes") or d_ini_str)[:10]
     fim_mes = str(dados.get("fim_mes") or d_fim_str)[:10]
     eh_parcial = (d_ini_str != ini_mes or d_fim_str != fim_mes)
+    eh_multi_mes = (d_ini_str[:7] != d_fim_str[:7])
 
     dados["filtro_inicio"] = d_ini_str
     dados["filtro_fim"] = d_fim_str
     dados["eh_periodo_parcial"] = eh_parcial
+    dados["eh_multi_mes"] = eh_multi_mes
 
     dias_lista = dados.get("dias") or []
     for d_item in dias_lista:
         dt_k = str(d_item.get("data") or "")[:10]
         d_item["no_periodo_filtro"] = bool(dt_k and (d_ini_str <= dt_k <= d_fim_str))
+
+    grid_ini_s = str(dados.get("grid_inicio") or d_ini_str)[:10]
+    grid_fim_s = str(dados.get("grid_fim") or d_fim_str)[:10]
+    dados["acumulados_por_dia"] = _calcular_acumulados_calendario(
+        dias_lista, d_ini_str, d_fim_str, grid_ini_s, grid_fim_s
+    )
 
     if not eh_parcial:
         return dados
@@ -7132,9 +7325,10 @@ def obter_calendario_financeiro_mes(
     data_fim: str | None = None,
 ) -> dict:
     """
-    Chama a RPC 'get_calendario_financeiro_mes' (com fallback em Python) e aplica
-    sincronização com o filtro global de período [data_inicio, data_fim] (ex: Dia 05 a 20,
-    Dia 20 a 30/31 ou mês inteiro).
+    Chama a RPC 'get_calendario_financeiro_mes' (com fallback em Python) e aplica:
+    - Regra de Cartão de Crédito: despesas em cartão aparecem exclusivamente na data de vencimento da fatura.
+    - Suporte a Multi-Meses: expande a grade quando o filtro cruza meses.
+    - Acumulado Contínuo (Running Sum): pré-calcula o saldo acumulado de data_inicio até cada dia.
     """
     import calendar as _cal
     from datetime import date as _date, timedelta as _td
@@ -7147,10 +7341,25 @@ def obter_calendario_financeiro_mes(
     d_ini_str = str(data_inicio)[:10] if data_inicio else inicio_mes.isoformat()
     d_fim_str = str(data_fim)[:10] if data_fim else fim_mes.isoformat()
 
+    try:
+        dt_ini_obj = _date.fromisoformat(d_ini_str)
+        dt_fim_obj = _date.fromisoformat(d_fim_str)
+        if dt_fim_obj < dt_ini_obj:
+            dt_ini_obj, dt_fim_obj = dt_fim_obj, dt_ini_obj
+            d_ini_str, d_fim_str = dt_ini_obj.isoformat(), dt_fim_obj.isoformat()
+    except Exception:
+        dt_ini_obj, dt_fim_obj = inicio_mes, fim_mes
+
+    eh_multi_mes = (dt_ini_obj.month != dt_fim_obj.month or dt_ini_obj.year != dt_fim_obj.year)
+    base_ini = dt_ini_obj if eh_multi_mes else min(inicio_mes, dt_ini_obj)
+    base_fim = dt_fim_obj if eh_multi_mes else max(fim_mes, dt_fim_obj)
+
     # Domingo = 0 na grade visual (em Python weekday(): Seg=0..Dom=6 -> offset = (weekday + 1) % 7)
-    offset_dom = (inicio_mes.weekday() + 1) % 7
-    grid_inicio = inicio_mes - _td(days=offset_dom)
-    grid_fim = grid_inicio + _td(days=41)
+    offset_dom = (base_ini.weekday() + 1) % 7
+    grid_inicio = base_ini - _td(days=offset_dom)
+    offset_sab = 6 - ((base_fim.weekday() + 1) % 7)
+    fim_sab = base_fim + _td(days=offset_sab)
+    grid_fim = fim_sab if eh_multi_mes else max(grid_inicio + _td(days=41), fim_sab)
 
     vazio = {
         "mes": m,
@@ -7160,6 +7369,7 @@ def obter_calendario_financeiro_mes(
         "filtro_inicio": d_ini_str,
         "filtro_fim": d_fim_str,
         "eh_periodo_parcial": (d_ini_str != inicio_mes.isoformat() or d_fim_str != fim_mes.isoformat()),
+        "eh_multi_mes": eh_multi_mes,
         "grid_inicio": grid_inicio.isoformat(),
         "grid_fim": grid_fim.isoformat(),
         "kpis": {
@@ -7174,27 +7384,63 @@ def obter_calendario_financeiro_mes(
             "maior_saida_dia": 0.0,
         },
         "dias": [],
+        "acumulados_por_dia": {},
         "cartoes_faturas": [],
         "despesas_por_categoria": [],
         "receitas_por_categoria": [],
     }
 
     try:
-        resp = supabase.rpc("get_calendario_financeiro_mes", {"p_mes": m, "p_ano": a}).execute()
+        resp = supabase.rpc(
+            "get_calendario_financeiro_mes",
+            {
+                "p_mes": m,
+                "p_ano": a,
+                "p_data_inicio": d_ini_str,
+                "p_data_fim": d_fim_str,
+            },
+        ).execute()
         if isinstance(resp.data, dict) and "dias" in resp.data:
             dados = {**vazio, **resp.data}
             if isinstance(resp.data.get("kpis"), dict):
                 dados["kpis"] = {**vazio["kpis"], **resp.data["kpis"]}
             return _aplicar_filtro_periodo_ao_calendario(dados, d_ini_str, d_fim_str)
     except Exception:
-        pass
+        try:
+            resp2 = supabase.rpc("get_calendario_financeiro_mes", {"p_mes": m, "p_ano": a}).execute()
+            if isinstance(resp2.data, dict) and "dias" in resp2.data and not eh_multi_mes:
+                dados = {**vazio, **resp2.data}
+                if isinstance(resp2.data.get("kpis"), dict):
+                    dados["kpis"] = {**vazio["kpis"], **resp2.data["kpis"]}
+                return _aplicar_filtro_periodo_ao_calendario(dados, d_ini_str, d_fim_str)
+        except Exception:
+            pass
 
-    # Fallback usando listar_lancamentos + listar_cartoes + listar_faturas
+    # Fallback em Python respeitando a regra de vencimento de fatura de cartão de crédito
     try:
-        lancs = listar_lancamentos(
-            data_inicio=grid_inicio.isoformat(),
-            data_fim=grid_fim.isoformat(),
-        )
+        # Busca janela ampliada (60 dias antes de grid_inicio) para capturar compras de cartão
+        # cuja fatura vence dentro da grade atual
+        busca_ini = (grid_inicio - _td(days=65)).isoformat()
+        busca_fim = (grid_fim + _td(days=5)).isoformat()
+        lancs = listar_lancamentos(data_inicio=busca_ini, data_fim=busca_fim)
+
+        # Mapa de faturas (id -> data_vencimento) e cartões (id -> dia_vencimento/dia_fechamento)
+        faturas_map: dict[str, str] = {}
+        cartoes_map: dict[str, dict] = {}
+        try:
+            resp_f = supabase.table("faturas").select("id,cartao_id,mes,ano,data_vencimento,valor_total,valor_pago,status").execute()
+            for rf in (resp_f.data or []):
+                if rf.get("id") and rf.get("data_vencimento"):
+                    faturas_map[str(rf["id"])] = str(rf["data_vencimento"])[:10]
+        except Exception:
+            pass
+        try:
+            for c_it in listar_cartoes():
+                if c_it.get("id"):
+                    cartoes_map[str(c_it["id"])] = c_it
+        except Exception:
+            pass
+
         dias_map: dict[str, dict] = {}
         desp_cat_map: dict[str, dict] = {}
         rec_cat_map: dict[str, dict] = {}
@@ -7206,20 +7452,46 @@ def obter_calendario_financeiro_mes(
         dias_entrada_set = set()
         qtd_mes = 0
 
+        grid_ini_iso = grid_inicio.isoformat()
+        grid_fim_iso = grid_fim.isoformat()
+
         for it in lancs:
-            if str(it.get("subtipo") or "").lower() == "provisionamento":
+            dt_compra_str = str(it.get("data") or "")[:10]
+            if not dt_compra_str:
                 continue
-            dt_str = str(it.get("data") or "")[:10]
-            if not dt_str:
+
+            tem_cartao = bool(it.get("cartao_id"))
+            dt_efetiva_str = dt_compra_str
+            if tem_cartao:
+                fid = str(it.get("fatura_id") or "")
+                if fid and fid in faturas_map:
+                    dt_efetiva_str = faturas_map[fid]
+                else:
+                    cid = str(it.get("cartao_id") or "")
+                    c_info = cartoes_map.get(cid) or (it.get("cartoes") or {})
+                    dia_v = int(c_info.get("dia_vencimento") or 10)
+                    dia_f = int(c_info.get("dia_fechamento") or 1)
+                    try:
+                        yc, mc, _ = [int(p) for p in dt_compra_str.split("-")]
+                        if dia_v < dia_f:
+                            mc = 1 if mc == 12 else mc + 1
+                            yc = yc + 1 if mc == 1 else yc
+                        ult_vc = _cal.monthrange(yc, mc)[1]
+                        dt_efetiva_str = _date(yc, mc, min(dia_v, ult_vc)).isoformat()
+                    except Exception:
+                        dt_efetiva_str = dt_compra_str
+
+            if not (grid_ini_iso <= dt_efetiva_str <= grid_fim_iso):
                 continue
+
             try:
-                y_i, m_i, d_i = [int(p) for p in dt_str.split("-")]
+                y_i, m_i, d_i = [int(p) for p in dt_efetiva_str.split("-")]
             except Exception:
                 continue
             no_mes = (y_i == a and m_i == m)
+            no_periodo = (d_ini_str <= dt_efetiva_str <= d_fim_str)
             tp = str(it.get("tipo") or "Despesa")
             val = float(it.get("valor", 0) or 0)
-            tem_cartao = bool(it.get("cartao_id"))
             cat_obj = it.get("categorias") or {}
             sub_obj = it.get("subcategorias") or {}
             cta_obj = it.get("contas") or {}
@@ -7229,13 +7501,14 @@ def obter_calendario_financeiro_mes(
             cat_cor = cat_obj.get("cor") or "#64748B"
             cat_id = it.get("categoria_id")
 
-            if dt_str not in dias_map:
-                dias_map[dt_str] = {
-                    "data": dt_str,
+            if dt_efetiva_str not in dias_map:
+                dias_map[dt_efetiva_str] = {
+                    "data": dt_efetiva_str,
                     "dia": d_i,
                     "mes": m_i,
                     "ano": y_i,
                     "no_mes_atual": no_mes,
+                    "no_periodo_filtro": no_periodo,
                     "total_receitas": 0.0,
                     "total_despesas": 0.0,
                     "despesas_conta": 0.0,
@@ -7243,7 +7516,7 @@ def obter_calendario_financeiro_mes(
                     "qtd_lancamentos": 0,
                     "lancamentos": [],
                 }
-            bucket = dias_map[dt_str]
+            bucket = dias_map[dt_efetiva_str]
             bucket["qtd_lancamentos"] += 1
             if tp == "Receita":
                 bucket["total_receitas"] += val
@@ -7256,7 +7529,8 @@ def obter_calendario_financeiro_mes(
 
             bucket["lancamentos"].append({
                 "id": it.get("id"),
-                "data": dt_str,
+                "data": dt_efetiva_str,
+                "data_compra": dt_compra_str,
                 "hora": it.get("hora"),
                 "tipo": tp,
                 "subtipo": it.get("subtipo"),
@@ -7268,6 +7542,7 @@ def obter_calendario_financeiro_mes(
                 "parcela_atual": it.get("parcela_atual"),
                 "total_parcelas": it.get("total_parcelas"),
                 "fatura": it.get("fatura"),
+                "fatura_id": it.get("fatura_id"),
                 "conta_id": it.get("conta_id"),
                 "cartao_id": it.get("cartao_id"),
                 "categoria_id": cat_id,
@@ -7278,14 +7553,18 @@ def obter_calendario_financeiro_mes(
                 "conta_nome": cta_obj.get("nome"),
                 "cartao_nome": crt_obj.get("nome"),
                 "cartao_cor": crt_obj.get("cor"),
+                "caixinha_id": it.get("caixinha_id"),
+                "caixinha_nome": (it.get("caixinhas_teto") or {}).get("nome") if isinstance(it.get("caixinhas_teto"), dict) else it.get("caixinha_nome"),
+                "caixinha_cor": (it.get("caixinhas_teto") or {}).get("cor") if isinstance(it.get("caixinhas_teto"), dict) else it.get("caixinha_cor"),
+                "caixinha_icone": (it.get("caixinhas_teto") or {}).get("icone") if isinstance(it.get("caixinhas_teto"), dict) else it.get("caixinha_icone"),
             })
 
-            if no_mes:
+            if no_periodo:
                 qtd_mes += 1
                 if tp == "Receita":
                     rec_mes += val
                     if val > 0:
-                        dias_entrada_set.add(dt_str)
+                        dias_entrada_set.add(dt_efetiva_str)
                     ch_c = str(cat_id or cat_nome)
                     if ch_c not in rec_cat_map:
                         rec_cat_map[ch_c] = {"categoria_id": cat_id, "categoria": cat_nome, "cor": cat_cor, "total": 0.0, "qtd": 0}
@@ -7294,7 +7573,7 @@ def obter_calendario_financeiro_mes(
                 elif tp == "Despesa":
                     desp_mes += val
                     if val > 0:
-                        dias_saida_set.add(dt_str)
+                        dias_saida_set.add(dt_efetiva_str)
                     if tem_cartao:
                         desp_cartao_mes += val
                     else:
@@ -7306,7 +7585,7 @@ def obter_calendario_financeiro_mes(
                     desp_cat_map[ch_c]["qtd"] += 1
 
         maior_saida = max(
-            (d["total_despesas"] for d in dias_map.values() if d.get("no_mes_atual")),
+            (d["total_despesas"] for d in dias_map.values() if d.get("no_periodo_filtro")),
             default=0.0,
         )
         desp_cats = sorted(desp_cat_map.values(), key=lambda x: x["total"], reverse=True)

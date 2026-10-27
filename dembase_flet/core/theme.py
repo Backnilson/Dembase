@@ -16,6 +16,7 @@ _DARK = {
     "BORDER": "#334155",
     "TEXT_PRIMARY": "#F8FAFC",
     "TEXT_MUTED": "#94A3B8",
+    "TEXT_SECONDARY": "#94A3B8",
     "PRIMARY": "#00E676",         # Verde Neon no tema escuro
     "PRIMARY_DARK": "#00C853",
     "PRIMARY_SOFT": "#69F0AE",
@@ -35,6 +36,7 @@ _LIGHT = {
     "BORDER": "#E2E8F0",
     "TEXT_PRIMARY": "#0F172A",
     "TEXT_MUTED": "#64748B",
+    "TEXT_SECONDARY": "#64748B",
     "PRIMARY": "#00A152",         # Verde legível e de alto contraste sobre fundo claro
     "PRIMARY_DARK": "#007A3D",
     "PRIMARY_SOFT": "#00C853",
@@ -71,6 +73,7 @@ DESPESA: str = _DARK["DESPESA"]
 SALDO: str = _DARK["SALDO"]
 TEXT_PRIMARY: str = _DARK["TEXT_PRIMARY"]
 TEXT_MUTED: str = _DARK["TEXT_MUTED"]
+TEXT_SECONDARY: str = TEXT_MUTED
 ERROR: str = _DARK["ERROR"]
 WARNING: str = _DARK["WARNING"]
 INFO: str = _DARK["INFO"]

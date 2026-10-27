@@ -54,10 +54,11 @@ def secao_calendario_dashboard(
     d_ini_ef = str(data_inicio or (pacote_cal or {}).get("filtro_inicio") or ini_m_iso)[:10]
     d_fim_ef = str(data_fim or (pacote_cal or {}).get("filtro_fim") or fim_m_iso)[:10]
     eh_parcial = bool((pacote_cal or {}).get("eh_periodo_parcial")) or (d_ini_ef != ini_m_iso or d_fim_ef != fim_m_iso)
+    eh_multi_mes = bool((pacote_cal or {}).get("eh_multi_mes")) or (d_ini_ef[:7] != d_fim_ef[:7])
 
     nome_mes_cap = (
         f"{formatar_data_br(d_ini_ef)} a {formatar_data_br(d_fim_ef)}"
-        if eh_parcial
+        if (eh_parcial or eh_multi_mes)
         else f"{MESES_NOMES[m - 1]} {a}"
     )
 
@@ -66,6 +67,7 @@ def secao_calendario_dashboard(
     kpis_m = (pacote_cal or {}).get("kpis") or {}
     dias_lista = (pacote_cal or {}).get("dias") or []
     faturas_lista = (pacote_cal or {}).get("cartoes_faturas") or []
+    acumulados_map = (pacote_cal or {}).get("acumulados_por_dia") or {}
 
     rec_mes = float(kpis_m.get("receitas_mes", 0) or 0)
     desp_mes = float(kpis_m.get("despesas_mes", 0) or 0)
@@ -78,7 +80,7 @@ def secao_calendario_dashboard(
         dt_k = str(d_item.get("data") or "")[:10]
         if dt_k:
             mapa_dias[dt_k] = d_item
-            if d_item.get("no_mes_atual"):
+            if d_item.get("no_mes_atual") or d_item.get("no_periodo_filtro"):
                 maior_entrada = max(maior_entrada, float(d_item.get("total_receitas", 0) or 0))
 
     mapa_vencimentos: dict[str, list[dict]] = {}
@@ -88,7 +90,7 @@ def secao_calendario_dashboard(
             mapa_vencimentos.setdefault(dv_str, []).append(fat)
 
     txt_hover_info = ft.Text(
-        "Passe o mouse ou toque em um dia para destrinchar receitas, despesas e cartão",
+        "Passe o mouse ou toque em um dia para ver o acumulado contínuo até a data",
         size=11.5,
         color=T.TEXT_MUTED,
         weight=ft.FontWeight.W_500,
@@ -121,48 +123,108 @@ def secao_calendario_dashboard(
     col_grade_semanas = ft.Column(spacing=4 if mobile else 6, controls=[])
     row_botoes_modo = ft.Row(spacing=6, tight=True, controls=[])
 
-    def _atualizar_hover(dia_info: dict, vencs: list[dict]):
-        dt_s = str(dia_info.get("data") or "")
+    def _obter_acum_dash(dt_s: str, dia_info: dict) -> dict:
+        if dt_s in acumulados_map:
+            return acumulados_map[dt_s]
+        if isinstance(dia_info.get("acumulado"), dict):
+            return dia_info["acumulado"]
         rec_d = float(dia_info.get("total_receitas", 0) or 0)
-        desp_d = float(dia_info.get("total_despesas", 0) or 0)
         desp_cta = float(dia_info.get("despesas_conta", 0) or 0)
         desp_crt = float(dia_info.get("despesas_cartao", 0) or 0)
+        desp_tot = float(dia_info.get("total_despesas", 0) or 0)
+        return {
+            "data_inicio_acum": d_ini_ef,
+            "data_ate": dt_s,
+            "receitas_acum": rec_d,
+            "despesas_conta_acum": desp_cta,
+            "despesas_cartao_acum": desp_crt,
+            "despesas_total_acum": desp_tot,
+            "saldo_acum": rec_d - desp_tot,
+        }
+
+    def _atualizar_hover(dia_info: dict, vencs: list[dict]):
+        dt_s = str(dia_info.get("data") or "")[:10]
+        rec_d = float(dia_info.get("total_receitas", 0) or 0)
+        desp_d = float(dia_info.get("total_despesas", 0) or 0)
         saldo_d = rec_d - desp_d
         qtd_d = int(dia_info.get("qtd_lancamentos", 0) or 0)
 
-        txt_hover_info.value = f"📅 {formatar_data_br(dt_s)} ({qtd_d} mov.)"
+        acum = _obter_acum_dash(dt_s, dia_info)
+        d_ini_ac = str(acum.get("data_inicio_acum") or d_ini_ef)[:10]
+        rec_ac = float(acum.get("receitas_acum", 0) or 0)
+        desp_tot_ac = float(acum.get("despesas_total_acum", 0) or 0)
+        desp_crt_ac = float(acum.get("despesas_cartao_acum", 0) or 0)
+        saldo_ac = float(acum.get("saldo_acum", rec_ac - desp_tot_ac) or 0)
+
+        txt_hover_info.value = (
+            f"📅 Acum. {formatar_data_br(d_ini_ac)[:5]} → {formatar_data_br(dt_s)} "
+            f"(Dia: {qtd_d} mov. | {formatar_moeda(saldo_d)})"
+        )
         txt_hover_info.color = T.TEXT_PRIMARY
         row_hover_chips.controls = [
-            ft.Text(f"Receita: {formatar_moeda(rec_d)}", size=11, weight=ft.FontWeight.BOLD, color=T.RECEITA),
-            ft.Text(f"Conta: {formatar_moeda(desp_cta)}", size=11, weight=ft.FontWeight.BOLD, color=T.DESPESA),
-            ft.Text(f"Cartão: {formatar_moeda(desp_crt)}", size=11, weight=ft.FontWeight.BOLD, color=T.WARNING),
-            ft.Text(
-                f"Saldo: {formatar_moeda(saldo_d)}",
-                size=11,
-                weight=ft.FontWeight.BOLD,
-                color=T.RECEITA if saldo_d >= 0 else T.DESPESA,
+            ft.Text(f"Rec. Acum: {formatar_moeda(rec_ac)}", size=11, weight=ft.FontWeight.BOLD, color=T.RECEITA),
+            ft.Text(f"Desp. Acum: {formatar_moeda(desp_tot_ac)}", size=11, weight=ft.FontWeight.BOLD, color=T.DESPESA),
+            ft.Text(f"Faturas Acum: {formatar_moeda(desp_crt_ac)}", size=11, weight=ft.FontWeight.BOLD, color=T.WARNING),
+            ft.Container(
+                padding=pad(h=7, v=2),
+                border_radius=6,
+                bgcolor=f"{T.RECEITA}22" if saldo_ac >= 0 else f"{T.DESPESA}22",
+                border=borda(1, T.RECEITA if saldo_ac >= 0 else T.DESPESA),
+                content=ft.Text(
+                    f"Saldo Acumulado: {formatar_moeda(saldo_ac)}",
+                    size=11,
+                    weight=ft.FontWeight.BOLD,
+                    color=T.RECEITA if saldo_ac >= 0 else T.DESPESA,
+                ),
             ),
         ]
+        for cx_l in (dia_info.get("lancamentos") or []):
+            if cx_l.get("caixinha_id") or str(cx_l.get("subtipo") or "").lower() == "provisionamento":
+                cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "Caixinha"
+                cx_v = float(cx_l.get("valor", 0) or 0)
+                cx_st = str(cx_l.get("status") or "Pendente")
+                row_hover_chips.controls.append(
+                    ft.Text(f"📦 {cx_n}: {formatar_moeda(cx_v)} ({cx_st})", size=11, weight=ft.FontWeight.BOLD, color=T.INFO)
+                )
         try:
             barra_hover.update()
         except Exception:
             pass
 
     def _tooltip_dia(dia_info: dict, vencs: list[dict]) -> str:
-        dt_s = str(dia_info.get("data") or "")
+        dt_s = str(dia_info.get("data") or "")[:10]
         rec_d = float(dia_info.get("total_receitas", 0) or 0)
         desp_d = float(dia_info.get("total_despesas", 0) or 0)
         desp_cta = float(dia_info.get("despesas_conta", 0) or 0)
         desp_crt = float(dia_info.get("despesas_cartao", 0) or 0)
         saldo_d = rec_d - desp_d
+
+        acum = _obter_acum_dash(dt_s, dia_info)
+        d_ini_ac = str(acum.get("data_inicio_acum") or d_ini_ef)[:10]
+        rec_ac = float(acum.get("receitas_acum", 0) or 0)
+        desp_cta_ac = float(acum.get("despesas_conta_acum", 0) or 0)
+        desp_crt_ac = float(acum.get("despesas_cartao_acum", 0) or 0)
+        desp_tot_ac = float(acum.get("despesas_total_acum", 0) or 0)
+        saldo_ac = float(acum.get("saldo_acum", rec_ac - desp_tot_ac) or 0)
+
         linhas = [
             f"📅 {formatar_data_br(dt_s)}",
-            f"🟢 Receita: {formatar_moeda(rec_d)}",
-            f"🔴 Despesa Total: {formatar_moeda(desp_d)} (Conta: {formatar_moeda(desp_cta)} | Cartão: {formatar_moeda(desp_crt)})",
-            f"⚖️ Saldo do Dia: {formatar_moeda(saldo_d)}",
+            f"── Acumulado ({formatar_data_br(d_ini_ac)} até {formatar_data_br(dt_s)}) ──",
+            f"🟢 Receitas Acum.: {formatar_moeda(rec_ac)}",
+            f"🔴 Despesas Acum.: {formatar_moeda(desp_tot_ac)} (Conta: {formatar_moeda(desp_cta_ac)} | Faturas: {formatar_moeda(desp_crt_ac)})",
+            f"💰 SALDO ACUMULADO: {formatar_moeda(saldo_ac)}",
+            f"── Movimento do Dia ──",
+            f"   • Receita: {formatar_moeda(rec_d)} | Despesa: {formatar_moeda(desp_d)} (Conta: {formatar_moeda(desp_cta)} | Cartão: {formatar_moeda(desp_crt)})",
+            f"   • Saldo do Dia: {formatar_moeda(saldo_d)}",
         ]
         for vf in vencs:
             linhas.append(f"💳 Vencimento {vf.get('cartao_nome')}: {formatar_moeda(float(vf.get('valor_total', 0) or 0))}")
+        for cx_l in (dia_info.get("lancamentos") or []):
+            if cx_l.get("caixinha_id") or str(cx_l.get("subtipo") or "").lower() == "provisionamento":
+                cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "Caixinha"
+                cx_v = float(cx_l.get("valor", 0) or 0)
+                cx_st = str(cx_l.get("status") or "Pendente").upper()
+                linhas.append(f"📦 Caixinha {cx_n}: {formatar_moeda(cx_v)} ({cx_st})")
         return "\n".join(linhas)
 
     def _abrir_modal_dia_dash(dia_info: dict, vencs: list[dict]):
@@ -219,6 +281,12 @@ def secao_calendario_dashboard(
                 sinal_l = "+" if eh_rec else "-"
                 cat_n = l_it.get("categoria_nome") or "Sem Categoria"
                 origem_n = l_it.get("cartao_nome") or l_it.get("conta_nome") or ""
+                eh_caixinha = bool(l_it.get("caixinha_id")) or str(l_it.get("subtipo") or "").lower() == "provisionamento"
+                if eh_caixinha:
+                    cx_nome = l_it.get("caixinha_nome")
+                    origem_n = f"{origem_n} · 📦 Caixinha {cx_nome or ''}".strip(" ·")
+                st_l = str(l_it.get("status") or "Pago")
+                eh_pago = st_l.lower() == "pago"
                 itens_m.append(
                     ft.Container(
                         padding=pad(h=10, v=8),
@@ -226,6 +294,7 @@ def secao_calendario_dashboard(
                         border_radius=8,
                         content=ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
                                 ft.Column(
                                     spacing=1,
@@ -235,7 +304,14 @@ def secao_calendario_dashboard(
                                         ft.Text(f"{cat_n} · {origem_n}".strip(" ·"), size=10.5, color=T.TEXT_MUTED),
                                     ],
                                 ),
-                                ft.Text(f"{sinal_l} {formatar_moeda(val_l)}", size=12.5, weight=ft.FontWeight.BOLD, color=cor_l),
+                                ft.Column(
+                                    spacing=1,
+                                    horizontal_alignment=ft.CrossAxisAlignment.END,
+                                    controls=[
+                                        ft.Text(f"{sinal_l} {formatar_moeda(val_l)}", size=12.5, weight=ft.FontWeight.BOLD, color=cor_l),
+                                        ft.Text(st_l, size=10, color=T.RECEITA if eh_pago else T.WARNING, weight=ft.FontWeight.W_600),
+                                    ],
+                                ),
                             ],
                         ),
                     )
@@ -325,17 +401,39 @@ def secao_calendario_dashboard(
         )
 
         primeiro_dia_mes = date(a, m, 1)
-        offset_dom = (primeiro_dia_mes.weekday() + 1) % 7
-        grid_inicio = primeiro_dia_mes - timedelta(days=offset_dom)
+        try:
+            dt_ini_f = datetime.strptime(d_ini_ef[:10], "%Y-%m-%d").date()
+            dt_fim_f = datetime.strptime(d_fim_ef[:10], "%Y-%m-%d").date()
+        except Exception:
+            dt_ini_f = primeiro_dia_mes
+            dt_fim_f = date(a, m, ult_m)
 
-        for sem in range(6):
+        base_ini_g = dt_ini_f if eh_multi_mes else min(primeiro_dia_mes, dt_ini_f)
+        offset_dom = (base_ini_g.weekday() + 1) % 7
+        grid_inicio = base_ini_g - timedelta(days=offset_dom)
+
+        if eh_multi_mes:
+            offset_sab = (5 - dt_fim_f.weekday()) % 7
+            grid_fim = dt_fim_f + timedelta(days=offset_sab)
+            num_semanas = max(5, ((grid_fim - grid_inicio).days + 1) // 7)
+        else:
+            num_semanas = 6
+
+        linhas_sem_dash: list[ft.Control] = []
+        mes_ant_sem: tuple[int, int] | None = None
+
+        for sem in range(num_semanas):
             celulas: list[ft.Control] = []
+            mes_desta_sem: tuple[int, int] | None = None
             for d_idx in range(7):
                 dt_cel = grid_inicio + timedelta(days=sem * 7 + d_idx)
                 dt_iso = dt_cel.isoformat()
+                if dt_cel.day == 1 or (sem == 0 and d_idx == 0):
+                    if d_ini_ef <= dt_iso <= d_fim_ef or sem == 0:
+                        mes_desta_sem = (dt_cel.year, dt_cel.month)
                 no_mes = (dt_cel.month == m and dt_cel.year == a)
                 no_periodo = (d_ini_ef <= dt_iso <= d_fim_ef)
-                ativo_visual = no_periodo if eh_parcial else no_mes
+                ativo_visual = no_periodo if (eh_parcial or eh_multi_mes) else no_mes
                 eh_hoje = (dt_cel == hoje_d)
                 info_d = mapa_dias.get(dt_iso) or {
                     "data": dt_iso,
@@ -366,7 +464,7 @@ def secao_calendario_dashboard(
                         bg_c, bd_c = calcular_cor_heatmap_entrada(rec_d * 0.45, max(1.0, maior_entrada))
                     else:
                         bg_c = T.BG if ativo_visual else f"{T.SURFACE_ALT}45"
-                        bd_c = f"{T.PRIMARY}55" if (eh_parcial and ativo_visual) else T.BORDER
+                        bd_c = f"{T.PRIMARY}55" if ((eh_parcial or eh_multi_mes) and ativo_visual) else T.BORDER
 
                 if eh_hoje:
                     bd_c = T.WARNING
@@ -421,9 +519,35 @@ def secao_calendario_dashboard(
                             )
                         )
 
-                ic_venc = [
-                    ft.Icon(ft.Icons.CREDIT_CARD_ROUNDED, size=10 if mobile else 11, color=T.WARNING)
-                ] if vencs_d else []
+                ic_venc = []
+                if vencs_d:
+                    ic_venc.append(
+                        ft.Icon(ft.Icons.CREDIT_CARD_ROUNDED, size=10 if mobile else 11, color=T.WARNING)
+                    )
+                l_cel_list = info_d.get("lancamentos") or []
+                tem_cx_cel = any(
+                    bool(l.get("caixinha_id")) or str(l.get("subtipo") or "").lower() == "provisionamento"
+                    for l in l_cel_list
+                )
+                if tem_cx_cel:
+                    cx_pend = any(
+                        (bool(l.get("caixinha_id")) or str(l.get("subtipo") or "").lower() == "provisionamento")
+                        and str(l.get("status") or "").lower() != "pago"
+                        for l in l_cel_list
+                    )
+                    ic_venc.append(
+                        ft.Icon(
+                            ft.Icons.SAVINGS_ROUNDED,
+                            size=9.5 if mobile else 10.5,
+                            color=T.WARNING if cx_pend else T.PRIMARY,
+                        )
+                    )
+
+                rotulo_d = (
+                    f"{dt_cel.day} {MESES_NOMES[dt_cel.month - 1][:3]}"
+                    if (eh_multi_mes and (dt_cel.day == 1 or dt_iso == d_ini_ef))
+                    else str(dt_cel.day)
+                )
 
                 cel = ft.Container(
                     expand=1,
@@ -444,10 +568,10 @@ def secao_calendario_dashboard(
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 controls=[
                                     ft.Text(
-                                        str(dt_cel.day),
-                                        size=10 if mobile else 11,
-                                        weight=ft.FontWeight.BOLD if eh_hoje else ft.FontWeight.W_500,
-                                        color=T.WARNING if eh_hoje else (T.TEXT_PRIMARY if ativo_visual else f"{T.TEXT_MUTED}70"),
+                                        rotulo_d,
+                                        size=9.5 if (mobile and len(rotulo_d) > 2) else (10 if mobile else 11),
+                                        weight=ft.FontWeight.BOLD if (eh_hoje or dt_cel.day == 1) else ft.FontWeight.W_500,
+                                        color=T.WARNING if eh_hoje else (T.PRIMARY if (eh_multi_mes and dt_cel.day == 1) else (T.TEXT_PRIMARY if ativo_visual else f"{T.TEXT_MUTED}70")),
                                     ),
                                     ft.Row(spacing=1, tight=True, controls=ic_venc),
                                 ],
@@ -475,9 +599,40 @@ def secao_calendario_dashboard(
                 cel.on_hover = _on_hov
                 celulas.append(cel)
 
-            col_grade_semanas.controls.append(
+            if eh_multi_mes and mes_desta_sem and mes_desta_sem != mes_ant_sem:
+                mes_ant_sem = mes_desta_sem
+                linhas_sem_dash.append(
+                    ft.Container(
+                        padding=pad(h=8, v=3),
+                        bgcolor=f"{T.PRIMARY}14",
+                        border_radius=6,
+                        border=borda(1, f"{T.PRIMARY}35"),
+                        content=ft.Text(
+                            f"📅 {MESES_NOMES[mes_desta_sem[1] - 1]} de {mes_desta_sem[0]}",
+                            size=10.5,
+                            weight=ft.FontWeight.BOLD,
+                            color=T.PRIMARY,
+                        ),
+                    )
+                )
+
+            linhas_sem_dash.append(
                 ft.Row(spacing=4 if mobile else 6, controls=celulas)
             )
+
+        if eh_multi_mes or num_semanas > 6:
+            col_grade_semanas.controls.append(
+                ft.Container(
+                    height=360 if mobile else 440,
+                    content=ft.Column(
+                        spacing=4 if mobile else 6,
+                        scroll=ft.ScrollMode.AUTO,
+                        controls=linhas_sem_dash,
+                    ),
+                )
+            )
+        else:
+            col_grade_semanas.controls.extend(linhas_sem_dash)
 
     _render_grade()
 

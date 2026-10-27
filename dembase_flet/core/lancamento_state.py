@@ -64,6 +64,9 @@ class LancamentoFormState:
     modo_calculo_parcela: str = "total"  # "total" (divide) ou "parcela" (multiplica)
     valor_parcela_input: float = 0.0     # Armazena o valor unitário da parcela quando no modo "parcela"
     quantidade: int = 1
+    parcela_atual: Optional[int] = None
+    total_parcelas_original: Optional[int] = None
+    fatura_id_original: Optional[str] = None
     serie_id: Optional[str] = None
     recorrente_id: Optional[str] = None
     lancamento_id: Optional[str] = None
@@ -117,6 +120,31 @@ class LancamentoFormState:
     @property
     def eh_receita(self) -> bool:
         return is_receita_str(self.tipo)
+
+    @property
+    def is_compra_parcelada(self) -> bool:
+        return bool(
+            self.eh_credito
+            and not self.is_fixa
+            and not self.recorrente_id
+            and (
+                (self.quantidade and self.quantidade > 1)
+                or (self.total_parcelas_original and self.total_parcelas_original > 1)
+                or bool(self.parcela_atual)
+            )
+        )
+
+    @property
+    def fatura_foi_alterada(self) -> bool:
+        if not self.fatura_id_original and not self.fatura_id:
+            return False
+        return str(self.fatura_id_original or "").strip() != str(self.fatura_id or "").strip()
+
+    @property
+    def quantidade_parcelas_alterada(self) -> bool:
+        if not self.total_parcelas_original:
+            return False
+        return int(self.quantidade) != int(self.total_parcelas_original)
 
     def atualizar_data(self, nova_data: date):
         self.data_selecionada = nova_data

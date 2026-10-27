@@ -70,6 +70,50 @@ def abrir_lancamento(
         state.status_pago = (lancamento.get("status") == "Pago")
         state.status_manual = True  # Em edição, status gravado tem prioridade absoluta
 
+        # Inicializa dados específicos de compras parceladas
+        p_atual = lancamento.get("parcela_atual")
+        if p_atual is not None:
+            try:
+                state.parcela_atual = int(p_atual)
+            except Exception:
+                pass
+
+        t_parc = lancamento.get("total_parcelas")
+        if t_parc is not None:
+            try:
+                tot_int = int(t_parc)
+                if tot_int > 0:
+                    state.total_parcelas_original = tot_int
+                    state.quantidade = tot_int
+            except Exception:
+                pass
+
+        # Se tiver serie_id mas os campos de parcela vieram nulos, busca resumo da série
+        if state.serie_id and (state.parcela_atual is None or state.total_parcelas_original is None):
+            try:
+                resumo_s = db.obter_resumo_serie_parcelamento(state.serie_id)
+                if resumo_s.get("sucesso") and resumo_s.get("parcelas"):
+                    parcs = resumo_s["parcelas"]
+                    curr = next((p for p in parcs if str(p.get("id")) == str(state.lancamento_id)), None)
+                    if curr:
+                        if state.parcela_atual is None:
+                            state.parcela_atual = curr.get("parcela_atual") or 1
+                        if state.total_parcelas_original is None:
+                            tot_orig = curr.get("total_parcelas") or resumo_s.get("max_parcela") or len(parcs)
+                            state.total_parcelas_original = int(tot_orig)
+                            state.quantidade = int(tot_orig)
+                        if not state.fatura_id and curr.get("fatura_id"):
+                            state.fatura_id = str(curr.get("fatura_id"))
+            except Exception as ex_load_serie:
+                print(f"[LancamentoSheet] Aviso ao carregar detalhes da série: {ex_load_serie}")
+
+        state.fatura_id_original = state.fatura_id
+
+        # Se for compra parcelada no cartão, ajusta cálculo para modo parcela
+        if state.is_compra_parcelada and state.quantidade > 1:
+            state.modo_calculo_parcela = "parcela"
+            state.definir_valor_parcela(state.valor)
+
         d_raw = lancamento.get("data")
         if isinstance(d_raw, str):
             try:
@@ -196,7 +240,7 @@ def abrir_lancamento(
 
     salvando_lock = [False]
 
-    def executar_salvamento(modo_serie: str = "individual"):
+    def executar_salvamento(modo_serie: str = "individual", aplicar_cascata: bool = False, redimensionar: bool = False):
         if salvando_lock[0]:
             return
         salvando_lock[0] = True
@@ -273,6 +317,60 @@ def abrir_lancamento(
                 if not state.lancamento_id:
                     raise ValueError("ID da transação não encontrado para atualização.")
 
+                # 1. Redimensionamento de Parcelas (se alterado)
+                if redimensionar and state.quantidade_parcelas_alterada and state.serie_id:
+                    novo_val_parc = (
+                        round(state.obter_valor_parcela(), 2)
+                        if (state.eh_credito and not state.is_fixa and state.quantidade > 1)
+                        else None
+                    )
+                    res_redim = db.redimensionar_parcelamento(
+                        state.serie_id,
+                        state.quantidade,
+                        novo_valor_parcela=novo_val_parc,
+                    )
+                    if not res_redim.get("sucesso", True):
+                        raise RuntimeError(res_redim.get("erro", "Erro ao redimensionar parcelas."))
+
+                # 2. Deslocamento de Fatura (se alterada)
+                if state.fatura_foi_alterada and state.fatura_id:
+                    # Aplica lógica de cascata exclusivamente para COMPRAS PARCELADAS reais
+                    if state.is_compra_parcelada and state.serie_id and not state.is_fixa and not state.recorrente_id:
+                        res_desloc = db.deslocar_faturas_parcelamento(
+                            state.lancamento_id,
+                            state.fatura_id,
+                            aplicar_cascata=aplicar_cascata,
+                        )
+                        if not res_desloc.get("sucesso", True):
+                            raise RuntimeError(res_desloc.get("erro", "Erro ao deslocar faturas."))
+                        delta = res_desloc.get("delta", 0)
+                        if delta and aplicar_cascata:
+                            d = state.data_selecionada
+                            total_m = (d.year * 12 + d.month - 1) + delta
+                            n_ano = total_m // 12
+                            n_mes = (total_m % 12) + 1
+                            import calendar
+                            max_d = calendar.monthrange(n_ano, n_mes)[1]
+                            dados["data"] = str(date(n_ano, n_mes, min(d.day, max_d)))
+                    else:
+                        # Assinatura recorrente ou lançamento avulso:
+                        # APENAS associa à nova fatura, mantendo estritamente a data original da transação
+                        # para evitar qualquer colisão na restrição de data única (idx_lancamentos_rec_data)
+                        dados["fatura_id"] = state.fatura_id
+                        fats_recalc = [f for f in [state.fatura_id_original, state.fatura_id] if f]
+                        if fats_recalc:
+                            try:
+                                db.recalcular_totais_faturas(fats_recalc)
+                            except Exception:
+                                pass
+
+                # 3. Atualização do registro corrente
+                if state.eh_credito and not state.is_fixa and state.quantidade > 1:
+                    dados["valor"] = round(state.obter_valor_parcela(), 2)
+                    dados["total_parcelas"] = state.quantidade
+                    if state.parcela_atual:
+                        dados["parcela_atual"] = state.parcela_atual
+
                 # Realiza OBRIGATORIAMENTE o UPDATE na linha existente (jamais INSERT duplicado)
                 db.atualizar_lancamento(state.lancamento_id, dados)
 
@@ -291,6 +389,11 @@ def abrir_lancamento(
                         potes_svc.redistribuir_receita(state.lancamento_id, dados["valor"])
                     except Exception:
                         pass
+
+                # Invalida caches para atualizar telas imediatamente
+                db.invalidar_cache("faturas")
+                db.invalidar_cache("cartoes")
+                db.invalidar_cache("lancamentos")
 
                 mostrar_feedback(page, "Lançamento atualizado com sucesso!", "sucesso")
             else:
@@ -363,32 +466,131 @@ def abrir_lancamento(
             mostrar_feedback(page, erro_msg or "Verifique os campos obrigatórios.", "alerta")
             return
 
+        # Modal Helper para fechar caixas de diálogo no Flet 1.0.1
+        def _fechar_modal(dlg):
+            try:
+                page.pop_dialog()
+            except Exception:
+                pass
+            if dlg is not None:
+                dlg.open = False
+                try:
+                    dlg.update()
+                except Exception:
+                    pass
+            try:
+                page.update()
+            except Exception:
+                pass
+
+        # CENÁRIO 1: Edição de Compra Parcelada com Shift de Fatura ou Mudança de Parcelas
+        if is_edicao and state.is_compra_parcelada and state.serie_id and not state.is_fixa and not state.recorrente_id:
+            mudou_fatura = state.fatura_foi_alterada
+            mudou_qtd = state.quantidade_parcelas_alterada
+
+            # Validação prévia de redução menor que parcelas pagas
+            if mudou_qtd and state.quantidade < (state.total_parcelas_original or 1):
+                try:
+                    resumo_chk = db.obter_resumo_serie_parcelamento(state.serie_id)
+                    pagas_cnt = resumo_chk.get("pagas", 0)
+                    if state.quantidade < pagas_cnt:
+                        mostrar_feedback(
+                            page,
+                            f"Não é possível reduzir para {state.quantidade}x pois já existem {pagas_cnt} parcelas pagas no histórico.",
+                            "alerta",
+                        )
+                        return
+                except Exception:
+                    pass
+
+            def _abrir_dialogo_redimensionamento(aplicar_cascata_val: bool):
+                orig = state.total_parcelas_original or 1
+                novo = state.quantidade
+                modal_redim = None
+
+                def _confirmar_redim():
+                    _fechar_modal(modal_redim)
+                    executar_salvamento(modo_serie="individual", aplicar_cascata=aplicar_cascata_val, redimensionar=True)
+
+                if novo < orig:
+                    msg = (
+                        f"Você está reduzindo o total de parcelas de {orig}x para {novo}x.\n\n"
+                        f"As {orig - novo} parcelas finais pendentes serão canceladas e excluídas do cartão.\n\n"
+                        "Deseja confirmar a alteração?"
+                    )
+                    btn_text = "Confirmar Redução"
+                else:
+                    msg = (
+                        f"Você está expandindo o total de parcelas de {orig}x para {novo}x.\n\n"
+                        f"Serão geradas automaticamente {novo - orig} novas parcelas nos meses seguintes.\n\n"
+                        "Deseja confirmar a alteração?"
+                    )
+                    btn_text = "Confirmar Expansão"
+
+                modal_redim = ft.AlertDialog(
+                    title=ft.Row([
+                        ft.Icon(ft.Icons.LAYERS_CLEAR_ROUNDED if novo < orig else ft.Icons.LAYERS_ROUNDED, color=T.PRIMARY, size=22),
+                        ft.Text("Redimensionar Compra", weight=ft.FontWeight.BOLD),
+                    ], spacing=8),
+                    content=ft.Text(msg, size=14, color=T.TEXT_MUTED),
+                    actions=[
+                        ft.TextButton("Cancelar", on_click=lambda _: _fechar_modal(modal_redim)),
+                        ft.FilledButton(
+                            btn_text,
+                            style=ft.ButtonStyle(bgcolor=T.PRIMARY, color=T.ON_PRIMARY),
+                            on_click=lambda _: _confirmar_redim(),
+                        ),
+                    ],
+                )
+                page.show_dialog(modal_redim)
+
+            if mudou_fatura:
+                modal_cascata = None
+
+                def _escolher_cascata(aplicar: bool):
+                    _fechar_modal(modal_cascata)
+                    if mudou_qtd:
+                        _abrir_dialogo_redimensionamento(aplicar_cascata_val=aplicar)
+                    else:
+                        executar_salvamento(modo_serie="individual", aplicar_cascata=aplicar, redimensionar=False)
+
+                modal_cascata = ft.AlertDialog(
+                    title=ft.Row([
+                        ft.Icon(ft.Icons.MOVE_UP_ROUNDED, color=T.PRIMARY, size=22),
+                        ft.Text("Deslocamento de Fatura", weight=ft.FontWeight.BOLD),
+                    ], spacing=8),
+                    content=ft.Text(
+                        f"Você alterou a fatura da Parcela {state.parcela_atual or 1}.\n\n"
+                        "Deseja aplicar esse mesmo deslocamento em efeito cascata nas parcelas seguintes desta compra?",
+                        size=14,
+                        color=T.TEXT_MUTED,
+                    ),
+                    actions=[
+                        ft.TextButton("Cancelar", on_click=lambda _: _fechar_modal(modal_cascata)),
+                        ft.OutlinedButton("Apenas esta parcela", on_click=lambda _: _escolher_cascata(False)),
+                        ft.FilledButton(
+                            "Sim, em cascata",
+                            style=ft.ButtonStyle(bgcolor=T.PRIMARY, color=T.ON_PRIMARY),
+                            on_click=lambda _: _escolher_cascata(True),
+                        ),
+                    ],
+                )
+                page.show_dialog(modal_cascata)
+                return
+
+            if mudou_qtd:
+                _abrir_dialogo_redimensionamento(aplicar_cascata_val=False)
+                return
+
+        # CENÁRIO 2: Edição geral de série existente (recorrente ou parcelada sem mudança de fatura/qtd)
         total_parc = int(lancamento.get("total_parcelas", 1) or 1) if (lancamento and isinstance(lancamento, dict)) else 1
         tem_serie_real = bool(state.recorrente_id) or (bool(state.serie_id) and (total_parc > 1 or state.is_fixa))
 
-        # Se for edição de lançamento que pertence a uma série real (parcelado ou recorrente), perguntar o escopo
         if is_edicao and tem_serie_real:
             modal_serie = None
 
-            def fechar_modal_serie():
-                nonlocal modal_serie
-                try:
-                    page.pop_dialog()
-                except Exception:
-                    pass
-                if modal_serie is not None:
-                    modal_serie.open = False
-                    try:
-                        modal_serie.update()
-                    except Exception:
-                        pass
-                try:
-                    page.update()
-                except Exception:
-                    pass
-
             def escolher_escopo(escopo: str):
-                fechar_modal_serie()
+                _fechar_modal(modal_serie)
                 executar_salvamento(escopo)
 
             modal_serie = ft.AlertDialog(
@@ -403,7 +605,7 @@ def abrir_lancamento(
                     color=T.TEXT_MUTED,
                 ),
                 actions=[
-                    ft.TextButton("Cancelar", on_click=lambda _: fechar_modal_serie()),
+                    ft.TextButton("Cancelar", on_click=lambda _: _fechar_modal(modal_serie)),
                     ft.FilledButton("Somente este", on_click=lambda _: escolher_escopo("individual")),
                     ft.FilledButton(
                         "Este e os próximos",

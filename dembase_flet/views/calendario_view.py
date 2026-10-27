@@ -290,46 +290,75 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         nome_m = MESES_NOMES[m - 1] if 1 <= m <= 12 else str(m)
         return f"{nome_m} {a}"
 
-    # ── Atualização da Barra de Inspeção no Hover (Mouse Over) ───────────────
-    def _atualizar_painel_hover(dia_info: dict, vencimentos_dia: list[dict]):
-        dt_str = str(dia_info.get("data") or "")
+    # ── Atualização da Barra de Inspeção no Hover (Mouse Over — Soma Acumulada Contínua) ──
+    def _obter_acum_dia(dt_iso: str, dia_info: dict) -> dict:
+        acum_map = pacote_calendario.get("acumulados_por_dia") or {}
+        if dt_iso in acum_map:
+            return acum_map[dt_iso]
+        if isinstance(dia_info.get("acumulado"), dict):
+            return dia_info["acumulado"]
         rec_d = float(dia_info.get("total_receitas", 0) or 0)
-        desp_d = float(dia_info.get("total_despesas", 0) or 0)
         desp_cta = float(dia_info.get("despesas_conta", 0) or 0)
         desp_crt = float(dia_info.get("despesas_cartao", 0) or 0)
+        desp_tot = float(dia_info.get("total_despesas", 0) or 0)
+        return {
+            "data_inicio_acum": filtro_data_inicio[0],
+            "data_ate": dt_iso,
+            "receitas_acum": rec_d,
+            "despesas_conta_acum": desp_cta,
+            "despesas_cartao_acum": desp_crt,
+            "despesas_total_acum": desp_tot,
+            "saldo_acum": rec_d - desp_tot,
+            "qtd_lancamentos_acum": int(dia_info.get("qtd_lancamentos", 0) or 0),
+        }
+
+    def _atualizar_painel_hover(dia_info: dict, vencimentos_dia: list[dict]):
+        dt_str = str(dia_info.get("data") or "")[:10]
+        rec_d = float(dia_info.get("total_receitas", 0) or 0)
+        desp_d = float(dia_info.get("total_despesas", 0) or 0)
         saldo_d = rec_d - desp_d
         qtd_d = int(dia_info.get("qtd_lancamentos", 0) or 0)
 
-        txt_hover_data.value = f"📅 {formatar_data_br(dt_str)} ({qtd_d} mov.)"
+        acum = _obter_acum_dia(dt_str, dia_info)
+        d_ini_ac = str(acum.get("data_inicio_acum") or filtro_data_inicio[0])[:10]
+        rec_ac = float(acum.get("receitas_acum", 0) or 0)
+        desp_tot_ac = float(acum.get("despesas_total_acum", 0) or 0)
+        desp_crt_ac = float(acum.get("despesas_cartao_acum", 0) or 0)
+        saldo_ac = float(acum.get("saldo_acum", rec_ac - desp_tot_ac) or 0)
+
+        txt_hover_data.value = (
+            f"📅 Acumulado {formatar_data_br(d_ini_ac)[:5]} → {formatar_data_br(dt_str)} "
+            f"(Dia: {qtd_d} mov. | {formatar_moeda(saldo_d)})"
+        )
         chips = [
             ft.Container(
                 padding=pad(h=8, v=3),
                 border_radius=6,
                 bgcolor=f"{T.RECEITA}18",
-                content=ft.Text(f"Receita: {formatar_moeda(rec_d)}", size=11, weight=ft.FontWeight.BOLD, color=T.RECEITA),
+                content=ft.Text(f"Rec. Acum: {formatar_moeda(rec_ac)}", size=11, weight=ft.FontWeight.BOLD, color=T.RECEITA),
             ),
             ft.Container(
                 padding=pad(h=8, v=3),
                 border_radius=6,
                 bgcolor=f"{T.DESPESA}18",
-                content=ft.Text(f"Despesa Conta: {formatar_moeda(desp_cta)}", size=11, weight=ft.FontWeight.BOLD, color=T.DESPESA),
+                content=ft.Text(f"Desp. Acum: {formatar_moeda(desp_tot_ac)}", size=11, weight=ft.FontWeight.BOLD, color=T.DESPESA),
             ),
             ft.Container(
                 padding=pad(h=8, v=3),
                 border_radius=6,
                 bgcolor=f"{T.WARNING}18",
-                content=ft.Text(f"Cartão: {formatar_moeda(desp_crt)}", size=11, weight=ft.FontWeight.BOLD, color=T.WARNING),
+                content=ft.Text(f"Faturas Acum: {formatar_moeda(desp_crt_ac)}", size=11, weight=ft.FontWeight.BOLD, color=T.WARNING),
             ),
             ft.Container(
-                padding=pad(h=8, v=3),
+                padding=pad(h=9, v=3),
                 border_radius=6,
-                bgcolor=T.BG,
-                border=borda(1, T.RECEITA if saldo_d >= 0 else T.DESPESA),
+                bgcolor=f"{T.RECEITA}22" if saldo_ac >= 0 else f"{T.DESPESA}22",
+                border=borda(1.2, T.RECEITA if saldo_ac >= 0 else T.DESPESA),
                 content=ft.Text(
-                    f"Saldo Dia: {formatar_moeda(saldo_d)}",
-                    size=11,
+                    f"Saldo Acumulado: {formatar_moeda(saldo_ac)}",
+                    size=11.5,
                     weight=ft.FontWeight.BOLD,
-                    color=T.RECEITA if saldo_d >= 0 else T.DESPESA,
+                    color=T.RECEITA if saldo_ac >= 0 else T.DESPESA,
                 ),
             ),
         ]
@@ -347,6 +376,24 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                     ),
                 )
             )
+        for cx_l in (dia_info.get("lancamentos") or []):
+            if cx_l.get("caixinha_id") or str(cx_l.get("subtipo") or "").lower() == "provisionamento":
+                cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "Caixinha"
+                cx_v = float(cx_l.get("valor", 0) or 0)
+                cx_st = str(cx_l.get("status") or "Pendente")
+                chips.append(
+                    ft.Container(
+                        padding=pad(h=8, v=3),
+                        border_radius=6,
+                        bgcolor=f"{T.INFO}22",
+                        content=ft.Text(
+                            f"📦 {cx_n}: {formatar_moeda(cx_v)} ({cx_st})",
+                            size=11,
+                            weight=ft.FontWeight.BOLD,
+                            color=T.INFO,
+                        ),
+                    )
+                )
         row_hover_detalhes.controls = chips
         try:
             barra_inspecao_hover.update()
@@ -354,7 +401,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
             pass
 
     def _montar_tooltip_dia(dia_info: dict, vencimentos_dia: list[dict]) -> str:
-        dt_str = str(dia_info.get("data") or "")
+        dt_str = str(dia_info.get("data") or "")[:10]
         rec_d = float(dia_info.get("total_receitas", 0) or 0)
         desp_d = float(dia_info.get("total_despesas", 0) or 0)
         desp_cta = float(dia_info.get("despesas_conta", 0) or 0)
@@ -362,19 +409,35 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         saldo_d = rec_d - desp_d
         qtd_d = int(dia_info.get("qtd_lancamentos", 0) or 0)
 
+        acum = _obter_acum_dia(dt_str, dia_info)
+        d_ini_ac = str(acum.get("data_inicio_acum") or filtro_data_inicio[0])[:10]
+        rec_ac = float(acum.get("receitas_acum", 0) or 0)
+        desp_cta_ac = float(acum.get("despesas_conta_acum", 0) or 0)
+        desp_crt_ac = float(acum.get("despesas_cartao_acum", 0) or 0)
+        desp_tot_ac = float(acum.get("despesas_total_acum", 0) or 0)
+        saldo_ac = float(acum.get("saldo_acum", rec_ac - desp_tot_ac) or 0)
+
         linhas = [
-            f"📅 {formatar_data_br(dt_str)} ({qtd_d} lançamento(s))",
-            f"🟢 Total Receita: {formatar_moeda(rec_d)}",
-            f"🔴 Total Despesa: {formatar_moeda(desp_d)}",
-            f"   • Conta/Pix: {formatar_moeda(desp_cta)}",
-            f"   • Cartão de Crédito: {formatar_moeda(desp_crt)}",
-            f"⚖️ Saldo do Dia: {formatar_moeda(saldo_d)}",
+            f"📅 {formatar_data_br(dt_str)} ({qtd_d} mov. no dia)",
+            f"── Acumulado ({formatar_data_br(d_ini_ac)} até {formatar_data_br(dt_str)}) ──",
+            f"🟢 Receitas Acum.: {formatar_moeda(rec_ac)}",
+            f"🔴 Despesas Acum.: {formatar_moeda(desp_tot_ac)} (Conta: {formatar_moeda(desp_cta_ac)} | Faturas: {formatar_moeda(desp_crt_ac)})",
+            f"💰 SALDO ACUMULADO: {formatar_moeda(saldo_ac)}",
+            f"── Movimento Isolado do Dia ──",
+            f"   • Entradas Dia: {formatar_moeda(rec_d)} | Saídas Dia: {formatar_moeda(desp_d)} (Conta: {formatar_moeda(desp_cta)} | Cartão: {formatar_moeda(desp_crt)})",
+            f"   • Saldo do Dia: {formatar_moeda(saldo_d)}",
         ]
         for vf in vencimentos_dia:
             st_f = str(vf.get("status") or "aberta").upper()
             linhas.append(
                 f"💳 Vencimento {vf.get('cartao_nome')}: {formatar_moeda(float(vf.get('valor_total', 0) or 0))} ({st_f})"
             )
+        for cx_l in (dia_info.get("lancamentos") or []):
+            if cx_l.get("caixinha_id") or str(cx_l.get("subtipo") or "").lower() == "provisionamento":
+                cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "Caixinha"
+                cx_v = float(cx_l.get("valor", 0) or 0)
+                cx_st = str(cx_l.get("status") or "Pendente").upper()
+                linhas.append(f"📦 Caixinha {cx_n}: {formatar_moeda(cx_v)} ({cx_st})")
         if qtd_d > 0 or vencimentos_dia:
             linhas.append("👆 Clique para abrir os detalhes desta data")
         return "\n".join(linhas)
@@ -486,7 +549,19 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                 origem_str = f"💳 {crt_n}" if crt_n else (f"🏦 {cta_n}" if cta_n else "")
                 if l_it.get("parcela_atual") and l_it.get("total_parcelas"):
                     origem_str += f" ({l_it['parcela_atual']}/{l_it['total_parcelas']})"
+                dt_compra_orig = str(l_it.get("data_compra") or "")[:10]
+                if crt_n and dt_compra_orig and dt_compra_orig != dt_str[:10]:
+                    origem_str += f" · Compra {formatar_data_br(dt_compra_orig)[:5]}"
+                eh_caixinha = bool(l_it.get("caixinha_id")) or str(l_it.get("subtipo") or "").lower() == "provisionamento"
+                if eh_caixinha:
+                    cx_nome = l_it.get("caixinha_nome")
+                    origem_str += f" · 📦 Caixinha {cx_nome or ''}".strip()
                 cat_full = f"{cat_n} · {sub_n}" if sub_n else cat_n
+
+                icone_modal = ft.Icons.SAVINGS_ROUNDED if eh_caixinha else (
+                    ft.Icons.ARROW_UPWARD_ROUNDED if eh_rec else ft.Icons.ARROW_DOWNWARD_ROUNDED
+                )
+                cor_icone_box = T.INFO if eh_caixinha else cor_l
 
                 itens_modal.append(
                     ft.Container(
@@ -505,10 +580,10 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                                         ft.Container(
                                             padding=pad(all_=8),
                                             border_radius=8,
-                                            bgcolor=f"{cor_l}1A",
+                                            bgcolor=f"{cor_icone_box}1A",
                                             content=ft.Icon(
-                                                ft.Icons.ARROW_UPWARD_ROUNDED if eh_rec else ft.Icons.ARROW_DOWNWARD_ROUNDED,
-                                                color=cor_l,
+                                                icone_modal,
+                                                color=cor_icone_box,
                                                 size=16,
                                             ),
                                         ),
@@ -548,7 +623,8 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                                         ft.Text(
                                             str(l_it.get("status") or "Pago"),
                                             size=10,
-                                            color=T.RECEITA if l_it.get("status") == "Pago" else T.WARNING,
+                                            weight=ft.FontWeight.W_600,
+                                            color=T.RECEITA if str(l_it.get("status") or "").lower() == "pago" else T.WARNING,
                                         ),
                                     ],
                                 ),
@@ -832,7 +908,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                     )
                 )
 
-        # Marcador especial de vencimento de fatura de cartão no dia (💳)
+        # Marcadores especiais no topo direito (💳 Fatura / 📦 Caixinha)
         icones_topo_dir: list[ft.Control] = []
         if vencimentos_dia:
             tem_aberta = any(
@@ -853,10 +929,43 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                 )
             )
 
+        lancs_cel_list = dia_info.get("lancamentos") or []
+        tem_caixinha_no_dia = any(
+            bool(l.get("caixinha_id")) or str(l.get("subtipo") or "").lower() == "provisionamento"
+            for l in lancs_cel_list
+        )
+        if tem_caixinha_no_dia:
+            caixinha_pendente = any(
+                (bool(l.get("caixinha_id")) or str(l.get("subtipo") or "").lower() == "provisionamento")
+                and str(l.get("status") or "").lower() != "pago"
+                for l in lancs_cel_list
+            )
+            cor_ic_cx = T.WARNING if caixinha_pendente else T.PRIMARY
+            icones_topo_dir.append(
+                ft.Container(
+                    padding=pad(h=3, v=1),
+                    border_radius=5,
+                    bgcolor=f"{cor_ic_cx}20",
+                    tooltip="Provisão de Caixinha agendada",
+                    content=ft.Icon(
+                        ft.Icons.SAVINGS_ROUNDED,
+                        size=9.5 if mobile else 11,
+                        color=cor_ic_cx,
+                    ),
+                )
+            )
+
         cor_num_dia = (
             T.WARNING
             if eh_hoje
             else (T.TEXT_PRIMARY if ativo_visual else f"{T.TEXT_MUTED}75")
+        )
+
+        eh_multi_m = bool(pacote_calendario.get("eh_multi_mes", False))
+        rotulo_num_dia = (
+            f"{dt_atual.day} {MESES_NOMES[dt_atual.month - 1][:3]}"
+            if (eh_multi_m and (dt_atual.day == 1 or dt_iso == filtro_data_inicio[0]))
+            else str(dt_atual.day)
         )
 
         celula = ft.Container(
@@ -879,10 +988,10 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         controls=[
                             ft.Text(
-                                str(dt_atual.day),
-                                size=10.5 if mobile else 12,
-                                weight=ft.FontWeight.BOLD if (eh_hoje or qtd_d > 0) else ft.FontWeight.W_500,
-                                color=cor_num_dia,
+                                rotulo_num_dia,
+                                size=10 if (mobile and len(rotulo_num_dia) > 2) else (10.5 if mobile else 12),
+                                weight=ft.FontWeight.BOLD if (eh_hoje or qtd_d > 0 or dt_atual.day == 1) else ft.FontWeight.W_500,
+                                color=T.PRIMARY if (eh_multi_m and dt_atual.day == 1 and not eh_hoje) else cor_num_dia,
                             ),
                             ft.Row(spacing=2, tight=True, controls=icones_topo_dir),
                         ],
@@ -945,46 +1054,69 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
             if dv_str:
                 mapa_vencimentos.setdefault(dv_str, []).append(fat)
 
-        # Calcula o início da grade (Domingo da primeira semana do mês)
+        # Calcula o início e fim da grade (suporta mês único 6 semanas ou Multi-Meses com Scroll)
+        eh_multi_mes = bool(pacote_calendario.get("eh_multi_mes", False)) or (
+            filtro_data_inicio[0][:7] != filtro_data_fim[0][:7]
+        )
+        eh_parcial = bool(pacote_calendario.get("eh_periodo_parcial", False))
+
         primeiro_dia_mes = date(a, m, 1)
-        offset_dom = (primeiro_dia_mes.weekday() + 1) % 7
-        grid_inicio = primeiro_dia_mes - timedelta(days=offset_dom)
+        try:
+            dt_ini_f = datetime.strptime(filtro_data_inicio[0][:10], "%Y-%m-%d").date()
+            dt_fim_f = datetime.strptime(filtro_data_fim[0][:10], "%Y-%m-%d").date()
+        except Exception:
+            dt_ini_f = primeiro_dia_mes
+            dt_fim_f = date(a, m, calendar.monthrange(a, m)[1])
 
-        # Se a 6ª semana inteira for do próximo mês, podemos exibir 5 ou 6 semanas (6 semanas igual à Imagem 1!)
-        linhas_semanas: list[ft.Control] = []
+        base_inicio_grade = dt_ini_f if eh_multi_mes else min(primeiro_dia_mes, dt_ini_f)
+        offset_dom = (base_inicio_grade.weekday() + 1) % 7
+        grid_inicio = base_inicio_grade - timedelta(days=offset_dom)
 
-        # Cabeçalho dos dias da semana (DOM .. SÁB)
-        linhas_semanas.append(
-            ft.Row(
-                spacing=4 if mobile else 6,
-                controls=[
-                    ft.Container(
-                        expand=1,
-                        padding=pad(v=4),
-                        alignment=ft.Alignment(0, 0),
-                        content=ft.Text(
-                            nome_ds,
-                            size=10 if mobile else 11,
-                            weight=ft.FontWeight.BOLD,
-                            color=T.TEXT_MUTED,
-                        ),
-                    )
-                    for nome_ds in DIAS_SEMANA_CABECALHO
-                ],
-            )
+        if eh_multi_mes:
+            offset_sab = (5 - dt_fim_f.weekday()) % 7
+            grid_fim = dt_fim_f + timedelta(days=offset_sab)
+            num_semanas = max(5, ((grid_fim - grid_inicio).days + 1) // 7)
+        else:
+            num_semanas = 6
+
+        # Cabeçalho fixo dos dias da semana (DOM .. SÁB)
+        cabecalho_dias_semana = ft.Row(
+            spacing=4 if mobile else 6,
+            controls=[
+                ft.Container(
+                    expand=1,
+                    padding=pad(v=4),
+                    alignment=ft.Alignment(0, 0),
+                    content=ft.Text(
+                        nome_ds,
+                        size=10 if mobile else 11,
+                        weight=ft.FontWeight.BOLD,
+                        color=T.TEXT_MUTED,
+                    ),
+                )
+                for nome_ds in DIAS_SEMANA_CABECALHO
+            ],
         )
 
-        for sem in range(6):
+        linhas_semanas: list[ft.Control] = []
+        mes_anterior_semana: tuple[int, int] | None = None
+
+        for sem in range(num_semanas):
             celulas_semana: list[ft.Control] = []
+            mes_desta_semana: tuple[int, int] | None = None
             for d_idx in range(7):
                 dt_cel = grid_inicio + timedelta(days=sem * 7 + d_idx)
                 dt_iso = dt_cel.isoformat()
+                if dt_cel.day == 1 or (sem == 0 and d_idx == 0):
+                    if filtro_data_inicio[0] <= dt_iso <= filtro_data_fim[0] or sem == 0:
+                        mes_desta_semana = (dt_cel.year, dt_cel.month)
                 info_d = mapa_dias.get(dt_iso) or {
                     "data": dt_iso,
                     "dia": dt_cel.day,
                     "mes": dt_cel.month,
                     "ano": dt_cel.year,
                     "no_mes_atual": (dt_cel.month == m and dt_cel.year == a),
+                    "no_periodo_filtro": (filtro_data_inicio[0] <= dt_iso <= filtro_data_fim[0]),
                     "total_receitas": 0.0,
                     "total_despesas": 0.0,
                     "despesas_conta": 0.0,
@@ -996,9 +1128,53 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                 celulas_semana.append(
                     _construir_celula_dia(dt_cel, info_d, vencs_d, maior_saida, maior_entrada)
                 )
+
+            if eh_multi_mes and mes_desta_semana and mes_desta_semana != mes_anterior_semana:
+                mes_anterior_semana = mes_desta_semana
+                linhas_semanas.append(
+                    ft.Container(
+                        padding=pad(h=10, v=4),
+                        bgcolor=f"{T.PRIMARY}14",
+                        border_radius=8,
+                        border=borda(1, f"{T.PRIMARY}35"),
+                        content=ft.Row(
+                            spacing=6,
+                            controls=[
+                                ft.Icon(ft.Icons.CALENDAR_MONTH_ROUNDED, size=13, color=T.PRIMARY),
+                                ft.Text(
+                                    f"{MESES_NOMES[mes_desta_semana[1] - 1]} de {mes_desta_semana[0]}",
+                                    size=11.5,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=T.PRIMARY,
+                                ),
+                            ],
+                        ),
+                    )
+                )
+
             linhas_semanas.append(
                 ft.Row(spacing=4 if mobile else 6, controls=celulas_semana)
             )
+
+        usa_scroll_cal = eh_multi_mes or num_semanas > 6
+        bloco_grade_semanas = (
+            ft.Container(
+                height=440 if mobile else 530,
+                content=ft.Column(
+                    spacing=4 if mobile else 6,
+                    scroll=ft.ScrollMode.AUTO,
+                    controls=linhas_semanas,
+                ),
+            )
+            if usa_scroll_cal
+            else ft.Column(spacing=4 if mobile else 6, controls=linhas_semanas)
+        )
+
+        rotulo_periodo_cal = (
+            f"{formatar_data_br(filtro_data_inicio[0])} a {formatar_data_br(filtro_data_fim[0])}"
+            if (eh_multi_mes or eh_parcial)
+            else _nome_mes_ano(m, a)
+        )
 
         # Chips de Modo do Mapa de Calor
         def _chip_modo_cal(id_modo: str, rotulo: str, icone: ft.IconData, cor_m: str) -> ft.Container:
@@ -1028,7 +1204,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         # Cabeçalho dinâmico estilo Imagem 1 + Imagem 2
         if modo_heatmap[0] == "saidas":
             titulo_bloco_cal = "Saídas por dia"
-            sub_bloco_cal = f"{_nome_mes_ano(m, a)} · quanto saiu em cada dia"
+            sub_bloco_cal = f"{rotulo_periodo_cal} · quanto saiu em cada dia"
             destaque_valor_cal = ft.Row(
                 spacing=8,
                 vertical_alignment=ft.CrossAxisAlignment.END,
@@ -1039,7 +1215,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
             )
         elif modo_heatmap[0] == "entradas":
             titulo_bloco_cal = "Entradas por dia"
-            sub_bloco_cal = f"{_nome_mes_ano(m, a)} · quanto entrou em cada dia"
+            sub_bloco_cal = f"{rotulo_periodo_cal} · quanto entrou em cada dia"
             destaque_valor_cal = ft.Row(
                 spacing=8,
                 vertical_alignment=ft.CrossAxisAlignment.END,
@@ -1049,8 +1225,12 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                 ],
             )
         else:
-            titulo_bloco_cal = "Calendário Financeiro"
-            sub_bloco_cal = f"{_nome_mes_ano(m, a)} · consolidação diária de entradas, saídas e vencimentos"
+            titulo_bloco_cal = (
+                f"Calendário Multi-Meses ({num_semanas} semanas · role para navegar)"
+                if eh_multi_mes
+                else "Calendário Financeiro"
+            )
+            sub_bloco_cal = f"{rotulo_periodo_cal} · consolidação diária e vencimentos de faturas"
             destaque_valor_cal = ft.Container(height=0)
 
         card_calendario_principal = ft.Container(
@@ -1071,7 +1251,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                                 icon=ft.Icons.CHEVRON_LEFT_ROUNDED,
                                 icon_color=T.TEXT_PRIMARY,
                                 bgcolor=T.SURFACE_ALT,
-                                tooltip="Mês anterior",
+                                tooltip="Período anterior",
                                 on_click=lambda _: _mudar_mes_delta(-1),
                             ),
                             ft.Column(
@@ -1079,15 +1259,15 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                 controls=[
                                     ft.Text(
-                                        _nome_mes_ano(m, a),
-                                        size=16 if mobile else 18,
+                                        rotulo_periodo_cal,
+                                        size=15 if (mobile or eh_multi_mes) else 18,
                                         weight=ft.FontWeight.BOLD,
                                         color=T.TEXT_PRIMARY,
                                     ),
                                     ft.Text(
                                         titulo_bloco_cal,
                                         size=11,
-                                        color=T.TEXT_MUTED,
+                                        color=T.PRIMARY if eh_multi_mes else T.TEXT_MUTED,
                                     ),
                                 ],
                             ),
@@ -1112,7 +1292,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                                         icon=ft.Icons.CHEVRON_RIGHT_ROUNDED,
                                         icon_color=T.TEXT_PRIMARY,
                                         bgcolor=T.SURFACE_ALT,
-                                        tooltip="Próximo mês",
+                                        tooltip="Próximo período",
                                         on_click=lambda _: _mudar_mes_delta(1),
                                     ),
                                 ],
@@ -1139,7 +1319,8 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                     ),
                     destaque_valor_cal,
                     barra_inspecao_hover,
-                    ft.Column(spacing=4 if mobile else 6, controls=linhas_semanas),
+                    cabecalho_dias_semana,
+                    bloco_grade_semanas,
                     # Legenda inferior + botão Ver Mais
                     ft.Row(
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -1439,10 +1620,19 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                                 spacing=8,
                                 controls=[
                                     ft.Icon(ft.Icons.CREDIT_CARD_ROUNDED, color=T.WARNING, size=18),
-                                    ft.Text("Faturas do Mês", size=15, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                                    ft.Text(
+                                        "Faturas do Período" if eh_multi_mes else "Faturas do Mês",
+                                        size=15,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=T.TEXT_PRIMARY,
+                                    ),
                                 ],
                             ),
-                            ft.Text(_nome_mes_ano_cap(m, a), size=11.5, color=T.TEXT_MUTED),
+                            ft.Text(
+                                rotulo_periodo_cal if (eh_multi_mes or eh_parcial) else _nome_mes_ano_cap(m, a),
+                                size=11.5,
+                                color=T.TEXT_MUTED,
+                            ),
                         ],
                     ),
                     *linhas_cartoes_mes,

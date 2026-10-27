@@ -112,6 +112,7 @@ class CustomCalendarGrid(ft.Container):
         self.data_selecionada = data_selecionada or hoje
         self.range_inicio = range_inicio
         self.range_fim = range_fim
+        self.fixar_inicio_hoje = False
         self.on_date_click = on_date_click
         self.on_range_change = on_range_change
         self.on_month_change = on_month_change
@@ -364,7 +365,11 @@ class CustomCalendarGrid(ft.Container):
             if callable(self.on_date_click):
                 self.on_date_click(d)
         else:
-            if self.range_inicio is None or (self.range_inicio is not None and self.range_fim is not None):
+            if getattr(self, "fixar_inicio_hoje", False):
+                hoje_fix = date.today()
+                self.range_inicio = hoje_fix
+                self.range_fim = d if d >= hoje_fix else hoje_fix
+            elif self.range_inicio is None or (self.range_inicio is not None and self.range_fim is not None):
                 self.range_inicio = d
                 self.range_fim = None
             else:
@@ -699,6 +704,81 @@ def abrir_modal_periodo_mobills(
                 )
             )
 
+        # Atalho Rápido de Projeção (De Hoje até Fim do Mês) e botão para Projeção Livre (Hoje → Data Futura)
+        hoje_chip = date.today()
+        ult_hoje = calendar.monthrange(hoje_chip.year, hoje_chip.month)[1]
+        fim_mes_hoje = date(hoje_chip.year, hoje_chip.month, ult_hoje)
+        ativo_proj_mes = (temp_ini[0] == hoje_chip and temp_fim[0] == fim_mes_hoje and temp_modo[0] != "mes")
+
+        def _aplicar_projecao_fim_mes(_=None):
+            estado_res = {
+                "modo": "projecao",
+                "mes": fim_mes_hoje.month,
+                "ano": fim_mes_hoje.year,
+                "data_inicio": hoje_chip,
+                "data_fim": fim_mes_hoje,
+                "dia_ciclo": temp_dia_ciclo[0],
+                "ate_fim_mes": True,
+                "filtro_id": "projecao_fim_mes",
+            }
+            page.pop_dialog()
+            if callable(on_confirm):
+                on_confirm(estado_res)
+
+        row_filtros_salvos.controls.append(
+            ft.Container(
+                padding=pad(h=10, v=6),
+                bgcolor=T.RECEITA if ativo_proj_mes else f"{T.RECEITA}18",
+                border_radius=12,
+                border=borda(1, T.RECEITA if ativo_proj_mes else f"{T.RECEITA}55"),
+                ink=True,
+                tooltip=f"Prever fluxo de caixa de Hoje ({formatar_data_br(hoje_chip)}) até {formatar_data_br(fim_mes_hoje)}",
+                on_click=_aplicar_projecao_fim_mes,
+                content=ft.Row(
+                    spacing=4,
+                    tight=True,
+                    controls=[
+                        ft.Icon(
+                            ft.Icons.TRENDING_UP_ROUNDED,
+                            size=13,
+                            color="#0F172A" if ativo_proj_mes else T.RECEITA,
+                        ),
+                        ft.Text(
+                            "De Hoje até Fim do Mês",
+                            size=11.5,
+                            weight=ft.FontWeight.BOLD,
+                            color="#0F172A" if ativo_proj_mes else T.RECEITA,
+                        ),
+                    ],
+                ),
+            )
+        )
+
+        row_filtros_salvos.controls.append(
+            ft.Container(
+                padding=pad(h=10, v=6),
+                bgcolor=f"{T.PRIMARY}18",
+                border_radius=12,
+                border=borda(1, f"{T.PRIMARY}55"),
+                ink=True,
+                tooltip="Abrir aba Personalizado com início travado em Hoje para escolher a data futura alvo",
+                on_click=lambda _: _ativar_modo_projecao_custom(),
+                content=ft.Row(
+                    spacing=4,
+                    tight=True,
+                    controls=[
+                        ft.Icon(ft.Icons.ROCKET_LAUNCH_ROUNDED, size=13, color=T.PRIMARY),
+                        ft.Text(
+                            "Projeção (Hoje → Data Futura)",
+                            size=11.5,
+                            weight=ft.FontWeight.BOLD,
+                            color=T.PRIMARY,
+                        ),
+                    ],
+                ),
+            )
+        )
+
     _reconstruir_chips_favoritos()
 
     bloco_filtros_salvos = ft.Container(
@@ -862,7 +942,7 @@ def abrir_modal_periodo_mobills(
             ),
             col_12_meses,
             ft.Text(
-                "💡 Dica: Escolha um filtro salvo acima (ex: Dia 05 a 20 ou Dia 20 a 30/31) ou toque em um mês.",
+                "💡 Dica: Escolha um filtro salvo acima (ex: 1ª Quinzena, 2ª Quinzena ou Projeção) ou toque em um mês.",
                 size=11,
                 color=T.TEXT_MUTED,
                 italic=True,
@@ -1032,9 +1112,10 @@ def abrir_modal_periodo_mobills(
         _fechar_e_salvar()
 
     # -------------------------------------------------------------------------
-    # ABA 3: PERSONALIZADO (VISUAL RANGE PICKER + SALVAR NOS FAVORITOS)
+    # ABA 3: PERSONALIZADO & PROJEÇÃO (VISUAL RANGE PICKER + SALVAR FAVORITOS)
     # -------------------------------------------------------------------------
     lbl_resumo_range = ft.Text("", size=13, weight=ft.FontWeight.BOLD, color=T.PRIMARY)
+    modo_projecao_hoje = [temp_modo[0] == "projecao" or (temp_ini[0] == date.today() and temp_fim[0] >= date.today() and temp_modo[0] != "mes")]
 
     def _ao_mudar_range(ini: date | None, fim: date | None):
         if ini:
@@ -1043,7 +1124,7 @@ def abrir_modal_periodo_mobills(
             temp_fim[0] = fim
         elif ini:
             temp_fim[0] = ini
-        temp_modo[0] = "custom"
+        temp_modo[0] = "projecao" if modo_projecao_hoje[0] else "custom"
         temp_mes_mensal[0] = temp_fim[0].month
         temp_ano_mensal[0] = temp_fim[0].year
         ult_f = calendar.monthrange(temp_fim[0].year, temp_fim[0].month)[1]
@@ -1067,7 +1148,8 @@ def abrir_modal_periodo_mobills(
         if d_f < d_i:
             d_i, d_f = d_f, d_i
         qtd = (d_f - d_i).days + 1
-        lbl_resumo_range.value = f"{formatar_data_br(d_i)}  →  {formatar_data_br(d_f)}  ({qtd} dias)"
+        prefixo = "🚀 Projeção: " if modo_projecao_hoje[0] else ""
+        lbl_resumo_range.value = f"{prefixo}{formatar_data_br(d_i)}  →  {formatar_data_br(d_f)}  ({qtd} dias)"
         try:
             lbl_resumo_range.update()
         except Exception:
@@ -1083,6 +1165,154 @@ def abrir_modal_periodo_mobills(
         modo="range",
         on_range_change=_ao_mudar_range,
         on_month_change=_ao_mudar_mes_grid_custom,
+    )
+    grid_range.fixar_inicio_hoje = modo_projecao_hoje[0]
+
+    lbl_instrucao_custom = ft.Text(
+        "🎯 Início travado em Hoje! Clique na data futura desejada no calendário:"
+        if modo_projecao_hoje[0]
+        else "Selecione o dia inicial e o dia final diretamente no calendário:",
+        size=11.5,
+        color=T.RECEITA if modo_projecao_hoje[0] else T.TEXT_MUTED,
+        weight=ft.FontWeight.BOLD if modo_projecao_hoje[0] else ft.FontWeight.NORMAL,
+    )
+
+    sw_fixar_hoje = ft.Switch(
+        value=modo_projecao_hoje[0],
+        active_color=T.RECEITA,
+        scale=0.82,
+    )
+
+    def _alternar_fixar_hoje(ativo_novo: bool):
+        modo_projecao_hoje[0] = ativo_novo
+        sw_fixar_hoje.value = ativo_novo
+        grid_range.fixar_inicio_hoje = ativo_novo
+        if ativo_novo:
+            hoje_d = date.today()
+            temp_ini[0] = hoje_d
+            if temp_fim[0] < hoje_d:
+                ult_h = calendar.monthrange(hoje_d.year, hoje_d.month)[1]
+                temp_fim[0] = date(hoje_d.year, hoje_d.month, ult_h)
+            temp_modo[0] = "projecao"
+            grid_range.definir_range(temp_ini[0], temp_fim[0])
+            lbl_instrucao_custom.value = "🎯 Início travado em Hoje! Clique na data futura desejada no calendário:"
+            lbl_instrucao_custom.color = T.RECEITA
+            lbl_instrucao_custom.weight = ft.FontWeight.BOLD
+        else:
+            temp_modo[0] = "custom"
+            lbl_instrucao_custom.value = "Selecione o dia inicial e o dia final diretamente no calendário:"
+            lbl_instrucao_custom.color = T.TEXT_MUTED
+            lbl_instrucao_custom.weight = ft.FontWeight.NORMAL
+        _atualizar_resumo_range()
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    sw_fixar_hoje.on_change = lambda e: _alternar_fixar_hoje(bool(e.control.value))
+
+    def _aplicar_atalho_projecao_dias(dias_frente: int | None = None, fim_mes_atual: bool = False, fim_prox_mes: bool = False):
+        hoje_d = date.today()
+        modo_projecao_hoje[0] = True
+        sw_fixar_hoje.value = True
+        grid_range.fixar_inicio_hoje = True
+        temp_ini[0] = hoje_d
+        if fim_mes_atual:
+            ult_h = calendar.monthrange(hoje_d.year, hoje_d.month)[1]
+            temp_fim[0] = date(hoje_d.year, hoje_d.month, ult_h)
+        elif fim_prox_mes:
+            m_prox = 1 if hoje_d.month == 12 else hoje_d.month + 1
+            a_prox = hoje_d.year + 1 if hoje_d.month == 12 else hoje_d.year
+            ult_p = calendar.monthrange(a_prox, m_prox)[1]
+            temp_fim[0] = date(a_prox, m_prox, ult_p)
+        else:
+            temp_fim[0] = hoje_d + timedelta(days=int(dias_frente or 15))
+        temp_modo[0] = "projecao"
+        temp_mes_mensal[0] = temp_fim[0].month
+        temp_ano_mensal[0] = temp_fim[0].year
+        grid_range.definir_range(temp_ini[0], temp_fim[0])
+        _atualizar_resumo_range()
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    def _ativar_modo_projecao_custom():
+        _alternar_fixar_hoje(True)
+        _trocar_aba(2)
+
+    barra_projecao_custom = ft.Container(
+        padding=pad(h=10, v=6),
+        bgcolor=f"{T.RECEITA}14",
+        border_radius=10,
+        border=borda(1, f"{T.RECEITA}45"),
+        content=ft.Column(
+            spacing=6,
+            tight=True,
+            controls=[
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Row(
+                            spacing=6,
+                            controls=[
+                                ft.Icon(ft.Icons.ROCKET_LAUNCH_ROUNDED, color=T.RECEITA, size=15),
+                                ft.Text(
+                                    "Projeção de Caixa (Início fixo em Hoje)",
+                                    size=11.5,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=T.TEXT_PRIMARY,
+                                ),
+                            ],
+                        ),
+                        sw_fixar_hoje,
+                    ],
+                ),
+                ft.Row(
+                    spacing=6,
+                    wrap=True,
+                    controls=[
+                        ft.Container(
+                            padding=pad(h=8, v=4),
+                            bgcolor=T.SURFACE,
+                            border_radius=8,
+                            border=borda(1, T.BORDER),
+                            ink=True,
+                            on_click=lambda _: _aplicar_atalho_projecao_dias(fim_mes_atual=True),
+                            content=ft.Text("Hoje → Fim do Mês", size=10.5, weight=ft.FontWeight.W_600, color=T.RECEITA),
+                        ),
+                        ft.Container(
+                            padding=pad(h=8, v=4),
+                            bgcolor=T.SURFACE,
+                            border_radius=8,
+                            border=borda(1, T.BORDER),
+                            ink=True,
+                            on_click=lambda _: _aplicar_atalho_projecao_dias(dias_frente=15),
+                            content=ft.Text("Hoje + 15 dias", size=10.5, weight=ft.FontWeight.W_600, color=T.TEXT_PRIMARY),
+                        ),
+                        ft.Container(
+                            padding=pad(h=8, v=4),
+                            bgcolor=T.SURFACE,
+                            border_radius=8,
+                            border=borda(1, T.BORDER),
+                            ink=True,
+                            on_click=lambda _: _aplicar_atalho_projecao_dias(dias_frente=30),
+                            content=ft.Text("Hoje + 30 dias", size=10.5, weight=ft.FontWeight.W_600, color=T.TEXT_PRIMARY),
+                        ),
+                        ft.Container(
+                            padding=pad(h=8, v=4),
+                            bgcolor=T.SURFACE,
+                            border_radius=8,
+                            border=borda(1, T.BORDER),
+                            ink=True,
+                            on_click=lambda _: _aplicar_atalho_projecao_dias(fim_prox_mes=True),
+                            content=ft.Text("Hoje → Fim Próx. Mês", size=10.5, weight=ft.FontWeight.W_600, color=T.PRIMARY),
+                        ),
+                    ],
+                ),
+            ],
+        ),
     )
 
     def _salvar_intervalo_atual_nos_favoritos(_=None):
@@ -1110,11 +1340,8 @@ def abrir_modal_periodo_mobills(
         spacing=10,
         tight=True,
         controls=[
-            ft.Text(
-                "Selecione o dia inicial e o dia final diretamente no calendário:",
-                size=11.5,
-                color=T.TEXT_MUTED,
-            ),
+            barra_projecao_custom,
+            lbl_instrucao_custom,
             ft.Container(
                 padding=pad(h=12, v=8),
                 bgcolor=f"{T.PRIMARY}15",
