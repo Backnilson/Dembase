@@ -39,6 +39,7 @@ def calcular_rateio_sobra(
     travar_pelo_teto_seguro: bool = True,
     potes: list[dict] | None = None,
     piso_custos_fixos: float = 1150.0,
+    potes_liberados: set[int] | None = None,
 ) -> dict:
     """
     Calcula a Sobra Projetada do Período, a divisão nos dois Mini-Potes e a
@@ -60,6 +61,7 @@ def calcular_rateio_sobra(
             slider_pct_investimento=pct_inv,
             protecao_fluxo=protecao_fluxo,
             travar_pelo_teto_seguro=travar_pelo_teto_seguro,
+            potes_liberados=potes_liberados,
         )
         cl = resultado_unif["caixa_livre"]
         b = resultado_unif["blindagem"]
@@ -1055,7 +1057,25 @@ class PainelGestaoSobra:
             travar_pelo_teto_seguro=self.travar_teto_seguro,
             potes=self.potes_dados,
             piso_custos_fixos=self.piso_custos_fixos,
+            potes_liberados=storage.obter_potes_liberados(self.page, self.mes_atual, self.ano_atual),
         )
+
+    def alternar_liberacao_pote(self, posicao: int, liberar: bool):
+        """
+        Libera (ou restaura) a sobra +Disponível de um pote manual no mês atual.
+        Recalcula tudo e atualiza na hora: card do pote, KPI Caixa Livre, Liberdade e Prazeres.
+        """
+        storage.salvar_pote_liberado_sync(
+            self.page, posicao, liberar, mes=self.mes_atual, ano=self.ano_atual
+        )
+        dados = self._sincronizar_ui(notificar_kpi=True)
+        if self.on_potes_alterados and "potes_atualizados" in dados:
+            self.on_potes_alterados(dados["potes_atualizados"])
+        try:
+            self.page.update()
+        except Exception:
+            pass
+        return dados
 
     def _acao_lancar_investimento(self, _e=None):
         dados = self.obter_dados_atuais()

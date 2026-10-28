@@ -325,6 +325,7 @@ def calcular_arquitetura_unificada_potes(
     slider_pct_investimento: float = 50.0,
     protecao_fluxo: dict | None = None,
     travar_pelo_teto_seguro: bool = True,
+    potes_liberados: Iterable[int] | None = None,
 ) -> dict:
     """
     Unificação Matemática Rigorosa entre os 6 Potes e a Destinação do Caixa Livre:
@@ -339,6 +340,9 @@ def calcular_arquitetura_unificada_potes(
        A soma dos 6 potes crava SEMPRE 100,00%!
     4. Desconta os gastos de Prazeres e aportes de Liberdade Financeira, respeitando
        a trava de Teto Seguro do Pior Dia.
+    5. `potes_liberados` (posições 2, 3 e/ou 5): a sobra +Disponível desses potes manuais foi
+       liberada pelo usuário. O teto do pote é ajustado ao Gasto Real do mês e a folga ociosa
+       migra para o Caixa Livre (dividida entre Liberdade e Prazeres conforme o Slider).
     """
     rec = round(max(0.0, float(receitas or 0.0)), 2)
     piso_fix = round(max(0.0, float(piso_custos_fixos if piso_custos_fixos is not None else 1150.0)), 2)
@@ -397,6 +401,24 @@ def calcular_arquitetura_unificada_potes(
     g3 = p3["gasto"]
     g5 = p5["gasto"]
 
+    # 2.1 Liberação de sobra: teto = gasto real; a folga ociosa vai para o Caixa Livre
+    liberados = {int(x) for x in (potes_liberados or [])} & {2, 3, 5}
+    liberado_valor = {2: 0.0, 3: 0.0, 5: 0.0}
+    if rec > 0:
+        if 2 in liberados and lim2 - g2 > 0.005:
+            liberado_valor[2] = round(lim2 - g2, 2)
+            lim2 = round(g2, 2)
+            pct2 = round((lim2 / rec) * 100.0, 2)
+        if 3 in liberados and lim3 - g3 > 0.005:
+            liberado_valor[3] = round(lim3 - g3, 2)
+            lim3 = round(g3, 2)
+            pct3 = round((lim3 / rec) * 100.0, 2)
+        if 5 in liberados and lim5 - g5 > 0.005:
+            liberado_valor[5] = round(lim5 - g5, 2)
+            lim5 = round(g5, 2)
+            pct5 = round((lim5 / rec) * 100.0, 2)
+    tem_liberacao = any(v > 0 for v in liberado_valor.values())
+
     retido2 = max(0.0, round(lim2 - g2, 2))
     retido3 = max(0.0, round(lim3 - g3, 2))
     retido5 = max(0.0, round(lim5 - g5, 2))
@@ -409,7 +431,11 @@ def calcular_arquitetura_unificada_potes(
     # 3. Orçamento Restante do Caixa Livre (Liberdade Financeira + Prazeres)
     soma_retidos_pct = round(pct1 + pct2 + pct3 + pct5, 2)
     pct_caixa_livre = max(0.0, round(100.0 - soma_retidos_pct, 2))
-    teto_caixa_livre = round(rec * (pct_caixa_livre / 100.0), 2)
+    if tem_liberacao:
+        # Valor exato (sem perda de centavos por arredondamento de percentuais)
+        teto_caixa_livre = max(0.0, round(rec - lim1 - lim2 - lim3 - lim5, 2))
+    else:
+        teto_caixa_livre = round(rec * (pct_caixa_livre / 100.0), 2)
 
     # 4. Divisão do Slider entre Prazeres (pos 4) e Liberdade Financeira (pos 6)
     pct4 = round(pct_caixa_livre * (s_livre / 100.0), 2)
@@ -487,6 +513,9 @@ def calcular_arquitetura_unificada_potes(
             "restante": round(lim2 - g2, 2),
             "tipo_comportamento": "retido_intocavel",
             "disponivel_retido": retido2,
+            "liberavel": bool(retido2 > 0.005),
+            "liberado": bool(liberado_valor[2] > 0 or 2 in liberados),
+            "liberado_valor": liberado_valor[2],
         },
         {
             "id": p3["id"],
@@ -500,6 +529,9 @@ def calcular_arquitetura_unificada_potes(
             "restante": round(lim3 - g3, 2),
             "tipo_comportamento": "retido_intocavel",
             "disponivel_retido": retido3,
+            "liberavel": bool(retido3 > 0.005),
+            "liberado": bool(liberado_valor[3] > 0 or 3 in liberados),
+            "liberado_valor": liberado_valor[3],
         },
         {
             "id": p4["id"],
@@ -526,6 +558,9 @@ def calcular_arquitetura_unificada_potes(
             "restante": round(lim5 - g5, 2),
             "tipo_comportamento": "retido_intocavel",
             "disponivel_retido": retido5,
+            "liberavel": bool(retido5 > 0.005),
+            "liberado": bool(liberado_valor[5] > 0 or 5 in liberados),
+            "liberado_valor": liberado_valor[5],
         },
         {
             "id": p6["id"],

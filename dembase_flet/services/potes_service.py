@@ -28,6 +28,37 @@ def carregar_potes_com_meta_mes(mes: int | None = None, ano: int | None = None) 
     return P.potes_de_registros(regs), herdado
 
 
+def carregar_contexto_mes(data_inicio: str, data_fim: str, piso_custos_fixos: float = 1150.0) -> dict:
+    """
+    Espelho dos números do Dashboard para o período: usa exatamente a mesma consulta
+    (`obter_resumo_potes`, com o mesmo cache) para que Configuração e Dashboard nunca divirjam.
+    Retorna {renda, gastos{posicao: R$}, qtd{posicao: n}, tem_receita}.
+    """
+    resumo = db.obter_resumo_potes(data_inicio, data_fim, piso_custos_fixos=float(piso_custos_fixos)) or {}
+    renda = float(resumo.get("renda") or 0.0)
+    gastos: dict[int, float] = {}
+    qtd: dict[int, int] = {}
+    for p in resumo.get("potes") or []:
+        try:
+            pos = int(p.get("posicao"))
+        except (TypeError, ValueError):
+            continue
+        gastos[pos] = float(p.get("gasto") or 0.0)
+        qtd[pos] = int(p.get("qtd_transacoes") or 0)
+    return {"renda": renda, "gastos": gastos, "qtd": qtd, "tem_receita": renda > 0}
+
+
+def obter_pct_investimento_db(mes: int, ano: int) -> tuple[float | None, bool]:
+    """Percentual do slider do Caixa Livre salvo no banco para o mês: (pct, personalizado_no_mes)."""
+    try:
+        cfg = db.obter_config_caixa_livre_mes(mes, ano)
+        if isinstance(cfg, dict) and "pct_investimento" in cfg:
+            return float(cfg["pct_investimento"]), bool(cfg.get("personalizado_no_mes", False))
+    except Exception:
+        pass
+    return None, False
+
+
 def salvar_configuracao(
     itens: list[dict],
     mes: int | None = None,

@@ -509,6 +509,49 @@ def salvar_percentual_sobra_investimento_sync(
     _salvar_local_json(dados)
 
 
+def obter_potes_liberados(page: ft.Page, mes: int | None, ano: int | None) -> set[int]:
+    """
+    Posições dos potes manuais (2 Semi Fixos, 3 Metas, 5 Conhecimento) cuja sobra +Disponível
+    foi liberada para o Caixa Livre no mês/ano informado. Isolado por mês.
+    """
+    chave_m = _chave_mes_sobra(mes, ano)
+    if not chave_m:
+        return set()
+    sess_k = f"potes_liberados_{chave_m}"
+    val_s = session_get(page, sess_k)
+    if isinstance(val_s, (list, tuple, set)):
+        return {int(x) for x in val_s}
+    mapa = _ler_local_json().get("potes_liberados_por_mes")
+    if isinstance(mapa, dict) and isinstance(mapa.get(chave_m), list):
+        res = {int(x) for x in mapa[chave_m] if str(x).isdigit()}
+        session_set(page, sess_k, sorted(res))
+        return res
+    return set()
+
+
+def salvar_pote_liberado_sync(
+    page: ft.Page, posicao: int, liberado: bool, mes: int | None, ano: int | None,
+) -> set[int]:
+    """Liga/desliga a liberação de sobra de um pote manual apenas no mês/ano informado."""
+    chave_m = _chave_mes_sobra(mes, ano)
+    if not chave_m:
+        return set()
+    atual = obter_potes_liberados(page, mes, ano)
+    if liberado:
+        atual.add(int(posicao))
+    else:
+        atual.discard(int(posicao))
+    session_set(page, f"potes_liberados_{chave_m}", sorted(atual))
+    dados = _ler_local_json()
+    mapa = dados.get("potes_liberados_por_mes")
+    if not isinstance(mapa, dict):
+        mapa = {}
+    mapa[chave_m] = sorted(atual)
+    dados["potes_liberados_por_mes"] = mapa
+    _salvar_local_json(dados)
+    return atual
+
+
 def obter_trava_teto_seguro_sobra(page: ft.Page, padrao: bool = True) -> bool:
     """Retorna se a trava de Teto Seguro (Pior Dia) está ativa no módulo de Caixa Livre."""
     val_sess = session_get(page, "sobra_trava_teto_seguro")

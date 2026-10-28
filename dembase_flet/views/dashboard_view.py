@@ -236,6 +236,59 @@ def criar_view_dashboard(
         on_potes_alterados=_ao_alterar_potes_no_slider,
     )
 
+    def _ao_liberar_sobra_pote(posicao: int, liberar: bool):
+        """Libera/restaura a sobra de um pote manual e atualiza cards + Caixa Livre na hora."""
+        try:
+            painel_sobra.alternar_liberacao_pote(posicao, liberar)
+            mostrar_feedback(
+                page,
+                "Sobra liberada para o Caixa Livre." if liberar else "Reserva do pote restaurada.",
+                "sucesso",
+            )
+        except Exception as ex:
+            mostrar_feedback(page, f"Não foi possível atualizar o pote: {ex}", "erro")
+
+    def _abrir_configurador_metas(_=None):
+        """Abre o configurador espelhado (mesmo período/receita/gastos do Dashboard) sem trocar de tela."""
+        from views.widgets.potes_config import montar_aba_potes
+
+        def _fechar_e_recarregar():
+            try:
+                page.pop_dialog()
+            except Exception:
+                pass
+            carregar(inicial=False)
+
+        conteudo = montar_aba_potes(
+            page,
+            mes=mes_sel[0],
+            ano=ano_sel[0],
+            data_ini=data_ini_sel[0],
+            data_fim=data_fim_sel[0],
+            ao_salvar=_fechar_e_recarregar,
+        )
+        largura = max(320, min(1120, int((page.width or 1000) - 24)))
+        altura = max(420, int((page.height or 800) * 0.82))
+        dlg = ft.AlertDialog(
+            modal=False,
+            bgcolor=T.BG,
+            inset_padding=pad(h=8, v=12),
+            title=ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                controls=[
+                    ft.Text("Ajustar metas do mês", size=17, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                    ft.IconButton(icon=ft.Icons.CLOSE_ROUNDED, icon_color=T.TEXT_MUTED,
+                                  on_click=lambda _: page.pop_dialog()),
+                ],
+            ),
+            content=ft.Container(
+                width=largura,
+                height=altura,
+                content=ft.Column(scroll=ft.ScrollMode.AUTO, expand=True, controls=[conteudo]),
+            ),
+        )
+        page.show_dialog(dlg)
+
     def _abrir_extrato_pote(pote_id):
         session_set(page, "filtro_pote_id", pote_id)
         ir_relatorio_lancamentos(page, filtros={"pote_id": pote_id})
@@ -333,11 +386,20 @@ def criar_view_dashboard(
             _renderizar_graficos_atuais()
 
             if isinstance(r_potes, dict):
+                # Usa os potes já recalculados pelo painel (inclui sobras liberadas do mês)
+                r_potes_ui = r_potes
+                try:
+                    pot_calc = painel_sobra.obter_dados_atuais().get("potes_atualizados")
+                    if pot_calc:
+                        r_potes_ui = {**r_potes, "potes": pot_calc}
+                except Exception:
+                    r_potes_ui = r_potes
                 area_potes.controls = [secao_potes(
-                    r_potes,
+                    r_potes_ui,
                     nav_func=_abrir_extrato_pote,
-                    on_ajustar=lambda _: navegar(page, "/configuracoes?aba=metas"),
+                    on_ajustar=_abrir_configurador_metas,
                     page=page,
+                    on_liberar=_ao_liberar_sobra_pote,
                 )]
             else:
                 area_potes.controls = []

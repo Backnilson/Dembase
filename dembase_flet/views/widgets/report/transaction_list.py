@@ -970,10 +970,14 @@ class TransactionList(ft.Column):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
+                # Quebra inteligente: tags nunca são cortadas a seco; se não couberem,
+                # descem para a linha seguinte (sem depender de scroll horizontal invisível).
                 ft.Row(
                     spacing=4,
-                    scroll=ft.ScrollMode.HIDDEN,
+                    run_spacing=4,
+                    wrap=True,
                     expand=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=badges_mobile,
                 ),
                 ft.Row(

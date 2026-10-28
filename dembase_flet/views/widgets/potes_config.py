@@ -8,6 +8,7 @@ Unificado com a matemática do Caixa Livre e 100% de precisão.
 """
 from __future__ import annotations
 
+import calendar
 from datetime import date
 from decimal import Decimal
 
@@ -29,7 +30,7 @@ except ImportError:
 
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback
-from core.constants import formatar_moeda, MESES_NOMES
+from core.constants import formatar_moeda, formatar_data_br, MESES_NOMES
 from core import potes as P
 from core import storage
 from services import potes_service as svc
@@ -45,23 +46,69 @@ def _fmt_perc(v: Decimal | float) -> str:
     return f"{val:.1f}%".replace(".", ",")
 
 
-def montar_aba_potes(page: ft.Page) -> ft.Control:
+def _intervalo_mes(m: int, a: int) -> tuple[str, str]:
+    ult = calendar.monthrange(a, m)[1]
+    return f"{a:04d}-{m:02d}-01", f"{a:04d}-{m:02d}-{ult:02d}"
+
+
+def _iso(d) -> str:
+    return d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]
+
+
+def montar_aba_potes(
+    page: ft.Page,
+    mes: int | None = None,
+    ano: int | None = None,
+    data_ini: str | None = None,
+    data_fim: str | None = None,
+    ao_salvar=None,
+) -> ft.Control:
+    """
+    Configurador de metas dos 6 potes ESPELHADO no Dashboard: base de cálculo = Receita Real do
+    período selecionado, Gasto Real por pote e reflexo imediato em Custos Fixos e Caixa Livre.
+    `mes/ano/data_ini/data_fim` permitem abrir já no período exato do Dashboard.
+    `ao_salvar` é chamado após salvar (ex.: fechar modal e recarregar o Dashboard).
+    """
     # ── Estado do Mês/Ano selecionado ─────────────────────────────────────────
     est_periodo = obter_estado_periodo_atual(page)
-    mes_ini = int(est_periodo.get("mes") or date.today().month)
-    ano_ini = int(est_periodo.get("ano") or date.today().year)
-    estado_periodo = {"mes": mes_ini, "ano": ano_ini, "herdado": False}
+    mes_ini = int(mes or est_periodo.get("mes") or date.today().month)
+    ano_ini = int(ano or est_periodo.get("ano") or date.today().year)
+    if data_ini and data_fim:
+        di_ini, df_ini = str(data_ini)[:10], str(data_fim)[:10]
+    elif mes is None and est_periodo.get("data_inicio") and est_periodo.get("data_fim"):
+        di_ini, df_ini = _iso(est_periodo["data_inicio"]), _iso(est_periodo["data_fim"])
+    else:
+        di_ini, df_ini = _intervalo_mes(mes_ini, ano_ini)
+    estado_periodo = {"mes": mes_ini, "ano": ano_ini, "herdado": False, "di": di_ini, "df": df_ini}
 
     piso_fixos_atual = storage.obter_piso_custos_fixos(page, 1150.0)
+    ctx_ref: list[dict] = [{"renda": 0.0, "gastos": {}, "qtd": {}, "tem_receita": False}]
+    simulando = [False]
+    fonte_renda = ["real"]  # real | referencia | padrao | simulada
+
+    def _definir_renda_base() -> Decimal:
+        """Receita Real do período (igual ao Dashboard); fallback só se não houver receita."""
+        real = float(ctx_ref[0].get("renda") or 0.0)
+        if real > 0:
+            fonte_renda[0] = "real"
+            return Decimal(str(round(real, 2)))
+        try:
+            ref = svc.ler_renda_referencia()
+        except Exception:
+            ref = Decimal("0")
+        if ref > 0:
+            fonte_renda[0] = "referencia"
+            return ref
+        fonte_renda[0] = "padrao"
+        return Decimal("5000.00")
 
     try:
         potes, herdado_ini = svc.carregar_potes_com_meta_mes(
             mes=estado_periodo["mes"], ano=estado_periodo["ano"]
         )
         estado_periodo["herdado"] = herdado_ini
-        renda = svc.ler_renda_referencia()
-        if renda <= 0:
-            renda = Decimal("5000.00")  # Default simulador caso zerada
+        ctx_ref[0] = svc.carregar_contexto_mes(di_ini, df_ini, piso_fixos_atual)
+        renda = _definir_renda_base()
     except Exception as ex:
         mostrar_feedback(page, f"Erro ao carregar metas: {ex}", "erro")
         return ft.Container(
@@ -128,6 +175,14 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         try:
             novos_potes, herd = svc.carregar_potes_com_meta_mes(mes=m, ano=a)
             estado_periodo["herdado"] = herd
+            # Espelho do mês: nova janela = mês cheio, Receita Real e Gastos Reais do mês escolhido
+            estado_periodo["di"], estado_periodo["df"] = _intervalo_mes(m, a)
+            ctx_ref[0] = svc.carregar_contexto_mes(
+                estado_periodo["di"], estado_periodo["df"], storage.obter_piso_custos_fixos(page, 1150.0)
+            )
+            if not simulando[0]:
+                renda_ref[0] = _definir_renda_base()
+                txt_renda.value = formatar_moeda(float(renda_ref[0]))
             por_pos = {p.posicao: p for p in novos_potes}
             for l in linhas:
                 pos = l["pote"].posicao
@@ -142,6 +197,7 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
                         v_rs = float(renda_ref[0]) * (val_pct / 100.0)
                         l["tf_rs"].value = f"{v_rs:.2f}".replace(".", ",")
             _atualizar_cabecalho_mes()
+            _atualizar_info_renda()
             _atualizar_tela(montado=True)
         except Exception as ex:
             mostrar_feedback(page, f"Erro ao carregar metas de {_nome_mes_ano(m, a)}: {ex}", "erro")
@@ -173,17 +229,48 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         keyboard_type=ft.KeyboardType.NUMBER,
         text_style=ft.TextStyle(size=16, weight=ft.FontWeight.BOLD),
         on_change=_ao_alterar_renda,
+        read_only=True,
         **T.campo_estilo(),
     )
-    btn_renda = ft.FilledButton(
-        content="Simular",
-        style=ft.ButtonStyle(
-            bgcolor=T.PRIMARY,
-            color=ft.Colors.WHITE,
-            shape=ft.RoundedRectangleBorder(radius=10),
-            padding=pad(h=24, v=14),
-        ),
-    )
+    txt_titulo_renda = ft.Text("", size=10, color=T.TEXT_MUTED, weight=ft.FontWeight.W_600)
+    txt_info_renda = ft.Text("", size=11, color=T.TEXT_MUTED)
+
+    def _atualizar_info_renda():
+        m, a = estado_periodo["mes"], estado_periodo["ano"]
+        rot = _nome_mes_ano(m, a)
+        if simulando[0]:
+            txt_titulo_renda.value = "RECEITA SIMULADA (MANUAL)"
+            txt_info_renda.value = "Valor digitado por você. Desligue a simulação para voltar à receita real."
+            txt_info_renda.color = T.WARNING
+        elif fonte_renda[0] == "real":
+            txt_titulo_renda.value = f"RECEITA REAL DE {rot.upper()}"
+            txt_info_renda.value = (
+                f"Mesma receita do Dashboard · Período {formatar_data_br(estado_periodo['di'])} "
+                f"a {formatar_data_br(estado_periodo['df'])}"
+            )
+            txt_info_renda.color = T.TEXT_MUTED
+        else:
+            txt_titulo_renda.value = f"SEM RECEITA REGISTRADA EM {rot.upper()}"
+            txt_info_renda.value = (
+                "Usando a renda de referência do perfil como base."
+                if fonte_renda[0] == "referencia"
+                else "Usando R$ 5.000,00 apenas como base de simulação."
+            )
+            txt_info_renda.color = T.WARNING
+        txt_renda.read_only = not simulando[0]
+
+    def _ao_alternar_simulacao(e):
+        simulando[0] = bool(e.control.value)
+        if not simulando[0]:
+            renda_ref[0] = _definir_renda_base()
+            txt_renda.value = formatar_moeda(float(renda_ref[0]))
+            r_flt = float(renda_ref[0])
+            for l in linhas:
+                l["tf_rs"].value = f"{r_flt * (float(_percentual(l)) / 100.0):.2f}".replace(".", ",")
+        _atualizar_info_renda()
+        _atualizar_tela()
+
+    sw_simular = ft.Switch(label="Simular outro valor", value=False, on_change=_ao_alternar_simulacao)
 
     # ── Campo Piso de Custos Fixos ───────────────────────────────────────────
     def _ao_alterar_piso_fixos(e):
@@ -247,9 +334,129 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             for l in linhas
         ]
 
+    reflexo_col = ft.Column(spacing=6)
+    pct_cache: dict[tuple[int, int], float] = {}
+
+    def _pct_invest_mes() -> float:
+        """Slider do Caixa Livre do mês (mesma precedência usada pelo painel do Dashboard)."""
+        m, a = estado_periodo["mes"], estado_periodo["ano"]
+        if (m, a) not in pct_cache:
+            pct = storage.obter_percentual_sobra_investimento(page, 50.0, mes=m, ano=a)
+            pdb, personalizado = svc.obter_pct_investimento_db(m, a)
+            if pdb is not None and personalizado:
+                pct = pdb
+            pct_cache[(m, a)] = float(pct)
+        return pct_cache[(m, a)]
+
+    def _linha_reflexo(rotulo: str, valor: str, cor: str = T.TEXT_PRIMARY, sub: str = "", negrito: bool = False):
+        return ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.START,
+            controls=[
+                ft.Column(spacing=0, expand=True, controls=[
+                    ft.Text(rotulo, size=12, color=T.TEXT_PRIMARY,
+                            weight=ft.FontWeight.BOLD if negrito else ft.FontWeight.W_500),
+                    *([ft.Text(sub, size=10.5, color=T.TEXT_MUTED)] if sub else []),
+                ]),
+                ft.Text(valor, size=13, color=cor, weight=ft.FontWeight.BOLD),
+            ],
+        )
+
+    def _atualizar_espelho(itens: list[dict]):
+        """Reflexo em tempo real: Limite, Gasto Real e +Disponível por pote + Caixa Livre."""
+        rec = float(renda_ref[0])
+        ctx = ctx_ref[0]
+        m, a = estado_periodo["mes"], estado_periodo["ano"]
+        liberados = storage.obter_potes_liberados(page, m, a)
+        potes_in = [
+            {
+                "id": l["pote"].id,
+                "posicao": l["pote"].posicao,
+                "nome": l["nome"].value or l["pote"].nome,
+                "cor": l["pote"].cor,
+                "percentual": float(_percentual(l)),
+                "gasto": float(ctx["gastos"].get(l["pote"].posicao, 0.0)),
+                "qtd_transacoes": int(ctx["qtd"].get(l["pote"].posicao, 0)),
+            }
+            for l in linhas
+        ]
+        piso = storage.obter_piso_custos_fixos(page, 1150.0)
+        pct_inv = _pct_invest_mes()
+        arch = P.calcular_arquitetura_unificada_potes(
+            rec, potes_in, piso_custos_fixos=piso, slider_pct_investimento=pct_inv,
+            protecao_fluxo=None, travar_pelo_teto_seguro=False, potes_liberados=liberados,
+        )
+        por_pos = {p["posicao"]: p for p in arch["potes"]}
+
+        for l in linhas:
+            p = por_pos.get(l["pote"].posicao)
+            if not p:
+                continue
+            lim, g = p["previsto"], p["gasto"]
+            disp = p.get("disponivel_efetivo", p["restante"])
+            estourou = p["restante"] < -0.005
+            cor_disp = COR_ALERTA if estourou else T.RECEITA
+            txt_disp = (
+                f"{formatar_moeda(abs(p['restante']))} acima do limite"
+                if estourou else f"+{formatar_moeda(disp)} disponível"
+            )
+            extra = ""
+            if p.get("liberado"):
+                extra = " · sobra liberada p/ Caixa Livre"
+            l["preview"].spans = [
+                ft.TextSpan(f"Limite {formatar_moeda(lim)} ({_fmt_perc(p['percentual'])})",
+                            style=ft.TextStyle(color=T.TEXT_PRIMARY)),
+                ft.TextSpan(f"  ·  Gasto real {formatar_moeda(g)}", style=ft.TextStyle(color=T.TEXT_MUTED)),
+                ft.TextSpan(f"  ·  {txt_disp}", style=ft.TextStyle(color=cor_disp, weight=ft.FontWeight.W_600)),
+                ft.TextSpan(extra, style=ft.TextStyle(color="#06B6D4")),
+            ]
+
+        cl = arch["caixa_livre"]
+        p1 = por_pos[1]
+        retido_manuais = round(sum(por_pos[k].get("disponivel_retido", 0.0) for k in (2, 3, 5)), 2)
+        lib_total = round(sum(por_pos[k].get("liberado_valor", 0.0) for k in (2, 3, 5)), 2)
+        reflexo_col.controls = [
+            _linha_reflexo(
+                "Receita base do mês", formatar_moeda(rec), T.PRIMARY, negrito=True,
+                sub="Receita real do Dashboard" if fonte_renda[0] == "real" and not simulando[0] else "Base de simulação",
+            ),
+            _linha_reflexo(
+                "Custos Fixos (automático)", formatar_moeda(p1["previsto"]),
+                COR_ALERTA if p1["restante"] < -0.005 else T.TEXT_PRIMARY,
+                sub=f"{_fmt_perc(p1['percentual'])} da receita · gasto real {formatar_moeda(p1['gasto'])} · piso {formatar_moeda(piso)}",
+            ),
+            _linha_reflexo(
+                "Retido em Semi Fixos + Metas + Conhecimento", formatar_moeda(retido_manuais), T.RECEITA,
+                sub="Reservas protegidas: não inflam o Caixa Livre"
+                    + (f" · {formatar_moeda(lib_total)} liberados" if lib_total > 0 else ""),
+            ),
+            ft.Divider(color=T.BORDER, height=10),
+            _linha_reflexo(
+                "Caixa Livre do mês", formatar_moeda(cl["teto_orcamento"]), "#06B6D4", negrito=True,
+                sub=f"{_fmt_perc(cl['pct_orcamento'])} da receita · slider {_fmt_perc(cl['pct_slider_investimento'])} "
+                    f"Liberdade / {_fmt_perc(cl['pct_slider_livre'])} Prazeres",
+            ),
+            _linha_reflexo(
+                f"{cl['liberdade_nome']}", formatar_moeda(cl["liberdade_teto"]), por_pos[6]["cor"],
+                sub=f"Aportado {formatar_moeda(cl['liberdade_gasto'])} · +{formatar_moeda(cl['liberdade_restante_projetado'])} disponível",
+            ),
+            _linha_reflexo(
+                f"{cl['prazeres_nome']}", formatar_moeda(cl["prazeres_teto"]), por_pos[4]["cor"],
+                sub=f"Gasto {formatar_moeda(cl['prazeres_gasto'])} · +{formatar_moeda(cl['prazeres_restante_projetado'])} disponível",
+            ),
+        ]
+        if rec <= 0:
+            reflexo_col.controls.append(
+                ft.Text("Sem receita no período: limites zerados.", size=11, color=COR_ALERTA)
+            )
+
     def _atualizar_tela(montado: bool = True):
         """Recalcula donut, legenda, valores em R$, 'Alocado' e botão Salvar."""
         itens = _itens()
+        try:
+            _atualizar_espelho(itens)
+        except Exception as ex_esp:
+            reflexo_col.controls = [ft.Text(f"Não foi possível calcular o espelho: {ex_esp}", size=11, color=COR_ALERTA)]
         soma = P.soma_percentuais(i["percentual"] for i in itens)
         valido = not P.validar_configuracao(itens)
 
@@ -400,6 +607,7 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
                              content_padding=pad(h=0, v=6)),
         )
         valor_rs = ft.Text(formatar_moeda(val_rs_ini), size=11, color=T.TEXT_MUTED)
+        preview = ft.Text("", size=11, color=T.TEXT_MUTED)
 
         # Tag de comportamento inteligente
         if pos == 1:
@@ -425,33 +633,17 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             "tf_rs": tf_rs,
             "nome": nome,
             "valor_rs": valor_rs,
+            "preview": preview,
             "tag_comp": tag_comp,
         })
 
     # ── Ações ────────────────────────────────────────────────────────────────
-    def _salvar_renda(_):
-        try:
-            nova = svc.salvar_renda_referencia(txt_renda.value)
-        except P.ErroPotes as ex:
-            mostrar_feedback(page, " ".join(ex.erros), "alerta")
-            return
-        except Exception as ex:
-            mostrar_feedback(page, f"Erro ao salvar renda: {ex}", "erro")
-            return
-        renda_ref[0] = nova
-        txt_renda.value = formatar_moeda(float(nova))
-        mostrar_feedback(page, "Renda simulada salva. Valores em R$ recalculados.", "sucesso")
-        _atualizar_tela()
-
     def _salvar_metas(_):
         itens = _itens()
         m_alvo = estado_periodo["mes"]
         a_alvo = estado_periodo["ano"]
         rot_alvo = _nome_mes_ano(m_alvo, a_alvo)
         try:
-            nova = svc.salvar_renda_referencia(txt_renda.value)
-            renda_ref[0] = nova
-            txt_renda.value = formatar_moeda(float(nova))
             salvos = svc.salvar_configuracao(itens, mes=m_alvo, ano=a_alvo)
         except P.ErroPotes as ex:
             mostrar_feedback(page, " ".join(ex.erros), "alerta")
@@ -469,6 +661,11 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             "sucesso",
         )
         _atualizar_tela()
+        if callable(ao_salvar):
+            try:
+                ao_salvar()
+            except Exception:
+                pass
 
     def _resetar(_):
         padrao = {d["posicao"]: d for d in P.POTES_PADRAO}
@@ -483,7 +680,6 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
                 l["tf_rs"].value = f"{r_flt * (v / 100.0):.2f}".replace(".", ",")
         _atualizar_tela()
 
-    btn_renda.on_click = _salvar_renda
     btn_salvar.on_click = _salvar_metas
 
     # ── Barra de Escopo Mensal ───────────────────────────────────────────────
@@ -587,6 +783,7 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
                     ],
                 ),
                 l["slider"],
+                ft.Container(padding=pad(left=18), content=l["preview"]),
             ],
         )
 
@@ -596,18 +793,16 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=20, run_spacing=12,
             controls=[
                 ft.Column(col={"xs": 12, "md": 5}, spacing=6, controls=[
-                    ft.Text("SIMULADOR DE DISTRIBUIÇÃO (R$)", size=10, color=T.TEXT_MUTED,
-                            weight=ft.FontWeight.W_600),
+                    txt_titulo_renda,
                     txt_renda,
-                    ft.Text("Digite um valor de receita para simular e converter entre R$ e %.",
-                            size=11, color=T.TEXT_MUTED),
+                    txt_info_renda,
                 ]),
                 ft.Column(col={"xs": 12, "md": 4}, spacing=4, controls=[
                     ft.Text("PISO DE CUSTOS FIXOS (R$):", size=10, color=T.TEXT_MUTED, weight=ft.FontWeight.W_600),
                     tf_piso_fixos,
                     ft.Text("Garante o teto mínimo de fixos mesmo com poucos lançamentos.", size=10.5, color=T.TEXT_MUTED),
                 ]),
-                ft.Container(col={"xs": 12, "md": 3}, alignment=ft.Alignment(1, 0), content=btn_renda),
+                ft.Container(col={"xs": 12, "md": 3}, alignment=ft.Alignment(1, 0), content=sw_simular),
             ],
         ),
     )
@@ -633,6 +828,20 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
                 style=ft.ButtonStyle(color=T.TEXT_MUTED, side=ft.BorderSide(1, T.BORDER),
                                      shape=ft.RoundedRectangleBorder(radius=10), padding=pad(v=14)),
             ),
+        ]),
+    )
+
+    card_reflexo = ft.Container(
+        padding=pad(all_=20), bgcolor=T.SURFACE, border_radius=16, border=borda(color=f"{T.PRIMARY}40"),
+        content=ft.Column(spacing=10, controls=[
+            ft.Row(spacing=8, controls=[
+                ft.Icon(ft.Icons.SYNC_ALT_ROUNDED, size=18, color=T.PRIMARY),
+                ft.Text("Espelho do Dashboard em tempo real", size=15, weight=ft.FontWeight.BOLD,
+                        color=T.TEXT_PRIMARY),
+            ]),
+            ft.Text("Veja o efeito das metas na Receita Real, Gastos Reais e Caixa Livre deste mês antes de salvar.",
+                    size=11, color=T.TEXT_MUTED),
+            reflexo_col,
         ]),
     )
 
@@ -670,9 +879,11 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         card_escopo_mes,
         card_renda,
         ft.ResponsiveRow(spacing=16, run_spacing=16, controls=[card_donut, card_controle]),
+        card_reflexo,
         nota,
     ])
 
     _atualizar_cabecalho_mes()
+    _atualizar_info_renda()
     _atualizar_tela(montado=False)
     return conteudo

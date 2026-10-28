@@ -52,7 +52,7 @@ def _caixa_valor(rotulo: str, valor: float, cor_valor: str) -> ft.Container:
     )
 
 
-def card_pote(pote: dict, on_click=None) -> ft.Container:
+def card_pote(pote: dict, on_click=None, on_liberar: Callable[[int, bool], None] | None = None) -> ft.Container:
     gasto = float(pote.get("gasto") or 0)
     previsto = float(pote.get("previsto") or 0)
     restante = previsto - gasto
@@ -103,8 +103,12 @@ def card_pote(pote: dict, on_click=None) -> ft.Container:
         cor_barra, cor_valor = cor_pote, T.TEXT_PRIMARY
         badge = _badge(_pct_br(perc_pote), cor_pote, bg=f"{cor_pote}18")
         borda_card = borda()
-        if sem_gastos:
-            txt_restante = ft.Text(f"+{formatar_moeda(restante)} retido no pote", color=T.RECEITA, size=11)
+        if pote.get("liberado"):
+            txt_restante = ft.Text(
+                f"Sobra liberada: +{formatar_moeda(float(pote.get('liberado_valor') or 0))} no Caixa Livre",
+                color="#06B6D4", size=11, weight=ft.FontWeight.W_600,
+            )
+            borda_card = borda(color="#06B6D480")
         else:
             txt_restante = ft.Text(f"+{formatar_moeda(restante)} retido no pote", color=T.RECEITA, size=11)
     elif posicao == 4 or tipo_comp == "caixa_livre_prazeres":
@@ -129,6 +133,49 @@ def card_pote(pote: dict, on_click=None) -> ft.Container:
         txt_restante = ft.Text(f"+{formatar_moeda(restante)} disponível", color=T.RECEITA, size=11)
 
     rotulo_qtd = "transação" if qtd == 1 else "transações"
+
+    # Ação rápida: liberar a sobra +Disponível dos potes manuais para o Caixa Livre
+    acao_liberar: list[ft.Control] = []
+    if on_liberar and posicao in (2, 3, 5):
+        if pote.get("liberado"):
+            acao_liberar.append(
+                ft.OutlinedButton(
+                    content=ft.Row(
+                        spacing=6, tight=True, alignment=ft.MainAxisAlignment.CENTER,
+                        controls=[
+                            ft.Icon(ft.Icons.UNDO_ROUNDED, size=15, color=T.TEXT_MUTED),
+                            ft.Text("Restaurar reserva do pote", size=12, color=T.TEXT_MUTED,
+                                    weight=ft.FontWeight.W_600),
+                        ],
+                    ),
+                    on_click=lambda _, pos=posicao: on_liberar(pos, False),
+                    style=ft.ButtonStyle(
+                        side=ft.BorderSide(1, T.BORDER),
+                        shape=ft.RoundedRectangleBorder(radius=10),
+                        padding=pad(h=12, v=8),
+                    ),
+                )
+            )
+        elif restante > 0.005 and previsto > 0:
+            acao_liberar.append(
+                ft.FilledTonalButton(
+                    content=ft.Row(
+                        spacing=6, tight=True, alignment=ft.MainAxisAlignment.CENTER,
+                        controls=[
+                            ft.Icon(ft.Icons.LOCK_OPEN_ROUNDED, size=15, color="#06B6D4"),
+                            ft.Text("Liberar Sobra p/ Caixa Livre", size=12, color="#06B6D4",
+                                    weight=ft.FontWeight.W_700),
+                        ],
+                    ),
+                    tooltip=f"Ajusta o teto ao gasto real e envia {formatar_moeda(restante)} ao Caixa Livre",
+                    on_click=lambda _, pos=posicao: on_liberar(pos, True),
+                    style=ft.ButtonStyle(
+                        bgcolor="#06B6D41A",
+                        shape=ft.RoundedRectangleBorder(radius=10),
+                        padding=pad(h=12, v=8),
+                    ),
+                )
+            )
 
     return ft.Container(
         col={"xs": 12, "sm": 6, "md": 4},
@@ -190,6 +237,7 @@ def card_pote(pote: dict, on_click=None) -> ft.Container:
                         ),
                     ],
                 ),
+                *acao_liberar,
             ],
         ),
     )
@@ -207,8 +255,10 @@ class SecaoPotesController:
         resumo: dict,
         nav_func: Callable[[str], None] | None = None,
         on_ajustar: Callable[[Any], None] | None = None,
+        on_liberar: Callable[[int, bool], None] | None = None,
     ):
         self.page = page
+        self.on_liberar = on_liberar
         self.resumo = resumo
         self.nav_func = nav_func
         self.on_ajustar = on_ajustar
@@ -217,13 +267,20 @@ class SecaoPotesController:
         self.row_cards = ft.ResponsiveRow(
             spacing=14,
             run_spacing=14,
-            controls=[
-                card_pote(p, (lambda _, pid=p.get("id"): self.nav_func(pid)) if self.nav_func else None)
-                for p in self.potes
-            ],
+            controls=self._montar_cards(),
         )
 
         self.column = self._construir_coluna()
+
+    def _montar_cards(self) -> list[ft.Control]:
+        return [
+            card_pote(
+                p,
+                (lambda _, pid=p.get("id"): self.nav_func(pid)) if self.nav_func else None,
+                on_liberar=self.on_liberar,
+            )
+            for p in self.potes
+        ]
 
     def _construir_coluna(self) -> ft.Column:
         sem_pote = self.resumo.get("sem_pote") or {}
@@ -306,10 +363,7 @@ class SecaoPotesController:
         if not novos_potes:
             return
         self.potes = novos_potes
-        self.row_cards.controls = [
-            card_pote(p, (lambda _, pid=p.get("id"): self.nav_func(pid)) if self.nav_func else None)
-            for p in self.potes
-        ]
+        self.row_cards.controls = self._montar_cards()
         if self.page:
             try:
                 self.page.update()
@@ -317,9 +371,9 @@ class SecaoPotesController:
                 pass
 
 
-def secao_potes(resumo: dict, nav_func=None, on_ajustar=None, page: ft.Page | None = None) -> ft.Column | SecaoPotesController:
+def secao_potes(resumo: dict, nav_func=None, on_ajustar=None, page: ft.Page | None = None, on_liberar=None) -> ft.Column | SecaoPotesController:
     """Constrói a seção visual dos 6 Potes do período filtrado."""
-    ctrl = SecaoPotesController(page=page, resumo=resumo, nav_func=nav_func, on_ajustar=on_ajustar)
+    ctrl = SecaoPotesController(page=page, resumo=resumo, nav_func=nav_func, on_ajustar=on_ajustar, on_liberar=on_liberar)
     # Atribui o método atualizar_potes_em_tempo_real diretamente na coluna para fácil chamada
     col = ctrl.column
     col.controller = ctrl
