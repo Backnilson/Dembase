@@ -895,8 +895,6 @@ def criar_view_dashboard(
     boas_vindas = ft.Row(
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        wrap=True if mobile else False,
-        spacing=8,
         controls=[
             ft.Column(
                 spacing=3,

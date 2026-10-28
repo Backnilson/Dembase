@@ -257,8 +257,6 @@ class SecaoPotesController:
         cabecalho = ft.Row(
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.END,
-            wrap=True,
-            spacing=8,
             controls=[
                 ft.Column(
                     spacing=3,

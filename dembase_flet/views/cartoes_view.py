@@ -1663,7 +1663,7 @@ def criar_view_cartoes(
                                 controls=[
                                     ft.Row(
                                         spacing=8,
-                                        expand=True,
+                                        tight=True,
                                         controls=[
                                             ft.Container(
                                                 padding=pad(all_=6),
