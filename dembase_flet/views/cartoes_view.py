@@ -1673,7 +1673,6 @@ def criar_view_cartoes(
                                             ),
                                             ft.Column(
                                                 spacing=1,
-                                                expand=True,
                                                 controls=[
                                                     ft.Text(
                                                         "Próximos Vencimentos (1ª Semana do Mês Seguinte)",

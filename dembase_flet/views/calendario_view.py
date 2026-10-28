@@ -2642,7 +2642,6 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                         ],
                     ),
                     ft.Container(
-                        expand=True if not mobile else False,
                         content=ft.Text(msg_explicativa, size=11, color=T.TEXT_MUTED, italic=True),
                     ),
                 ],
@@ -2757,12 +2756,11 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
     cabecalho = ft.Row(
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        wrap=True,
         spacing=10,
         controls=[
             ft.Column(
                 spacing=2,
-                expand=True if not mobile else False,
+                expand=True,
                 controls=[
                     ft.Row(
                         spacing=8,

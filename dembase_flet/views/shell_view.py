@@ -526,7 +526,7 @@ def criar_shell(
     conteudo_adaptado = (
         ft.Container(
             content=conteudo,
-            max_width=1540,
+            width=1540,
             alignment=ft.Alignment(-1, -1),
         )
         if (extra_large and conteudo)

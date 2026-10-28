@@ -1437,12 +1437,11 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    wrap=True if mobile else False,
                     spacing=8,
                     controls=[
                         ft.Row(
                             spacing=10,
-                            expand=True if not mobile else False,
+                            expand=True,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
                                 ft.Container(
