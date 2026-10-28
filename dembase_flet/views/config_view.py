@@ -601,7 +601,7 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
                         ft.Text("Configurações & Cadastros Base", color=T.TEXT_PRIMARY, size=22, weight=ft.FontWeight.BOLD),
                         spinner,
                     ]),
-                    ft.Text("Gerencie seu perfil, metas dos 6 potes, caixinhas de teto, categorias e aparência", color=T.TEXT_MUTED, size=12),
+                    ft.Text("Gerencie seu perfil, metas dos 6 potes, categorias e aparência", color=T.TEXT_MUTED, size=12),
                 ],
             ),
         ],

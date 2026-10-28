@@ -895,6 +895,8 @@ def criar_view_dashboard(
     boas_vindas = ft.Row(
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        wrap=True if mobile else False,
+        spacing=8,
         controls=[
             ft.Column(
                 spacing=3,
@@ -955,9 +957,12 @@ def criar_view_dashboard(
     barra_titulo_graficos = ft.Row(
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        wrap=True if mobile else False,
+        spacing=8,
         controls=[
             ft.Row(
                 spacing=8,
+                tight=True,
                 controls=[
                     ft.Icon(ft.Icons.ANALYTICS_ROUNDED, color=T.PRIMARY, size=18),
                     ft.Text(
@@ -970,6 +975,7 @@ def criar_view_dashboard(
             ),
             ft.Row(
                 spacing=4,
+                wrap=True,
                 controls=[
                     ft.TextButton(
                         content=ft.Row(

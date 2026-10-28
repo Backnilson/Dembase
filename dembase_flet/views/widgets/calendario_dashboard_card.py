@@ -884,6 +884,7 @@ def secao_calendario_dashboard(
                     controls=[
                         ft.Row(
                             spacing=10,
+                            expand=True,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
                                 ft.Container(

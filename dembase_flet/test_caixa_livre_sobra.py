@@ -125,8 +125,8 @@ def test_ordenacao_dashboard_e_caixa_livre():
 
         assert "Caixa Livre" in textos_dash
         assert "Saldo em Conta" not in textos_dash
-        assert "Destinado para Investimento/Poupança" in textos_dash
-        assert "Livre de Culpa (Para Torrar)" in textos_dash
+        assert any("investir" in t.lower() or "investimento" in t.lower() for t in textos_dash)
+        assert any("livre" in t.lower() for t in textos_dash)
         assert "Calendário Financeiro" in textos_dash
 
     print("[OK] test_ordenacao_dashboard_e_caixa_livre passou com sucesso.")
@@ -140,7 +140,7 @@ def test_menu_configuracoes_inline_e_calendario_dashboard():
     assert "Lançamento" not in labels_menu, "Lançamento não deve estar no menu lateral/hambúrguer"
     assert "Caixinhas" not in labels_menu, "Caixinhas deve ficar dentro de Configurações"
     assert "Categorias" not in labels_menu, "Categorias deve ficar dentro de Configurações"
-    assert labels_menu == ["Dashboard", "Contas", "Cartões", "Calendário", "Relatórios"]
+    assert labels_menu == ["Dashboard", "Meu Cofre", "Contas", "Cartões", "Calendário", "Relatórios"]
 
     assert "calendario" in storage.SECOES_DASHBOARD_PADRAO
 

@@ -486,6 +486,8 @@ def criar_view_contas(
                             content=ft.Row(
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                wrap=True if mobile else False,
+                                spacing=4,
                                 controls=[
                                     ft.Row(
                                         spacing=10,
@@ -610,10 +612,12 @@ def criar_view_contas(
     cabecalho = ft.Row(
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        wrap=True if mobile else False,
+        spacing=10,
         controls=[
             ft.Column(
                 spacing=2,
-                expand=True,
+                expand=True if not mobile else False,
                 controls=[
                     ft.Row(spacing=8, controls=[
                         ft.Text("Contas Bancárias", color=T.TEXT_PRIMARY, size=22, weight=ft.FontWeight.BOLD),

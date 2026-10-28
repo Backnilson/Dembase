@@ -242,14 +242,16 @@ def construir_card_ranking_categorias(
                                 controls=[
                                     ft.Row(
                                         spacing=8,
+                                        expand=True,
                                         controls=[
                                             ft.Container(width=10, height=10, bgcolor=cor, border_radius=5),
-                                            ft.Text(nome, color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_600),
+                                            ft.Text(nome, color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_600, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
                                             ft.Text(f"({qtd})", color=T.TEXT_MUTED, size=11) if qtd > 0 else ft.Container(),
                                         ],
                                     ),
                                     ft.Row(
                                         spacing=6,
+                                        tight=True,
                                         controls=[
                                             ft.Text(f"{perc:.1f}%", color=T.TEXT_MUTED, size=11),
                                             ft.Text(formatar_moeda(total), color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.BOLD),
@@ -502,7 +504,15 @@ def construir_card_ranking_potes(
 
             controles_badge: list[ft.Control] = [
                 ft.Container(width=10, height=10, bgcolor=cor, border_radius=5),
-                ft.Text(nome, color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.BOLD if is_selecionado else ft.FontWeight.W_600),
+                ft.Text(
+                    nome,
+                    color=T.TEXT_PRIMARY,
+                    size=13,
+                    weight=ft.FontWeight.BOLD if is_selecionado else ft.FontWeight.W_600,
+                    max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                    expand=True,
+                ),
             ]
             if qtd > 0:
                 controles_badge.append(ft.Text(f"({qtd})", color=T.TEXT_MUTED, size=11))
@@ -533,10 +543,12 @@ def construir_card_ranking_potes(
                                 controls=[
                                     ft.Row(
                                         spacing=8,
+                                        expand=True,
                                         controls=controles_badge,
                                     ),
                                     ft.Row(
                                         spacing=6,
+                                        tight=True,
                                         controls=[
                                             ft.Text(f"{perc:.1f}%", color=T.TEXT_MUTED, size=11),
                                             ft.Text(formatar_moeda(total), color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.BOLD),

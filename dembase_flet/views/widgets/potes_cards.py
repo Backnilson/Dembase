@@ -257,9 +257,12 @@ class SecaoPotesController:
         cabecalho = ft.Row(
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.END,
+            wrap=True,
+            spacing=8,
             controls=[
                 ft.Column(
                     spacing=3,
+                    expand=True,
                     controls=[
                         ft.Row(spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=badges_row),
                         ft.Text(subtitulo, color=T.TEXT_MUTED, size=12),

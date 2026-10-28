@@ -2641,7 +2641,10 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                             btn_com_saldo,
                         ],
                     ),
-                    ft.Text(msg_explicativa, size=11, color=T.TEXT_MUTED, italic=True),
+                    ft.Container(
+                        expand=True if not mobile else False,
+                        content=ft.Text(msg_explicativa, size=11, color=T.TEXT_MUTED, italic=True),
+                    ),
                 ],
             ),
         )
@@ -2759,6 +2762,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         controls=[
             ft.Column(
                 spacing=2,
+                expand=True if not mobile else False,
                 controls=[
                     ft.Row(
                         spacing=8,

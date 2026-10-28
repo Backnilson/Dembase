@@ -1378,7 +1378,7 @@ def criar_view_cartoes(
                                 ft.Row(
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     controls=[
-                                        ft.Text(rotulo_fatura, color=T.TEXT_MUTED, size=12),
+                                        ft.Text(rotulo_fatura, color=T.TEXT_MUTED, size=12, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
                                         ft.Text(bandeira.upper(), color=T.TEXT_MUTED, size=11, weight=ft.FontWeight.W_500),
                                     ],
                                 ),
@@ -1659,10 +1659,11 @@ def criar_view_cartoes(
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 wrap=True,
+                                spacing=8,
                                 controls=[
                                     ft.Row(
                                         spacing=8,
-                                        tight=True,
+                                        expand=True,
                                         controls=[
                                             ft.Container(
                                                 padding=pad(all_=6),
@@ -1672,7 +1673,7 @@ def criar_view_cartoes(
                                             ),
                                             ft.Column(
                                                 spacing=1,
-                                                tight=True,
+                                                expand=True,
                                                 controls=[
                                                     ft.Text(
                                                         "Próximos Vencimentos (1ª Semana do Mês Seguinte)",
@@ -1994,6 +1995,7 @@ def criar_view_cartoes(
             ft.Container(height=16),
             ft.Row(
                 alignment=ft.MainAxisAlignment.START,
+                scroll=ft.ScrollMode.AUTO if mobile else None,
                 controls=[seg_aba],
             ),
             ft.Container(height=16),

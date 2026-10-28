@@ -32,7 +32,7 @@ from core.router import navegar, ROTA_AUTH
 
 from core.window_manager import ajustar_janela_login
 
-from core.responsive import is_mobile, setup_responsive_resize
+from core.responsive import is_mobile, is_extra_large, setup_responsive_resize
 
 from core.constants import session_clear, session_get, session_set, formatar_data_br
 
@@ -184,6 +184,7 @@ def criar_shell(
     setup_responsive_resize(page)
 
     mobile = is_mobile(page)
+    extra_large = is_extra_large(page)
 
 
 
@@ -522,27 +523,26 @@ def criar_shell(
     # AREA DE CONTEUDO
 
     # -------------------------------------------------------------------------
+    conteudo_adaptado = (
+        ft.Container(
+            content=conteudo,
+            max_width=1540,
+            alignment=ft.Alignment(-1, -1),
+        )
+        if (extra_large and conteudo)
+        else conteudo
+    )
 
     area_conteudo = ft.Container(
-
         expand=True,
-
         bgcolor=T.BG,
-
         padding=pad(h=28 if not mobile else 14, v=18 if not mobile else 12),
-
         content=ft.Column(
-
             expand=True,
-
             scroll=ft.ScrollMode.AUTO,
-
             spacing=0,
-
-            controls=[conteudo] if conteudo else [],
-
+            controls=[conteudo_adaptado] if conteudo_adaptado else [],
         ),
-
     )
 
 
@@ -652,122 +652,81 @@ def criar_shell(
 
 
         # 2. Drawer (Hambúrguer)
+        rotas_drawer = [
+            ROTA_DASHBOARD,
+            ROTA_INVESTIMENTOS,
+            "/configuracoes?aba=categorias",
+            ROTA_CONFIG,
+            ROTA_AUTH,
+        ]
 
         async def _drawer_change(e):
-
-            rotas_drawer = [ROTA_DASHBOARD, ROTA_INVESTIMENTOS, "/configuracoes?aba=caixinhas", "/configuracoes?aba=categorias", ROTA_CONFIG, ROTA_AUTH]
-
             idx = e.control.selected_index
-
             if idx is not None and 0 <= idx < len(rotas_drawer):
-
                 r = rotas_drawer[idx]
-
                 if r == ROTA_AUTH:
-
                     try:
-
                         await storage.limpar_sessao_autenticada(page)
-
                         await storage.salvar_ultima_rota(page, ROTA_AUTH)
-
                         db.fazer_logout()
-
                         await storage.limpar_lembrar(page)
-
                         session_clear(page)
-
                     except Exception:
-
                         pass
-
                     await ajustar_janela_login(page)
-
                 navegar(page, r)
 
-
+        drawer_selected_idx = None
+        if rota_ativa == ROTA_DASHBOARD:
+            drawer_selected_idx = 0
+        elif rota_ativa in (ROTA_INVESTIMENTOS, "/investimentos", "/cofre"):
+            drawer_selected_idx = 1
+        elif rota_ativa in (ROTA_CATEGORIAS, "/categorias", "/configuracoes?aba=categorias"):
+            drawer_selected_idx = 2
+        elif rota_ativa == ROTA_CONFIG or "/configuracoes" in rota_ativa:
+            drawer_selected_idx = 3
 
         drawer = ft.NavigationDrawer(
-
             bgcolor=T.SURFACE,
-
+            selected_index=drawer_selected_idx,
             on_change=_drawer_change,
-
             controls=[
-
                 ft.Container(
-
                     padding=pad(h=20, v=20),
-
                     content=ft.Column([
-
                         ft.CircleAvatar(
-
                             content=ft.Text(nome_curto[0], weight=ft.FontWeight.BOLD),
-
                             bgcolor=T.PRIMARY,
-
                             color=T.BG,
-
                         ),
-
                         ft.Text(nome_completo, weight=ft.FontWeight.BOLD, size=16),
-
                         ft.Text("DemBase Controle Financeiro", color=T.TEXT_MUTED, size=12),
-
                     ]),
-
                 ),
-
                 ft.Divider(color=T.BORDER),
-
                 ft.NavigationDrawerDestination(
-
                     icon=ft.Icons.DASHBOARD_ROUNDED,
-
                     label="Tela Inicial (Dashboard)",
-
                 ),
-
                 ft.NavigationDrawerDestination(
-
-                    icon=ft.Icons.INVENTORY_2_ROUNDED,
-
-                    label="Caixinhas de Teto",
-
+                    icon=ft.Icons.SAVINGS_ROUNDED,
+                    label="Meu Cofre",
                 ),
-
                 ft.NavigationDrawerDestination(
-
                     icon=ft.Icons.CATEGORY_ROUNDED,
-
                     label="Categorias & Subcategorias",
-
                 ),
-
                 ft.NavigationDrawerDestination(
-
                     icon=ft.Icons.SETTINGS_ROUNDED,
-
                     label="Configurações & Gráficos",
-
                 ),
-
                 ft.Divider(color=T.BORDER),
-
                 ft.NavigationDrawerDestination(
-
                     icon=ft.Icons.LOGOUT_ROUNDED,
-
                     label="Sair",
-
                 ),
-
             ],
-
         )
-
-
 
         # 3. Bottom App Bar & FAB (sem ícone redundante de Dashboard, foco 1 mão)
 

@@ -1586,7 +1586,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 controls=[
                     ft.Row([
                         ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=T.PRIMARY, size=24),
-                        ft.Text("Caixinhas de Teto", size=20 if mobile else 24, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                        ft.Text("Meu Cofre · Caixinhas", size=20 if mobile else 24, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
                     ], spacing=8),
                     ft.Text(
                         "Metas de gastos, provisionamento e cálculo de ritmo até o próximo mês" if not mobile else "Provisionamento e ritmo de gastos",
@@ -1624,6 +1624,6 @@ def criar_view_caixinhas(page: ft.Page, match=None) -> ft.View:
         rota_ativa=ROTA_CAIXINHAS,
         conteudo=conteudo,
         rota_view="/caixinhas",
-        titulo="Caixinhas de Teto",
+        titulo="Meu Cofre · Caixinhas",
         mostrar_voltar=False,
     )

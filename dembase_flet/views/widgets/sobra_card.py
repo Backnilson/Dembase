@@ -838,13 +838,15 @@ class PainelGestaoSobra:
                     ft.Row(
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        wrap=True if self.mobile else False,
+                        spacing=6,
                         controls=[
                             ft.Text(
                                 "Atalhos rápidos:",
                                 size=11,
                                 color=T.TEXT_MUTED,
                             ),
-                            ft.Container(expand=True, content=self.row_chips_atalho),
+                            ft.Container(expand=True if not self.mobile else False, content=self.row_chips_atalho),
                         ],
                     ),
                 ],

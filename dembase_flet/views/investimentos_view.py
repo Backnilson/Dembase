@@ -318,6 +318,8 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
                             content=ft.Row(
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                wrap=True if mobile else False,
+                                spacing=8,
                                 controls=[
                                     ft.Column(
                                         spacing=2,
@@ -376,7 +378,7 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
                                         tight=True,
                                         controls=[
                                             ft.Icon(ft.Icons.TRENDING_UP_ROUNDED, color=cor, size=16),
-                                            ft.Text("Rendimento / Saldo", color=cor, size=12, weight=ft.FontWeight.BOLD),
+                                            ft.Text("Rendimento" if mobile else "Rendimento / Saldo", color=cor, size=12, weight=ft.FontWeight.BOLD),
                                         ],
                                     ),
                                 ),
@@ -1435,9 +1437,12 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    wrap=True if mobile else False,
+                    spacing=8,
                     controls=[
                         ft.Row(
                             spacing=10,
+                            expand=True if not mobile else False,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
                                 ft.Container(
@@ -1481,6 +1486,8 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     vertical_alignment=ft.CrossAxisAlignment.END,
+                    wrap=True if mobile else False,
+                    spacing=8,
                     controls=[
                         txt_patrimonio_total,
                         ft.Container(

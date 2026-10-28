@@ -149,6 +149,8 @@ def criar_report_header(
         ft.Row(
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            wrap=True if mobile else False,
+            spacing=8,
             controls=controles_linha_principal,
         )
     )
