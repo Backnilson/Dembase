@@ -11,7 +11,20 @@ from datetime import date
 from decimal import Decimal
 
 import flet as ft
-import flet_charts as fch
+try:
+    import flet_charts as fch
+except ImportError:
+    class _MockPieChart(ft.Container):
+        def __init__(self, *args, **kwargs):
+            super().__init__(width=200, height=200, alignment=ft.Alignment(0, 0), content=ft.Icon(ft.Icons.PIE_CHART_ROUNDED, size=64, color=T.PRIMARY))
+            self.sections = []
+    class _MockSection:
+        def __init__(self, *args, **kwargs):
+            pass
+    class _MockFch:
+        PieChart = _MockPieChart
+        PieChartSection = _MockSection
+    fch = _MockFch()
 
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback

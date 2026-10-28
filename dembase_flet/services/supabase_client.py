@@ -7147,12 +7147,78 @@ def obter_resumo_caixinhas(forcar_atualizacao: bool = False) -> dict:
 # =============================================================================
 # CALENDÁRIO FINANCEIRO INTERATIVO (MAPA DE CALOR + ROSCA + FATURAS)
 # =============================================================================
+def obter_saldo_consolidado_contas(contas_lista: list | None = None) -> float:
+    """
+    Retorna a soma consolidada do saldo atual das contas bancárias ativas do usuário
+    (posição real de liquidez/estoque em caixa).
+    """
+    if contas_lista is None:
+        try:
+            contas_lista = listar_contas()
+        except Exception:
+            contas_lista = []
+    total = 0.0
+    for c in (contas_lista or []):
+        try:
+            total += float(c.get("saldo_atual", c.get("saldo_inicial", 0.0)) or 0.0)
+        except Exception:
+            pass
+    return round(total, 2)
+
+
+def recalcular_modo_calendario(
+    pacote: dict,
+    modo: str,
+    saldo_contas: float | None = None,
+) -> dict:
+    """
+    Recalcula instantaneamente em O(N) client-side o Calendário Financeiro e a Proteção de Fluxo:
+    - 'isolado': Começa do R$ 0,00 no primeiro dia do filtro (resultado operacional puro).
+    - 'com_saldo': Começa do saldo real consolidado das contas bancárias (posição real de caixa).
+    """
+    if not isinstance(pacote, dict) or "dias" not in pacote:
+        return pacote
+
+    m_modo = "com_saldo" if modo == "com_saldo" else "isolado"
+    s_contas = float(
+        saldo_contas
+        if saldo_contas is not None
+        else (pacote.get("saldo_contas_consolidado") or 0.0)
+    )
+    s_base = s_contas if m_modo == "com_saldo" else 0.0
+
+    d_ini_str = str(pacote.get("filtro_inicio") or "")[:10]
+    d_fim_str = str(pacote.get("filtro_fim") or "")[:10]
+    grid_ini_s = str(pacote.get("grid_inicio") or d_ini_str)[:10]
+    grid_fim_s = str(pacote.get("grid_fim") or d_fim_str)[:10]
+    dias_lista = pacote.get("dias") or []
+
+    pacote["modo_saldo"] = m_modo
+    pacote["saldo_base_inicial"] = s_base
+    pacote["saldo_contas_consolidado"] = s_contas
+    pacote["acumulados_por_dia"] = _calcular_acumulados_calendario(
+        dias_lista, d_ini_str, d_fim_str, grid_ini_s, grid_fim_s, saldo_base_inicial=s_base
+    )
+    pacote["protecao_fluxo"] = calcular_protecao_fluxo_caixa(
+        dias_lista, pacote["acumulados_por_dia"], d_ini_str, d_fim_str
+    )
+    if isinstance(pacote.get("kpis"), dict):
+        pacote["kpis"]["modo_saldo"] = m_modo
+        pacote["kpis"]["saldo_base_inicial"] = s_base
+        pacote["kpis"]["saldo_contas_consolidado"] = s_contas
+        res_m = float(pacote["kpis"].get("resultado_mes", 0.0) or 0.0)
+        pacote["kpis"]["saldo_projetado_com_contas"] = round(s_contas + res_m, 2)
+
+    return pacote
+
+
 def _calcular_acumulados_calendario(
     dias_lista: list[dict],
     d_ini_str: str,
     d_fim_str: str,
     grid_ini_str: str,
     grid_fim_str: str,
+    saldo_base_inicial: float = 0.0,
 ) -> dict[str, dict]:
     """
     Pré-calcula em O(N) a soma contínua acumulada (Running Sum) de receitas,
@@ -7202,6 +7268,7 @@ def _calcular_acumulados_calendario(
             desp_crt_acum += sr_d
             desp_tot_acum += st_d
             qtd_acum += q_d
+            saldo_acum_calc = round(saldo_base_inicial + rec_acum - desp_tot_acum, 2)
             acum_item = {
                 "data_inicio_filtro": d_ini_str[:10],
                 "data_ate": iso_c,
@@ -7211,7 +7278,9 @@ def _calcular_acumulados_calendario(
                 "despesas_conta_acum": round(desp_cta_acum, 2),
                 "despesas_cartao_acum": round(desp_crt_acum, 2),
                 "despesas_total_acum": round(desp_tot_acum, 2),
-                "saldo_acum": round(rec_acum - desp_tot_acum, 2),
+                "saldo_acum": saldo_acum_calc,
+                "saldo_base_inicial": round(saldo_base_inicial, 2),
+                "modo_saldo": "com_saldo" if abs(saldo_base_inicial) > 0.001 else "isolado",
                 "qtd_lancamentos_acum": qtd_acum,
             }
         elif cur < dt_ini_f:
@@ -7229,6 +7298,7 @@ def _calcular_acumulados_calendario(
             }
         else:
             # Data após o fim do filtro mantém o acumulado final fechado do período
+            saldo_acum_calc = round(saldo_base_inicial + rec_acum - desp_tot_acum, 2)
             acum_item = {
                 "data_inicio_filtro": d_ini_str[:10],
                 "data_ate": iso_c,
@@ -7238,7 +7308,9 @@ def _calcular_acumulados_calendario(
                 "despesas_conta_acum": round(desp_cta_acum, 2),
                 "despesas_cartao_acum": round(desp_crt_acum, 2),
                 "despesas_total_acum": round(desp_tot_acum, 2),
-                "saldo_acum": round(rec_acum - desp_tot_acum, 2),
+                "saldo_acum": saldo_acum_calc,
+                "saldo_base_inicial": round(saldo_base_inicial, 2),
+                "modo_saldo": "com_saldo" if abs(saldo_base_inicial) > 0.001 else "isolado",
                 "qtd_lancamentos_acum": qtd_acum,
             }
 
@@ -7567,6 +7639,7 @@ def _aplicar_filtro_periodo_ao_calendario(
     dados: dict,
     d_ini_str: str,
     d_fim_str: str,
+    saldo_base_inicial: float = 0.0,
 ) -> dict:
     """
     Sincroniza o pacote do Calendário Financeiro com o intervalo global [d_ini_str, d_fim_str].
@@ -7590,8 +7663,11 @@ def _aplicar_filtro_periodo_ao_calendario(
 
     grid_ini_s = str(dados.get("grid_inicio") or d_ini_str)[:10]
     grid_fim_s = str(dados.get("grid_fim") or d_fim_str)[:10]
+    s_contas = float(dados.get("saldo_contas_consolidado") or 0.0)
+    dados["saldo_base_inicial"] = round(saldo_base_inicial, 2)
+    dados["modo_saldo"] = "com_saldo" if abs(saldo_base_inicial) > 0.001 else "isolado"
     dados["acumulados_por_dia"] = _calcular_acumulados_calendario(
-        dias_lista, d_ini_str, d_fim_str, grid_ini_s, grid_fim_s
+        dias_lista, d_ini_str, d_fim_str, grid_ini_s, grid_fim_s, saldo_base_inicial=saldo_base_inicial
     )
     dados["protecao_fluxo"] = calcular_protecao_fluxo_caixa(
         dias_lista, dados["acumulados_por_dia"], d_ini_str, d_fim_str
@@ -7679,6 +7755,7 @@ def obter_calendario_financeiro_mes(
     ano: int,
     data_inicio: str | None = None,
     data_fim: str | None = None,
+    saldo_base_inicial: float = 0.0,
 ) -> dict:
     """
     Chama a RPC 'get_calendario_financeiro_mes' (com fallback em Python) e aplica:
@@ -7717,6 +7794,11 @@ def obter_calendario_financeiro_mes(
     fim_sab = base_fim + _td(days=offset_sab)
     grid_fim = fim_sab if eh_multi_mes else max(grid_inicio + _td(days=41), fim_sab)
 
+    try:
+        s_consolidado = float(obter_saldo_consolidado_contas())
+    except Exception:
+        s_consolidado = 0.0
+
     vazio = {
         "mes": m,
         "ano": a,
@@ -7728,6 +7810,9 @@ def obter_calendario_financeiro_mes(
         "eh_multi_mes": eh_multi_mes,
         "grid_inicio": grid_inicio.isoformat(),
         "grid_fim": grid_fim.isoformat(),
+        "saldo_contas_consolidado": s_consolidado,
+        "saldo_base_inicial": float(saldo_base_inicial),
+        "modo_saldo": "com_saldo" if abs(saldo_base_inicial) > 0.001 else "isolado",
         "kpis": {
             "receitas_mes": 0.0,
             "despesas_mes": 0.0,
@@ -7760,7 +7845,7 @@ def obter_calendario_financeiro_mes(
             dados = {**vazio, **resp.data}
             if isinstance(resp.data.get("kpis"), dict):
                 dados["kpis"] = {**vazio["kpis"], **resp.data["kpis"]}
-            return _aplicar_filtro_periodo_ao_calendario(dados, d_ini_str, d_fim_str)
+            return _aplicar_filtro_periodo_ao_calendario(dados, d_ini_str, d_fim_str, saldo_base_inicial=saldo_base_inicial)
     except Exception:
         try:
             resp2 = supabase.rpc("get_calendario_financeiro_mes", {"p_mes": m, "p_ano": a}).execute()
@@ -7768,7 +7853,7 @@ def obter_calendario_financeiro_mes(
                 dados = {**vazio, **resp2.data}
                 if isinstance(resp2.data.get("kpis"), dict):
                     dados["kpis"] = {**vazio["kpis"], **resp2.data["kpis"]}
-                return _aplicar_filtro_periodo_ao_calendario(dados, d_ini_str, d_fim_str)
+                return _aplicar_filtro_periodo_ao_calendario(dados, d_ini_str, d_fim_str, saldo_base_inicial=saldo_base_inicial)
         except Exception:
             pass
 
@@ -7965,11 +8050,11 @@ def obter_calendario_financeiro_mes(
         vazio["dias"] = sorted(dias_map.values(), key=lambda x: x["data"])
         vazio["despesas_por_categoria"] = desp_cats
         vazio["receitas_por_categoria"] = rec_cats
-        return _aplicar_filtro_periodo_ao_calendario(vazio, d_ini_str, d_fim_str)
+        return _aplicar_filtro_periodo_ao_calendario(vazio, d_ini_str, d_fim_str, saldo_base_inicial=saldo_base_inicial)
     except Exception:
         pass
 
-    return _aplicar_filtro_periodo_ao_calendario(vazio, d_ini_str, d_fim_str)
+    return _aplicar_filtro_periodo_ao_calendario(vazio, d_ini_str, d_fim_str, saldo_base_inicial=saldo_base_inicial)
 
 
 async def obter_calendario_financeiro_mes_async(

@@ -553,6 +553,32 @@ def salvar_painel_sobra_expandido_sync(page: ft.Page, expandido: bool) -> None:
     _salvar_local_json(dados)
 
 
+def obter_modo_saldo_calendario(page: ft.Page, padrao: str = "isolado") -> str:
+    """
+    Retorna o modo de visualização matemática do Calendário e Dashboard:
+    - 'isolado': Apenas Movimento do Período (partindo de R$ 0,00)
+    - 'com_saldo': Fluxo Real Acumulado (considerando o saldo consolidado atual das contas)
+    """
+    val_sess = session_get(page, "modo_saldo_calendario")
+    if val_sess in ("isolado", "com_saldo"):
+        return val_sess
+    local = _ler_local_json()
+    val_local = local.get("modo_saldo_calendario")
+    if val_local in ("isolado", "com_saldo"):
+        session_set(page, "modo_saldo_calendario", val_local)
+        return val_local
+    return padrao
+
+
+def salvar_modo_saldo_calendario_sync(page: ft.Page, modo: str) -> None:
+    """Salva a escolha do modo de saldo do Calendário/Dashboard ('isolado' ou 'com_saldo')."""
+    m = "com_saldo" if modo == "com_saldo" else "isolado"
+    session_set(page, "modo_saldo_calendario", m)
+    dados = _ler_local_json()
+    dados["modo_saldo_calendario"] = m
+    _salvar_local_json(dados)
+
+
 
 # =============================================================================
 # ORDEM PERSONALIZÁVEL DAS SEÇÕES E KPIS DO DASHBOARD

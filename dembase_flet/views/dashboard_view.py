@@ -280,6 +280,9 @@ def criar_view_dashboard(
             txt_faturas.value  = formatar_moeda(faturas_ab)
 
             pacote_cal_efetivo = r_cal if isinstance(r_cal, dict) else db.obter_calendario_financeiro_mes(m, a, di, df)
+            modo_s_dash = storage.obter_modo_saldo_calendario(page)
+            s_contas_d = float(pacote_cal_efetivo.get("saldo_contas_consolidado") or 0.0)
+            db.recalcular_modo_calendario(pacote_cal_efetivo, modo_s_dash, saldo_contas=s_contas_d)
             prot_fluxo = pacote_cal_efetivo.get("protecao_fluxo") if isinstance(pacote_cal_efetivo, dict) else None
 
             # Atualiza o painel de sobra com o escopo de mês/ano e proteção de fluxo de caixa
@@ -326,13 +329,38 @@ def criar_view_dashboard(
             else:
                 area_potes.controls = []
 
+            def _ao_trocar_modo_saldo_dashboard(novo_modo: str = None):
+                m_modo = novo_modo or storage.obter_modo_saldo_calendario(page)
+                s_c = float(pacote_cal_efetivo.get("saldo_contas_consolidado") or 0.0)
+                if s_c == 0.0:
+                    try:
+                        s_c = float(db.obter_saldo_consolidado_contas())
+                    except Exception:
+                        s_c = 0.0
+                db.recalcular_modo_calendario(pacote_cal_efetivo, m_modo, saldo_contas=s_c)
+                p_flx = pacote_cal_efetivo.get("protecao_fluxo") if isinstance(pacote_cal_efetivo, dict) else None
+                painel_sobra.atualizar_periodo(rec, desp, mes=m, ano=a, protecao_fluxo=p_flx)
+                try:
+                    painel_sobra.container.update()
+                except Exception:
+                    pass
+                try:
+                    if card_kpi_caixa_livre_ref:
+                        card_kpi_caixa_livre_ref[0].update()
+                except Exception:
+                    pass
+                try:
+                    page.update()
+                except Exception:
+                    pass
+
             area_calendario.controls = [
                 secao_calendario_dashboard(
                     page=page,
                     pacote_cal=pacote_cal_efetivo,
                     mes=m,
                     ano=a,
-                    on_refresh=lambda: carregar(inicial=False),
+                    on_refresh=_ao_trocar_modo_saldo_dashboard,
                     data_inicio=di,
                     data_fim=df,
                 )

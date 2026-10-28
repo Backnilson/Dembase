@@ -44,6 +44,10 @@ from views.widgets.date_filter import DateFilterBar
 from views.widgets.lancamento_sheet import abrir_lancamento
 from views.shell_view import criar_shell, ROTA_CALENDARIO, obter_estado_periodo_atual, sincronizar_shell_periodo
 import services.supabase_client as db
+from core.storage import (
+    obter_modo_saldo_calendario,
+    salvar_modo_saldo_calendario_sync,
+)
 
 
 DIAS_SEMANA_CABECALHO = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SÁB"]
@@ -235,6 +239,9 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2.2, visible=False)
 
     tam_kpi = 15 if mobile else 19
+    modo_saldo = [obter_modo_saldo_calendario(page)]
+    container_seletor_modo = ft.Container()
+    txt_titulo_resultado = ft.Text("Resultado do Período", color=T.TEXT_MUTED, size=11.5, weight=ft.FontWeight.W_600)
     txt_resultado_mes = ft.Text("R$ 0,00", color=T.TEXT_PRIMARY, size=tam_kpi, weight=ft.FontWeight.BOLD)
     txt_receitas_mes  = ft.Text("R$ 0,00", color=T.RECEITA, size=tam_kpi, weight=ft.FontWeight.BOLD)
     txt_despesas_mes  = ft.Text("R$ 0,00", color=T.DESPESA, size=tam_kpi, weight=ft.FontWeight.BOLD)
@@ -1990,6 +1997,11 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                 data_inicio=filtro_data_inicio[0],
                 data_fim=filtro_data_fim[0],
             )
+            db.recalcular_modo_calendario(
+                pacote_calendario,
+                modo_saldo[0],
+                saldo_contas=pacote_calendario.get("saldo_contas_consolidado")
+            )
             if aba_ativa[0] == 1:
                 todos_lancamentos = db.listar_lancamentos(
                     data_inicio=filtro_data_inicio[0],
@@ -2385,19 +2397,31 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         dias_s = int(kpis_m.get("dias_com_saida", 0) or 0)
         dias_e = int(kpis_m.get("dias_com_entrada", 0) or 0)
 
-        txt_resultado_mes.value = formatar_moeda(res_m)
-        txt_resultado_mes.color = T.TEXT_PRIMARY if res_m >= 0 else T.DESPESA
-        txt_receitas_mes.value  = formatar_moeda(rec_m)
-        txt_despesas_mes.value  = formatar_moeda(desp_m)
-        txt_cartao_mes.value    = formatar_moeda(cart_m)
+        container_seletor_modo.content = _construir_seletor_modo_saldo()
 
+        s_contas = float(pacote_calendario.get("saldo_contas_consolidado") or 0.0)
         eh_parcial_k = bool(pacote_calendario.get("eh_periodo_parcial", False))
         rotulo_per = (
             f"{formatar_data_br(filtro_data_inicio[0])} a {formatar_data_br(filtro_data_fim[0])}"
             if eh_parcial_k
             else _nome_mes_ano_cap(mes_sel[0], ano_sel[0])
         )
-        txt_sub_resultado.value = f"{rotulo_per} · Receitas − Despesas"
+
+        if modo_saldo[0] == "com_saldo":
+            val_proj = round(s_contas + res_m, 2)
+            txt_resultado_mes.value = formatar_moeda(val_proj)
+            txt_resultado_mes.color = T.TEXT_PRIMARY if val_proj >= 0 else T.DESPESA
+            txt_titulo_resultado.value = "Caixa Real Projetado"
+            txt_sub_resultado.value = f"Saldo em Contas ({formatar_moeda(s_contas)}) + Movimento ({formatar_moeda(res_m)})"
+        else:
+            txt_resultado_mes.value = formatar_moeda(res_m)
+            txt_resultado_mes.color = T.TEXT_PRIMARY if res_m >= 0 else T.DESPESA
+            txt_titulo_resultado.value = "Resultado do Período"
+            txt_sub_resultado.value = f"{rotulo_per} · Partindo de R$ 0,00"
+
+        txt_receitas_mes.value  = formatar_moeda(rec_m)
+        txt_despesas_mes.value  = formatar_moeda(desp_m)
+        txt_cartao_mes.value    = formatar_moeda(cart_m)
         txt_sub_receitas.value  = f"em {dias_e} dia(s) com entrada"
         txt_sub_despesas.value  = f"em {dias_s} dia(s) com saída"
         txt_sub_cartao.value    = f"Gastos em crédito ({rotulo_per})"
@@ -2447,6 +2471,25 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                 col_lista_lancamentos,
             ]
 
+        txt_hover_data.value = "Passe o mouse ou toque em um dia para ver o acumulado"
+        row_hover_detalhes.controls = []
+
+        try:
+            container_seletor_modo.update()
+        except Exception:
+            pass
+        try:
+            kpis_periodo.update()
+        except Exception:
+            pass
+        try:
+            barra_inspecao_hover.update()
+        except Exception:
+            pass
+        try:
+            area_principal.update()
+        except Exception:
+            pass
         try:
             page.update()
         except Exception:
@@ -2480,8 +2523,115 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         filtro_data_fim[0] = d_fim
         carregar_dados()
 
+    def _construir_seletor_modo_saldo() -> ft.Container:
+        eh_isolado = (modo_saldo[0] == "isolado")
+        s_contas = float(pacote_calendario.get("saldo_contas_consolidado") or db.obter_saldo_consolidado_contas() or 0.0)
+
+        def _trocar_modo(novo_modo: str):
+            if modo_saldo[0] == novo_modo:
+                return
+            modo_saldo[0] = novo_modo
+            salvar_modo_saldo_calendario_sync(page, novo_modo)
+            s_atual = float(
+                pacote_calendario.get("saldo_contas_consolidado")
+                or s_contas
+                or db.obter_saldo_consolidado_contas()
+                or 0.0
+            )
+            db.recalcular_modo_calendario(pacote_calendario, novo_modo, saldo_contas=s_atual)
+            atualizar_visao()
+
+        btn_isolado = ft.Container(
+            content=ft.Row(
+                spacing=6,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Icon(
+                        ft.Icons.TRENDING_FLAT_ROUNDED,
+                        size=15,
+                        color=T.PRIMARY if eh_isolado else T.TEXT_MUTED,
+                    ),
+                    ft.Text(
+                        "Movimento Puro",
+                        size=11.5 if mobile else 12,
+                        weight=ft.FontWeight.BOLD if eh_isolado else ft.FontWeight.W_500,
+                        color=T.PRIMARY if eh_isolado else T.TEXT_MUTED,
+                    ),
+                ],
+            ),
+            padding=pad(h=12, v=7),
+            bgcolor=f"{T.PRIMARY}20" if eh_isolado else T.SURFACE_ALT,
+            border_radius=8,
+            border=borda(1.2 if eh_isolado else 1, T.PRIMARY if eh_isolado else T.BORDER),
+            ink=True,
+            tooltip="Partindo de R$ 0,00 no 1º dia (resultado operacional puro)",
+            on_click=lambda _: _trocar_modo("isolado"),
+        )
+
+        btn_com_saldo = ft.Container(
+            content=ft.Row(
+                spacing=6,
+                tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Icon(
+                        ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED,
+                        size=15,
+                        color=T.RECEITA if not eh_isolado else T.TEXT_MUTED,
+                    ),
+                    ft.Text(
+                        f"Com Saldo ({formatar_moeda(s_contas)})",
+                        size=11.5 if mobile else 12,
+                        weight=ft.FontWeight.BOLD if not eh_isolado else ft.FontWeight.W_500,
+                        color=T.RECEITA if not eh_isolado else T.TEXT_MUTED,
+                    ),
+                ],
+            ),
+            padding=pad(h=12, v=7),
+            bgcolor=f"{T.RECEITA}20" if not eh_isolado else T.SURFACE_ALT,
+            border_radius=8,
+            border=borda(1.2 if not eh_isolado else 1, T.RECEITA if not eh_isolado else T.BORDER),
+            ink=True,
+            tooltip=f"Partindo do saldo consolidado das contas ({formatar_moeda(s_contas)})",
+            on_click=lambda _: _trocar_modo("com_saldo"),
+        )
+
+        msg_explicativa = (
+            "Modo Isolado: Começa de R$ 0,00 no 1º dia para analisar se o período foi superavitário ou deficitário."
+            if eh_isolado
+            else f"Modo Saldo Real: Começa com {formatar_moeda(s_contas)} das suas contas bancárias para projetar a evolução física do caixa dia a dia."
+        )
+
+        return ft.Container(
+            padding=pad(h=14, v=9),
+            bgcolor=T.SURFACE,
+            border_radius=12,
+            border=borda(),
+            content=ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                wrap=True,
+                spacing=10,
+                controls=[
+                    ft.Row(
+                        spacing=6,
+                        wrap=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Text("Modo de Cálculo:", size=12, weight=ft.FontWeight.BOLD, color=T.TEXT_MUTED),
+                            btn_isolado,
+                            btn_com_saldo,
+                        ],
+                    ),
+                    ft.Text(msg_explicativa, size=11, color=T.TEXT_MUTED, italic=True),
+                ],
+            ),
+        )
+
     # ── KPI Header do Mês (Estilo Imagem 2) ──────────────────────────────────
-    def _kpi_topo(titulo: str, ref_ctrl: ft.Control, sub_ctrl: ft.Control, cor: str, icone):
+    def _kpi_topo(titulo_ctrl, ref_ctrl: ft.Control, sub_ctrl: ft.Control, cor: str, icone):
+        tit = ft.Text(titulo_ctrl, color=T.TEXT_MUTED, size=11.5, weight=ft.FontWeight.W_600) if isinstance(titulo_ctrl, str) else titulo_ctrl
         return ft.Container(
             col={"xs": 6, "sm": 6, "md": 3},
             padding=pad(all_=12 if mobile else 16),
@@ -2494,7 +2644,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                     ft.Row(
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         controls=[
-                            ft.Text(titulo, color=T.TEXT_MUTED, size=11.5, weight=ft.FontWeight.W_600),
+                            tit,
                             ft.Icon(icone, color=cor, size=16),
                         ],
                     ),
@@ -2508,7 +2658,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         spacing=10,
         run_spacing=10,
         controls=[
-            _kpi_topo("Resultado do Período", txt_resultado_mes, txt_sub_resultado, T.PRIMARY, ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED),
+            _kpi_topo(txt_titulo_resultado, txt_resultado_mes, txt_sub_resultado, T.PRIMARY, ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED),
             _kpi_topo("Receitas",             txt_receitas_mes,  txt_sub_receitas,  T.RECEITA, ft.Icons.ARROW_UPWARD_ROUNDED),
             _kpi_topo("Despesas",             txt_despesas_mes,  txt_sub_despesas,  T.DESPESA, ft.Icons.ARROW_DOWNWARD_ROUNDED),
             _kpi_topo("Gastos no Cartão",     txt_cartao_mes,    txt_sub_cartao,    T.WARNING, ft.Icons.CREDIT_CARD_ROUNDED),
@@ -2638,7 +2788,9 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         spacing=0,
         controls=[
             cabecalho,
-            ft.Container(height=14),
+            ft.Container(height=10),
+            container_seletor_modo,
+            ft.Container(height=10),
             kpis_periodo,
             ft.Container(height=14),
             area_principal,

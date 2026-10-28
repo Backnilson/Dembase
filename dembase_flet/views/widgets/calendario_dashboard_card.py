@@ -11,6 +11,11 @@ from __future__ import annotations
 import calendar
 from datetime import date, datetime, timedelta
 import flet as ft
+from core.storage import (
+    obter_modo_saldo_calendario,
+    salvar_modo_saldo_calendario_sync,
+)
+import services.supabase_client as db
 
 from core import theme as T
 from core.theme import pad, borda, abrir_dialogo, fechar_dialogo
@@ -63,11 +68,19 @@ def secao_calendario_dashboard(
     )
 
     modo_cal = ["completo"]  # "completo" ou "saidas"
+    modo_saldo_dash = [obter_modo_saldo_calendario(page)]
+    s_contas_dash = float((pacote_cal or {}).get("saldo_contas_consolidado") or 0.0)
+    if s_contas_dash == 0.0:
+        try:
+            s_contas_dash = float(db.obter_saldo_consolidado_contas())
+        except Exception:
+            s_contas_dash = 0.0
+    if pacote_cal and isinstance(pacote_cal, dict):
+        db.recalcular_modo_calendario(pacote_cal, modo_saldo_dash[0], saldo_contas=s_contas_dash)
 
     kpis_m = (pacote_cal or {}).get("kpis") or {}
     dias_lista = (pacote_cal or {}).get("dias") or []
     faturas_lista = (pacote_cal or {}).get("cartoes_faturas") or []
-    acumulados_map = (pacote_cal or {}).get("acumulados_por_dia") or {}
 
     rec_mes = float(kpis_m.get("receitas_mes", 0) or 0)
     desp_mes = float(kpis_m.get("despesas_mes", 0) or 0)
@@ -122,10 +135,153 @@ def secao_calendario_dashboard(
 
     col_grade_semanas = ft.Column(spacing=4 if mobile else 6, controls=[])
     row_botoes_modo = ft.Row(spacing=6, tight=True, controls=[])
+    row_seletor_modo = ft.Row(spacing=4, tight=True, controls=[])
+    faixa_gargalo_dash = ft.Container()
+
+    def _atualizar_faixa_gargalo():
+        prot_fluxo = (pacote_cal or {}).get("protecao_fluxo") or {}
+        sobra_proj_d = float(prot_fluxo.get("sobra_projetada", rec_mes - desp_mes) or 0.0)
+        teto_seg_d = float(prot_fluxo.get("teto_seguro_gasto", max(0.0, sobra_proj_d)) or 0.0)
+        sobra_falsa_d = float(prot_fluxo.get("sobra_falsa_travada", max(0.0, sobra_proj_d - teto_seg_d)) or 0.0)
+        menor_saldo_d = float(prot_fluxo.get("menor_saldo_futuro", sobra_proj_d) or 0.0)
+        dt_garg_d = prot_fluxo.get("data_gargalo")
+        prox_dt_d = prot_fluxo.get("proxima_entrada_data")
+        prox_val_d = float(prot_fluxo.get("proxima_entrada_valor", 0.0) or 0.0)
+        tem_arm_d = bool(prot_fluxo.get("tem_armadilha_fluxo", False))
+        fica_neg_d = bool(prot_fluxo.get("fica_negativo_no_meio", False))
+
+        cor_prot_d = T.DESPESA if fica_neg_d else ("#F59E0B" if tem_arm_d else "#06B6D4")
+        faixa_gargalo_dash.padding = pad(h=12, v=8)
+        faixa_gargalo_dash.bgcolor = f"{cor_prot_d}12"
+        faixa_gargalo_dash.border_radius = 10
+        faixa_gargalo_dash.border = borda(1, f"{cor_prot_d}45")
+        faixa_gargalo_dash.content = ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            wrap=True,
+            spacing=8,
+            controls=[
+                ft.Row(
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Icon(
+                            ft.Icons.WARNING_AMBER_ROUNDED if (fica_neg_d or tem_arm_d) else ft.Icons.SHIELD_ROUNDED,
+                            color=cor_prot_d,
+                            size=15,
+                        ),
+                        ft.Text(
+                            (
+                                f"🛡️ Teto Seguro Agora: {formatar_moeda(teto_seg_d)} "
+                                f"(Pior dia: {formatar_moeda(menor_saldo_d)} em {formatar_data_br(dt_garg_d)[:5]})"
+                            )
+                            if dt_garg_d
+                            else f"🛡️ Teto Seguro Agora: {formatar_moeda(teto_seg_d)}",
+                            size=11.5,
+                            weight=ft.FontWeight.BOLD,
+                            color=T.TEXT_PRIMARY,
+                        ),
+                    ],
+                ),
+                ft.Row(
+                    spacing=8,
+                    wrap=True,
+                    controls=[
+                        ft.Text(
+                            f"Sobra Mês: {formatar_moeda(sobra_proj_d)}",
+                            size=11,
+                            weight=ft.FontWeight.W_600,
+                            color=T.PRIMARY,
+                        ),
+                        *(
+                            [
+                                ft.Text(
+                                    f"🔒 Retido: {formatar_moeda(sobra_falsa_d)}",
+                                    size=11,
+                                    weight=ft.FontWeight.BOLD,
+                                    color="#F59E0B",
+                                )
+                            ]
+                            if sobra_falsa_d > 0.005
+                            else []
+                        ),
+                        *(
+                            [
+                                ft.Text(
+                                    f"Próx. Entrada: {formatar_moeda(prox_val_d)} ({formatar_data_br(prox_dt_d)[:5]})",
+                                    size=11,
+                                    weight=ft.FontWeight.W_600,
+                                    color=T.RECEITA,
+                                )
+                            ]
+                            if prox_dt_d and prox_val_d > 0
+                            else []
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+    _atualizar_faixa_gargalo()
+
+    def _trocar_modo_saldo(novo_modo: str):
+        if modo_saldo_dash[0] == novo_modo:
+            return
+        modo_saldo_dash[0] = novo_modo
+        salvar_modo_saldo_calendario_sync(page, novo_modo)
+        if pacote_cal and isinstance(pacote_cal, dict):
+            s_c = float(
+                pacote_cal.get("saldo_contas_consolidado")
+                or s_contas_dash
+                or db.obter_saldo_consolidado_contas()
+                or 0.0
+            )
+            db.recalcular_modo_calendario(pacote_cal, novo_modo, saldo_contas=s_c)
+        _atualizar_faixa_gargalo()
+        _render_grade()
+
+        txt_hover_info.value = "Passe o mouse ou toque em um dia para ver o acumulado contínuo até a data"
+        row_hover_chips.controls.clear()
+
+        try:
+            row_seletor_modo.update()
+        except Exception:
+            pass
+        try:
+            faixa_gargalo_dash.update()
+        except Exception:
+            pass
+        try:
+            barra_hover.update()
+        except Exception:
+            pass
+        try:
+            col_grade_semanas.update()
+        except Exception:
+            pass
+        try:
+            page.update()
+        except Exception:
+            pass
+
+        if callable(on_refresh):
+            try:
+                import inspect
+                sig = inspect.signature(on_refresh)
+                if len(sig.parameters) > 0:
+                    on_refresh(novo_modo)
+                else:
+                    on_refresh()
+            except Exception:
+                try:
+                    on_refresh()
+                except Exception:
+                    pass
 
     def _obter_acum_dash(dt_s: str, dia_info: dict) -> dict:
-        if dt_s in acumulados_map:
-            return acumulados_map[dt_s]
+        acum_map = (pacote_cal or {}).get("acumulados_por_dia") or {}
+        if dt_s in acum_map:
+            return acum_map[dt_s]
         if isinstance(dia_info.get("acumulado"), dict):
             return dia_info["acumulado"]
         rec_d = float(dia_info.get("total_receitas", 0) or 0)
@@ -384,7 +540,46 @@ def secao_calendario_dashboard(
         abrir_dialogo(page, dlg)
 
     def _render_grade():
-        # Botões de modo
+        # Seletor de Modo (Partindo de R$ 0 vs Com Saldo em Contas)
+        eh_iso = (modo_saldo_dash[0] == "isolado")
+        row_seletor_modo.controls = [
+            ft.Container(
+                padding=pad(h=8, v=4),
+                border_radius=8,
+                bgcolor=f"{T.PRIMARY}22" if eh_iso else T.SURFACE_ALT,
+                border=borda(1, T.PRIMARY if eh_iso else T.BORDER),
+                ink=True,
+                tooltip="Partindo de R$ 0,00 no 1º dia (resultado operacional puro)",
+                on_click=lambda _: _trocar_modo_saldo("isolado"),
+                content=ft.Row(
+                    spacing=3,
+                    tight=True,
+                    controls=[
+                        ft.Icon(ft.Icons.TRENDING_FLAT_ROUNDED, size=13, color=T.PRIMARY if eh_iso else T.TEXT_MUTED),
+                        ft.Text("Movimento Puro", size=11, weight=ft.FontWeight.BOLD if eh_iso else ft.FontWeight.W_500, color=T.PRIMARY if eh_iso else T.TEXT_MUTED),
+                    ],
+                ),
+            ),
+            ft.Container(
+                padding=pad(h=8, v=4),
+                border_radius=8,
+                bgcolor=f"{T.RECEITA}22" if not eh_iso else T.SURFACE_ALT,
+                border=borda(1, T.RECEITA if not eh_iso else T.BORDER),
+                ink=True,
+                tooltip=f"Partindo do saldo consolidado das contas ({formatar_moeda(s_contas_dash)})",
+                on_click=lambda _: _trocar_modo_saldo("com_saldo"),
+                content=ft.Row(
+                    spacing=3,
+                    tight=True,
+                    controls=[
+                        ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, size=13, color=T.RECEITA if not eh_iso else T.TEXT_MUTED),
+                        ft.Text(f"Com Saldo ({formatar_moeda(s_contas_dash)})", size=11, weight=ft.FontWeight.BOLD if not eh_iso else ft.FontWeight.W_500, color=T.RECEITA if not eh_iso else T.TEXT_MUTED),
+                    ],
+                ),
+            ),
+        ]
+
+        # Botões de modo visual
         opcoes_m = [
             ("completo", "Entradas & Saídas", T.PRIMARY),
             ("saidas", "Mapa de Calor (Saídas)", T.DESPESA),
@@ -672,91 +867,6 @@ def secao_calendario_dashboard(
 
     _render_grade()
 
-    prot_fluxo = (pacote_cal or {}).get("protecao_fluxo") or {}
-    sobra_proj_d = float(prot_fluxo.get("sobra_projetada", rec_mes - desp_mes) or 0.0)
-    teto_seg_d = float(prot_fluxo.get("teto_seguro_gasto", max(0.0, sobra_proj_d)) or 0.0)
-    sobra_falsa_d = float(prot_fluxo.get("sobra_falsa_travada", max(0.0, sobra_proj_d - teto_seg_d)) or 0.0)
-    menor_saldo_d = float(prot_fluxo.get("menor_saldo_futuro", sobra_proj_d) or 0.0)
-    dt_garg_d = prot_fluxo.get("data_gargalo")
-    prox_dt_d = prot_fluxo.get("proxima_entrada_data")
-    prox_val_d = float(prot_fluxo.get("proxima_entrada_valor", 0.0) or 0.0)
-    tem_arm_d = bool(prot_fluxo.get("tem_armadilha_fluxo", False))
-    fica_neg_d = bool(prot_fluxo.get("fica_negativo_no_meio", False))
-
-    cor_prot_d = T.DESPESA if fica_neg_d else ("#F59E0B" if tem_arm_d else "#06B6D4")
-    faixa_gargalo_dash = ft.Container(
-        padding=pad(h=12, v=8),
-        bgcolor=f"{cor_prot_d}12",
-        border_radius=10,
-        border=borda(1, f"{cor_prot_d}45"),
-        content=ft.Row(
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            wrap=True,
-            spacing=8,
-            controls=[
-                ft.Row(
-                    spacing=6,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    controls=[
-                        ft.Icon(
-                            ft.Icons.WARNING_AMBER_ROUNDED if (fica_neg_d or tem_arm_d) else ft.Icons.SHIELD_ROUNDED,
-                            color=cor_prot_d,
-                            size=15,
-                        ),
-                        ft.Text(
-                            (
-                                f"🛡️ Teto Seguro Agora: {formatar_moeda(teto_seg_d)} "
-                                f"(Pior dia: {formatar_moeda(menor_saldo_d)} em {formatar_data_br(dt_garg_d)[:5]})"
-                            )
-                            if dt_garg_d
-                            else f"🛡️ Teto Seguro Agora: {formatar_moeda(teto_seg_d)}",
-                            size=11.5,
-                            weight=ft.FontWeight.BOLD,
-                            color=T.TEXT_PRIMARY,
-                        ),
-                    ],
-                ),
-                ft.Row(
-                    spacing=8,
-                    wrap=True,
-                    controls=[
-                        ft.Text(
-                            f"Sobra Mês: {formatar_moeda(sobra_proj_d)}",
-                            size=11,
-                            weight=ft.FontWeight.W_600,
-                            color=T.PRIMARY,
-                        ),
-                        *(
-                            [
-                                ft.Text(
-                                    f"🔒 Retido: {formatar_moeda(sobra_falsa_d)}",
-                                    size=11,
-                                    weight=ft.FontWeight.BOLD,
-                                    color="#F59E0B",
-                                )
-                            ]
-                            if sobra_falsa_d > 0.005
-                            else []
-                        ),
-                        *(
-                            [
-                                ft.Text(
-                                    f"Próx. Entrada: {formatar_moeda(prox_val_d)} ({formatar_data_br(prox_dt_d)[:5]})",
-                                    size=11,
-                                    weight=ft.FontWeight.W_600,
-                                    color=T.RECEITA,
-                                )
-                            ]
-                            if prox_dt_d and prox_val_d > 0
-                            else []
-                        ),
-                    ],
-                ),
-            ],
-        ),
-    )
-
     return ft.Container(
         padding=pad(all_=14 if mobile else 18),
         bgcolor=T.SURFACE,
@@ -813,10 +923,11 @@ def secao_calendario_dashboard(
                             ],
                         ),
                         ft.Row(
-                            spacing=8,
+                            spacing=6,
                             wrap=True,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
+                                row_seletor_modo,
                                 row_botoes_modo,
                                 ft.TextButton(
                                     content=ft.Row(

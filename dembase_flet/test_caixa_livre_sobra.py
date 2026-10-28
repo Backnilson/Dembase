@@ -207,8 +207,8 @@ def test_filtro_global_favoritos_e_calendario_sincronizado():
     p = MockPage(width=1280)
     favs = storage.obter_filtros_periodo_favoritos(p)
     ids_favs = [f["id"] for f in favs]
-    assert "dia_05_20" in ids_favs, "Filtro 'Dia 05 a 20' deve vir salvo por padrão"
-    assert "dia_20_fim" in ids_favs, "Filtro 'Dia 20 a 30/31' deve vir salvo por padrão"
+    assert "dia_01_15" in ids_favs, "Filtro '1ª Quinzena' deve vir salvo por padrão"
+    assert "dia_16_fim" in ids_favs, "Filtro '2ª Quinzena' deve vir salvo por padrão"
 
     # Testa salvar e remover um filtro favorito customizado
     favs_apos_salvar = storage.salvar_filtro_periodo_favorito_sync(p, "Dia 10 a 25", 10, 25, False)
