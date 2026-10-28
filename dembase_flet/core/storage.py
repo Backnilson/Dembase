@@ -531,6 +531,30 @@ def salvar_trava_teto_seguro_sobra_sync(page: ft.Page, travado: bool) -> None:
     _salvar_local_json(dados)
 
 
+
+def obter_piso_custos_fixos(page, padrao: float = 1150.0) -> float:
+    """Retorna o piso configuravel de Custos Fixos (default R$ 1.150,00)."""
+    val_sess = session_get(page, "piso_custos_fixos")
+    if isinstance(val_sess, (int, float)):
+        return max(0.0, float(val_sess))
+    local = _ler_local_json()
+    val_local = local.get("piso_custos_fixos")
+    if isinstance(val_local, (int, float)):
+        v = max(0.0, float(val_local))
+        session_set(page, "piso_custos_fixos", v)
+        return v
+    return float(padrao)
+
+
+def salvar_piso_custos_fixos_sync(page, valor: float) -> None:
+    """Salva o piso configuravel de Custos Fixos."""
+    val = round(max(0.0, float(valor or 0.0)), 2)
+    session_set(page, "piso_custos_fixos", val)
+    dados = _ler_local_json()
+    dados["piso_custos_fixos"] = val
+    _salvar_local_json(dados)
+
+
 def obter_painel_sobra_expandido(page: ft.Page, padrao: bool = False) -> bool:
     """Retorna se o painel inline de Destinação da Sobra está expandido."""
     val_sess = session_get(page, "sobra_painel_expandido")

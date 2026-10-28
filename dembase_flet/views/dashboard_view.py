@@ -213,19 +213,27 @@ def criar_view_dashboard(
             )
 
     def _abrir_lancamento_aporte(valor_sugerido: float):
-        if valor_sugerido > 0:
-            mostrar_feedback(
-                page,
-                f"Valor destinado para guardar/investir: {formatar_moeda(valor_sugerido)}",
-                "info",
-            )
-        abrir_lancamento(page, on_saved=lambda: carregar(inicial=False))
+        from views.investimentos_view import abrir_modal_aporte_sobra_dashboard
+        abrir_modal_aporte_sobra_dashboard(
+            page=page,
+            valor_sugerido=valor_sugerido,
+            on_saved=lambda: carregar(inicial=False),
+        )
+
+    def _ao_alterar_potes_no_slider(novos_potes: list[dict]):
+        if area_potes.controls:
+            ctrl_p = getattr(area_potes.controls[0], "atualizar_potes", None)
+            if callable(ctrl_p):
+                ctrl_p(novos_potes)
+            elif hasattr(area_potes.controls[0], "controller"):
+                area_potes.controls[0].controller.atualizar_potes_em_tempo_real(novos_potes)
 
     painel_sobra = PainelGestaoSobra(
         page=page,
         mobile=mobile,
         on_atualizar_kpi_subtitulo=_atualizar_subtitulo_kpi_sobra,
         on_lancar_investimento=_abrir_lancamento_aporte,
+        on_potes_alterados=_ao_alterar_potes_no_slider,
     )
 
     def _abrir_extrato_pote(pote_id):
@@ -285,8 +293,12 @@ def criar_view_dashboard(
             db.recalcular_modo_calendario(pacote_cal_efetivo, modo_s_dash, saldo_contas=s_contas_d)
             prot_fluxo = pacote_cal_efetivo.get("protecao_fluxo") if isinstance(pacote_cal_efetivo, dict) else None
 
-            # Atualiza o painel de sobra com o escopo de mês/ano e proteção de fluxo de caixa
-            painel_sobra.atualizar_periodo(rec, desp, mes=m, ano=a, protecao_fluxo=prot_fluxo)
+            # Atualiza o painel de sobra com a arquitetura unificada dos 6 potes
+            piso_fix_local = storage.obter_piso_custos_fixos(page, 1150.0)
+            painel_sobra.atualizar_periodo(
+                rec, desp, mes=m, ano=a, protecao_fluxo=prot_fluxo,
+                resumo_potes=r_potes, piso_custos_fixos=piso_fix_local,
+            )
 
             ultimo_pacote.clear()
             ultimo_pacote.update({
@@ -325,6 +337,7 @@ def criar_view_dashboard(
                     r_potes,
                     nav_func=_abrir_extrato_pote,
                     on_ajustar=lambda _: navegar(page, "/configuracoes?aba=metas"),
+                    page=page,
                 )]
             else:
                 area_potes.controls = []
@@ -372,7 +385,8 @@ def criar_view_dashboard(
                 d_5030 = db.obter_resumo_5030(di, df)
                 b_6m = db.obter_balanco_6_meses()
                 r_cart = db.obter_resumo_cartoes(m, a)
-                r_potes = db.obter_resumo_potes(di, df)
+                piso_f = storage.obter_piso_custos_fixos(page, 1150.0)
+                r_potes = db.obter_resumo_potes(di, df, piso_custos_fixos=piso_f)
                 r_cal = db.obter_calendario_financeiro_mes(m, a, di, df)
                 _aplicar_dados(p_periodo, d_5030, b_6m, r_cart, r_potes, r_cal)
             except Exception:
@@ -423,7 +437,8 @@ def criar_view_dashboard(
                     d_5030 = db.obter_resumo_5030(di, df)
                     b_6m = db.obter_balanco_6_meses()
                     r_cart = db.obter_resumo_cartoes(m, a)
-                    r_potes = db.obter_resumo_potes(di, df)
+                    piso_f = storage.obter_piso_custos_fixos(page, 1150.0)
+                    r_potes = db.obter_resumo_potes(di, df, piso_custos_fixos=piso_f)
                     r_cal = db.obter_calendario_financeiro_mes(m, a, di, df)
                     _aplicar_dados(p_periodo, d_5030, b_6m, r_cart, r_potes, r_cal)
                     spinner.visible = False

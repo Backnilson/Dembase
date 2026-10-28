@@ -2,30 +2,31 @@
 =============================================================================
 DemBase v3 — views/widgets/sobra_card.py  (Flet 1.0.1)
 Módulo de Gestão de Sobra / Caixa Livre do Período + Blindagem contra Sobra Falsa.
-Independente dos 6 Potes originais: calcula estritamente
-    Sobra Projetada = Total de Receitas do Período - Total de Despesas do Período
-e cruza com a Inteligência de Proteção de Fluxo de Caixa (Teto Seguro baseado no
-Pior Dia / Gargalo de saldo acumulado), diferenciando visualmente:
-  - Sobra Projetada do Período (Fim do Mês)
-  - Disponível Agora sem Ficar Negativo (Teto Seguro — Pior Dia)
-  - Sobra Falsa Travada (Receitas que só entram depois do gargalo)
-Além disso, salva e aplica o percentual de retenção exclusivamente por Mês/Ano.
+Integrado de forma unificada aos 6 Potes Financeiros:
+  - Elimina o furo lógico onde o dinheiro reservado do mês (Semi Fixos / Gás, Metas, Conhecimento)
+    era inflado no Caixa Livre.
+  - Conecta diretamente o Card de Investimento ao Pote "Liberdade Financeira" (pos 6)
+    e o Card Livre de Culpa ao Pote "Prazeres" (pos 4).
+  - Mostra Teto do Mês vs Já Gasto/Investido e Restante Disponível Hoje.
+  - Trava do Pior Dia (Teto Seguro) para impedir saldo negativo intermediário.
+  - Sincronização em tempo real com a grade dos 6 Potes via Slider.
 =============================================================================
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Any
 import flet as ft
 
 from core import theme as T
 from core import storage
 from core.theme import pad, borda
 from core.constants import formatar_moeda, formatar_data_br, MESES_NOMES
+from core.potes import calcular_arquitetura_unificada_potes, POTES_PADRAO
 import services.supabase_client as db
 
 
-COR_INVESTIMENTO = "#10B981"  # Esmeralda — patrimônio / poupança
-COR_LIVRE_CULPA  = "#8B5CF6"  # Violeta — livre para torrar sem culpa
+COR_INVESTIMENTO = "#10B981"  # Esmeralda — Liberdade Financeira
+COR_LIVRE_CULPA  = "#8B5CF6"  # Violeta — Prazeres / Livre sem culpa
 COR_BLINDAGEM    = "#06B6D4"  # Ciano — proteção de fluxo de caixa / teto seguro
 COR_GARGALO      = "#F59E0B"  # Âmbar — alerta de gargalo / sobra falsa
 
@@ -36,18 +37,75 @@ def calcular_rateio_sobra(
     pct_investimento: float = 50.0,
     protecao_fluxo: dict | None = None,
     travar_pelo_teto_seguro: bool = True,
+    potes: list[dict] | None = None,
+    piso_custos_fixos: float = 1150.0,
 ) -> dict:
     """
     Calcula a Sobra Projetada do Período, a divisão nos dois Mini-Potes e a
     Blindagem contra Sobra Falsa (Teto Seguro baseado no Pior Dia).
+    Quando `potes` é informado, utiliza a Arquitetura Unificada eliminando
+    a inclusão indevida dos saldos reservados de Semi Fixos, Metas e Conhecimento.
     """
     rec = round(float(receitas or 0.0), 2)
     desp = round(float(despesas or 0.0), 2)
-    sobra = round(rec - desp, 2)
-
     pct_inv = round(max(0.0, min(100.0, float(pct_investimento if pct_investimento is not None else 50.0))), 1)
     pct_livre = round(100.0 - pct_inv, 1)
 
+    # Se há lista de potes estruturada, usa o motor da arquitetura unificada
+    if potes and isinstance(potes, list) and len(potes) >= 1:
+        resultado_unif = calcular_arquitetura_unificada_potes(
+            receitas=rec,
+            potes=potes,
+            piso_custos_fixos=piso_custos_fixos,
+            slider_pct_investimento=pct_inv,
+            protecao_fluxo=protecao_fluxo,
+            travar_pelo_teto_seguro=travar_pelo_teto_seguro,
+        )
+        cl = resultado_unif["caixa_livre"]
+        b = resultado_unif["blindagem"]
+        sobra_livre = cl["sobra_livre_disponivel"]
+        sobra_proj = cl["sobra_livre_projetada"]
+
+        return {
+            "receitas": rec,
+            "despesas": desp,
+            "sobra": sobra_livre,
+            "sobra_projetada": sobra_proj,
+            "teto_caixa_livre": cl["teto_orcamento"],
+            "pct_caixa_livre": cl["pct_orcamento"],
+            "tem_sobra": sobra_livre > 0.005,
+            "zerada": abs(sobra_livre) < 0.005,
+            "em_deficit": (rec - desp) < -0.005,
+            "deficit": round(abs(rec - desp), 2) if (rec - desp) < -0.005 else 0.0,
+            "pct_investimento": pct_inv,
+            "pct_livre": pct_livre,
+            "valor_investimento": cl["liberdade_disponivel_hoje"],
+            "valor_livre_culpa": cl["prazeres_disponivel_hoje"],
+            "valor_investimento_projetado": cl["liberdade_restante_projetado"],
+            "valor_livre_projetado": cl["prazeres_restante_projetado"],
+            "teto_investimento": cl["liberdade_teto"],
+            "teto_livre_culpa": cl["prazeres_teto"],
+            "gasto_investimento": cl["liberdade_gasto"],
+            "gasto_livre_culpa": cl["prazeres_gasto"],
+            "nome_investimento": cl.get("liberdade_nome", "Liberdade Financeira"),
+            "nome_livre_culpa": cl.get("prazeres_nome", "Prazeres"),
+            "retido_outros_potes": resultado_unif["retido_outros_potes"],
+            "menor_saldo_futuro": b["menor_saldo_futuro"],
+            "teto_seguro_gasto": b["teto_seguro_gasto"],
+            "sobra_falsa_travada": b["sobra_falsa_travada"],
+            "tem_armadilha_fluxo": b["tem_armadilha_fluxo"],
+            "fica_negativo_no_meio": b["fica_negativo_no_meio"],
+            "data_gargalo": b["data_gargalo"],
+            "proxima_entrada_data": b["proxima_entrada_data"],
+            "proxima_entrada_valor": b["proxima_entrada_valor"],
+            "travar_pelo_teto_seguro": bool(travar_pelo_teto_seguro),
+            "potes_atualizados": resultado_unif["potes"],
+            "soma_percentuais": resultado_unif["soma_percentuais"],
+            "arquitetura_unificada": True,
+        }
+
+    # Fallback de compatibilidade (cálculo simples sobre rec - desp)
+    sobra = round(rec - desp, 2)
     if sobra > 0:
         val_inv_proj = round(sobra * (pct_inv / 100.0), 2)
         val_livre_proj = round(sobra - val_inv_proj, 2)
@@ -57,10 +115,8 @@ def calcular_rateio_sobra(
         val_livre_proj = 0.0
         deficit = round(abs(sobra), 2) if sobra < 0 else 0.0
 
-    # Inteligência de Proteção de Fluxo de Caixa (Contra Sobra Falsa)
     pf = protecao_fluxo if isinstance(protecao_fluxo, dict) else {}
     tem_dados_pf = bool(pf and ("teto_seguro_gasto" in pf or "menor_saldo_futuro" in pf))
-
     if tem_dados_pf:
         menor_saldo_futuro = round(float(pf.get("menor_saldo_futuro", sobra) or 0.0), 2)
         teto_seguro = round(max(0.0, min(max(0.0, sobra), float(pf.get("teto_seguro_gasto", max(0.0, sobra)) or 0.0))), 2)
@@ -80,14 +136,11 @@ def calcular_rateio_sobra(
         prox_entrada_dt = None
         prox_entrada_val = 0.0
 
-    # Quando a trava está ativa, o valor disponível para gastar AGORA sem ficar negativo
-    # nunca pode ultrapassar o Teto Seguro (Pior Dia).
     if sobra > 0:
         if travar_pelo_teto_seguro and tem_dados_pf:
             base_segura = teto_seguro
             val_inv_seguro = round(base_segura * (pct_inv / 100.0), 2)
             val_livre_seguro = round(base_segura - val_inv_seguro, 2)
-            # Limite máximo absoluto que pode sair da conta hoje sem negativar no gargalo:
             val_livre_teto_absoluto = round(min(val_livre_proj, teto_seguro), 2)
         else:
             val_inv_seguro = val_inv_proj
@@ -106,6 +159,8 @@ def calcular_rateio_sobra(
         "despesas": desp,
         "sobra": sobra,
         "sobra_projetada": sobra,
+        "teto_caixa_livre": sobra,
+        "pct_caixa_livre": round((sobra / rec * 100.0), 2) if rec > 0 else 0.0,
         "tem_sobra": sobra > 0,
         "zerada": abs(sobra) < 0.005,
         "em_deficit": sobra < -0.005,
@@ -119,6 +174,13 @@ def calcular_rateio_sobra(
         "valor_investimento_seguro": val_inv_seguro,
         "valor_livre_seguro": val_livre_seguro,
         "valor_livre_teto_absoluto": val_livre_teto_absoluto,
+        "teto_investimento": val_inv_proj,
+        "teto_livre_culpa": val_livre_proj,
+        "gasto_investimento": 0.0,
+        "gasto_livre_culpa": 0.0,
+        "nome_investimento": "Liberdade Financeira",
+        "nome_livre_culpa": "Prazeres",
+        "retido_outros_potes": 0.0,
         "menor_saldo_futuro": menor_saldo_futuro,
         "teto_seguro_gasto": teto_seguro,
         "sobra_falsa_travada": sobra_falsa,
@@ -128,6 +190,7 @@ def calcular_rateio_sobra(
         "proxima_entrada_data": prox_entrada_dt,
         "proxima_entrada_valor": prox_entrada_val,
         "travar_pelo_teto_seguro": bool(travar_pelo_teto_seguro),
+        "arquitetura_unificada": False,
     }
 
 
@@ -139,12 +202,9 @@ def _fmt_pct(pct: float) -> str:
 
 class PainelGestaoSobra:
     """
-    Controlador visual e reativo do módulo de Destinação da Sobra (Caixa Livre).
-    Mantém referências mutáveis para atualizar valores instantaneamente quando:
-      - O filtro global de datas do Dashboard muda (novas receitas/despesas/mês/ano e proteção de fluxo)
-      - O usuário move o Slider, digita uma porcentagem ou clica em um atalho (salvo por Mês/Ano!)
-      - O usuário alterna a Trava de Teto Seguro (Pior Dia)
-      - O usuário clica no card KPI "Caixa Livre" para expandir/recolher
+    Controlador visual e reativo do módulo de Destinação do Caixa Livre.
+    Conectado diretamente aos Potes 'Liberdade Financeira' (investimento/poupança)
+    e 'Prazeres' (livre para gastar sem culpa).
     """
 
     def __init__(
@@ -153,11 +213,13 @@ class PainelGestaoSobra:
         mobile: bool = False,
         on_atualizar_kpi_subtitulo: Callable[[dict, bool], None] | None = None,
         on_lancar_investimento: Callable[[float], None] | None = None,
+        on_potes_alterados: Callable[[list[dict]], None] | None = None,
     ):
         self.page = page
         self.mobile = mobile
         self.on_atualizar_kpi_subtitulo = on_atualizar_kpi_subtitulo
         self.on_lancar_investimento = on_lancar_investimento
+        self.on_potes_alterados = on_potes_alterados
 
         self.receitas: float = 0.0
         self.despesas: float = 0.0
@@ -165,6 +227,8 @@ class PainelGestaoSobra:
         self.ano_atual: int | None = None
         self.herdado_mes: bool = False
         self.protecao_fluxo: dict = {}
+        self.potes_dados: list[dict] = []
+        self.piso_custos_fixos: float = storage.obter_piso_custos_fixos(page, 1150.0)
 
         self.pct_investimento: float = storage.obter_percentual_sobra_investimento(page, 50.0)
         self.travar_teto_seguro: bool = storage.obter_trava_teto_seguro_sobra(page, True)
@@ -256,14 +320,14 @@ class PainelGestaoSobra:
             value=self.travar_teto_seguro,
             active_color=COR_BLINDAGEM,
             scale=0.82,
-            tooltip="Quando ativo, limita o Caixa Livre e os Mini-Potes ao Teto Seguro do Pior Dia para impedir saldo negativo no meio do mês.",
+            tooltip="Quando ativo, limita o Caixa Livre e os Potes ao Teto Seguro do Pior Dia para impedir saldo negativo no meio do mês.",
             on_change=self._on_toggle_trava_teto,
         )
         self.box_trava_fluxo = self._construir_box_blindagem_fluxo()
 
         # ── Controles de ajuste de percentual (Slider + Input + Chips) ────────
         self.txt_titulo_slider = ft.Text(
-            "Quanto da sobra você quer guardar/investir?",
+            "Divisão do Caixa Livre: Liberdade Financeira x Prazeres",
             size=12.5 if self.mobile else 13,
             weight=ft.FontWeight.W_600,
             color=T.TEXT_PRIMARY,
@@ -276,8 +340,8 @@ class PainelGestaoSobra:
         )
         self.tf_pct = ft.TextField(
             value=str(int(round(self.pct_investimento))),
-            suffix=ft.Text("%", color=T.TEXT_MUTED, size=12),
-            width=78 if mobile else 86,
+            suffix=ft.Text("% Guardar", color=T.TEXT_MUTED, size=11.5),
+            width=96 if mobile else 108,
             height=38,
             text_size=13,
             text_align=ft.TextAlign.RIGHT,
@@ -298,7 +362,7 @@ class PainelGestaoSobra:
             active_color=COR_INVESTIMENTO,
             inactive_color=f"{COR_LIVRE_CULPA}45",
             thumb_color=COR_INVESTIMENTO,
-            label="{value}% para investir",
+            label="{value}% Liberdade Financeira",
             on_change=self._on_slider_change,
         )
 
@@ -327,7 +391,22 @@ class PainelGestaoSobra:
             controls=[self.barra_split_inv, self.barra_split_livre],
         )
 
-        # ── Mini-Pote 1: Destinado para Investimento / Poupança ───────────────
+        # ── Card 1: Liberdade Financeira (Mini-Pote 1 / Pote 6) ───────────────
+        self.txt_inv_titulo = ft.Text(
+            "Liberdade Financeira",
+            size=13 if self.mobile else 14,
+            weight=ft.FontWeight.BOLD,
+            color=T.TEXT_PRIMARY,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self.txt_inv_teto_info = ft.Text(
+            "Teto: R$ 0,00 · Já investido: R$ 0,00",
+            size=10.5,
+            color=T.TEXT_MUTED,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
         self.txt_inv_valor = ft.Text(
             "R$ 0,00",
             size=18 if mobile else 22,
@@ -348,7 +427,7 @@ class PainelGestaoSobra:
             border_radius=6,
         )
         self.txt_inv_dica = ft.Text(
-            "Separado da sobra do período para multiplicar seu patrimônio.",
+            "Disponível para aportar no mês · Conectado ao Pote 6",
             size=11,
             color=T.TEXT_MUTED,
         )
@@ -359,7 +438,7 @@ class PainelGestaoSobra:
             border=borda(1, f"{COR_INVESTIMENTO}55"),
             ink=True,
             on_click=self._acao_lancar_investimento,
-            tooltip="Registrar transferência ou aporte deste valor",
+            tooltip="Registrar aporte para Liberdade Financeira",
             content=ft.Row(
                 spacing=6,
                 tight=True,
@@ -376,7 +455,22 @@ class PainelGestaoSobra:
             ),
         )
 
-        # ── Mini-Pote 2: Livre de Culpa (Para Torrar) ─────────────────────────
+        # ── Card 2: Prazeres (Mini-Pote 2 / Pote 4 / Livre sem culpa) ─────────
+        self.txt_livre_titulo = ft.Text(
+            "Prazeres",
+            size=13 if self.mobile else 14,
+            weight=ft.FontWeight.BOLD,
+            color=T.TEXT_PRIMARY,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self.txt_livre_teto_info = ft.Text(
+            "Teto: R$ 0,00 · Já gasto: R$ 0,00",
+            size=10.5,
+            color=T.TEXT_MUTED,
+            max_lines=1,
+            overflow=ft.TextOverflow.ELLIPSIS,
+        )
         self.txt_livre_valor = ft.Text(
             "R$ 0,00",
             size=18 if mobile else 22,
@@ -397,12 +491,12 @@ class PainelGestaoSobra:
             border_radius=6,
         )
         self.txt_livre_dica = ft.Text(
-            "Disponível no Caixa Livre para gastar sem culpa e sem afetar os 6 Potes.",
+            "Disponível para gastar livre sem culpa · Conectado ao Pote 4",
             size=11,
             color=T.TEXT_MUTED,
         )
         self.txt_badge_livre_status = ft.Text(
-            "100% Livre no Caixa",
+            "Livre sem Culpa",
             color=COR_LIVRE_CULPA,
             size=11,
             weight=ft.FontWeight.W_600,
@@ -536,14 +630,14 @@ class PainelGestaoSobra:
                         run_spacing=8,
                         controls=[
                             _mini_metrica(
-                                "SOBRA PROJETADA DO MÊS INTEIRO",
+                                "ORÇAMENTO CAIXA LIVRE (MÊS)",
                                 ft.Icons.CALENDAR_MONTH_ROUNDED,
                                 T.PRIMARY,
                                 self.txt_sobra_proj_card,
                                 self.txt_sobra_proj_sub,
                             ),
                             _mini_metrica(
-                                "DISPONÍVEL AGORA S/ FICAR NEGATIVO",
+                                "DISPONÍVEL AGORA S/ NEGATIVAR",
                                 ft.Icons.VERIFIED_USER_ROUNDED,
                                 COR_BLINDAGEM,
                                 self.txt_teto_seguro_card,
@@ -577,12 +671,12 @@ class PainelGestaoSobra:
 
     def _construir_chips_atalho(self) -> list[ft.Control]:
         opcoes = [
-            (0.0, "0%"),
-            (20.0, "20%"),
+            (0.0, "0% Guardar"),
             (30.0, "30%"),
             (50.0, "50% (Meio a Meio)"),
             (70.0, "70%"),
-            (100.0, "100% (Tudo)"),
+            (80.0, "80%"),
+            (100.0, "100% (Tudo p/ Guardar)"),
         ]
         chips: list[ft.Control] = []
         for val, rotulo in opcoes:
@@ -607,10 +701,11 @@ class PainelGestaoSobra:
 
     def _construir_mini_pote_card(
         self,
-        titulo: str,
+        txt_titulo: ft.Text,
         subtitulo_tag: str,
         icone: ft.IconData,
         cor: str,
+        txt_teto_info: ft.Text,
         txt_valor: ft.Text,
         txt_pct: ft.Text,
         pb: ft.ProgressBar,
@@ -645,14 +740,7 @@ class PainelGestaoSobra:
                                         spacing=1,
                                         expand=True,
                                         controls=[
-                                            ft.Text(
-                                                titulo,
-                                                size=13 if self.mobile else 14,
-                                                weight=ft.FontWeight.BOLD,
-                                                color=T.TEXT_PRIMARY,
-                                                max_lines=1,
-                                                overflow=ft.TextOverflow.ELLIPSIS,
-                                            ),
+                                            txt_titulo,
                                             ft.Text(
                                                 subtitulo_tag,
                                                 size=10.5,
@@ -672,6 +760,7 @@ class PainelGestaoSobra:
                             ),
                         ],
                     ),
+                    txt_teto_info,
                     txt_valor,
                     pb,
                     ft.Row(
@@ -688,10 +777,11 @@ class PainelGestaoSobra:
 
     def _construir_container(self) -> ft.Container:
         card_investimento = self._construir_mini_pote_card(
-            titulo="Destinado para Investimento/Poupança",
-            subtitulo_tag="Mini-Pote 1 · Guardar e Multiplicar",
+            txt_titulo=self.txt_inv_titulo,
+            subtitulo_tag="Mini-Pote 1 · Investimento (Pote 6)",
             icone=ft.Icons.SAVINGS_ROUNDED,
             cor=COR_INVESTIMENTO,
+            txt_teto_info=self.txt_inv_teto_info,
             txt_valor=self.txt_inv_valor,
             txt_pct=self.txt_inv_pct,
             pb=self.pb_inv,
@@ -700,10 +790,11 @@ class PainelGestaoSobra:
         )
 
         card_livre_culpa = self._construir_mini_pote_card(
-            titulo="Livre de Culpa (Para Torrar)",
-            subtitulo_tag="Mini-Pote 2 · Permanece no Caixa Livre",
+            txt_titulo=self.txt_livre_titulo,
+            subtitulo_tag="Mini-Pote 2 · Prazeres (Pote 4)",
             icone=ft.Icons.CELEBRATION_ROUNDED,
             cor=COR_LIVRE_CULPA,
+            txt_teto_info=self.txt_livre_teto_info,
             txt_valor=self.txt_livre_valor,
             txt_pct=self.txt_livre_pct,
             pb=self.pb_livre,
@@ -851,7 +942,7 @@ class PainelGestaoSobra:
         self.definir_percentual(novo_pct, atualizar_slider=False)
 
     def _on_input_pct_submit(self, e: ft.ControlEvent):
-        texto = str(self.tf_pct.value or "").strip().replace(",", ".").replace("%", "")
+        texto = str(self.tf_pct.value or "").strip().replace(",", ".").replace("%", "").replace("Guardar", "").strip()
         try:
             novo_pct = float(texto)
         except Exception:
@@ -870,11 +961,17 @@ class PainelGestaoSobra:
                 db.salvar_config_caixa_livre_mes(self.mes_atual, self.ano_atual, pct_limpo)
             except Exception:
                 pass
+
         if atualizar_slider:
             self.slider_pct.value = pct_limpo
         self.tf_pct.value = str(int(round(pct_limpo)))
         self.row_chips_atalho.controls = self._construir_chips_atalho()
-        self._sincronizar_ui(notificar_kpi=True)
+
+        # Recalcula e sincroniza com a grade dos 6 potes
+        dados = self._sincronizar_ui(notificar_kpi=True)
+        if self.on_potes_alterados and "potes_atualizados" in dados:
+            self.on_potes_alterados(dados["potes_atualizados"])
+
         try:
             self.page.update()
         except Exception:
@@ -887,15 +984,21 @@ class PainelGestaoSobra:
         mes: int | None = None,
         ano: int | None = None,
         protecao_fluxo: dict | None = None,
+        resumo_potes: dict | None = None,
+        piso_custos_fixos: float | None = None,
     ):
         """
-        Atualiza receitas, despesas, escopo de mês/ano e dados de proteção de fluxo de caixa
-        do período selecionado, recalculando a Sobra Projetada, o Teto Seguro e os Mini-Potes.
+        Atualiza receitas, despesas, escopo de mês/ano, proteção de fluxo e dados dos 6 potes
+        do período selecionado, recalculando a arquitetura unificada.
         """
         self.receitas = float(receitas or 0.0)
         self.despesas = float(despesas or 0.0)
         if isinstance(protecao_fluxo, dict):
             self.protecao_fluxo = protecao_fluxo
+        if isinstance(resumo_potes, dict):
+            self.potes_dados = resumo_potes.get("potes") or []
+        if piso_custos_fixos is not None:
+            self.piso_custos_fixos = float(piso_custos_fixos)
 
         if mes is not None and ano is not None:
             mudou_mes = (int(mes) != self.mes_atual or int(ano) != self.ano_atual)
@@ -908,7 +1011,7 @@ class PainelGestaoSobra:
                 try:
                     cfg_db = db.obter_config_caixa_livre_mes(self.mes_atual, self.ano_atual)
                     if isinstance(cfg_db, dict) and "pct_investimento" in cfg_db:
-                        self.herdado_mes = bool(cfg_db.get("herdado", False))
+                        self.herdado_mes = bool(cfg_db.get("personalizado_no_mes", False) is False)
                         if not self.herdado_mes or pct_carregado == 50.0:
                             pct_carregado = float(cfg_db.get("pct_investimento", pct_carregado))
                             storage.salvar_percentual_sobra_investimento_sync(
@@ -921,7 +1024,9 @@ class PainelGestaoSobra:
                 self.tf_pct.value = str(int(round(self.pct_investimento)))
                 self.row_chips_atalho.controls = self._construir_chips_atalho()
 
-        self._sincronizar_ui(notificar_kpi=True)
+        dados = self._sincronizar_ui(notificar_kpi=True)
+        if self.on_potes_alterados and "potes_atualizados" in dados:
+            self.on_potes_alterados(dados["potes_atualizados"])
 
     def alternar_expansao(self, forcar: bool | None = None):
         """Expande ou recolhe a seção inline de Destinação da Sobra."""
@@ -941,11 +1046,13 @@ class PainelGestaoSobra:
 
     def obter_dados_atuais(self) -> dict:
         return calcular_rateio_sobra(
-            self.receitas,
-            self.despesas,
-            self.pct_investimento,
+            receitas=self.receitas,
+            despesas=self.despesas,
+            pct_investimento=self.pct_investimento,
             protecao_fluxo=self.protecao_fluxo,
             travar_pelo_teto_seguro=self.travar_teto_seguro,
+            potes=self.potes_dados,
+            piso_custos_fixos=self.piso_custos_fixos,
         )
 
     def _acao_lancar_investimento(self, _e=None):
@@ -954,17 +1061,30 @@ class PainelGestaoSobra:
         if self.on_lancar_investimento:
             self.on_lancar_investimento(val_inv)
 
-    def _sincronizar_ui(self, notificar_kpi: bool = True):
+    def _sincronizar_ui(self, notificar_kpi: bool = True) -> dict:
         dados = self.obter_dados_atuais()
         rec = dados["receitas"]
         desp = dados["despesas"]
         sobra = dados["sobra"]
         pct_inv = dados["pct_investimento"]
         pct_livre = dados["pct_livre"]
+
         val_inv = dados["valor_investimento"]
         val_livre = dados["valor_livre_culpa"]
+        teto_inv = dados.get("teto_investimento", val_inv)
+        teto_livre = dados.get("teto_livre_culpa", val_livre)
+        gasto_inv = dados.get("gasto_investimento", 0.0)
+        gasto_livre = dados.get("gasto_livre_culpa", 0.0)
         val_inv_proj = dados["valor_investimento_projetado"]
         val_livre_proj = dados["valor_livre_projetado"]
+        retido_outros = dados.get("retido_outros_potes", 0.0)
+        teto_caixa = dados.get("teto_caixa_livre", sobra)
+
+        # Nomes padrão ou editados dos dois cards
+        nm_inv = dados.get("nome_investimento") or "Liberdade Financeira"
+        nm_livre = dados.get("nome_livre_culpa") or "Prazeres"
+        self.txt_inv_titulo.value = nm_inv
+        self.txt_livre_titulo.value = nm_livre
 
         teto_seguro = dados["teto_seguro_gasto"]
         sobra_falsa = dados["sobra_falsa_travada"]
@@ -979,20 +1099,28 @@ class PainelGestaoSobra:
         if self.mes_atual and self.ano_atual:
             nm = MESES_NOMES[self.mes_atual - 1][:3] if 1 <= self.mes_atual <= 12 else str(self.mes_atual)
             rot_m = f"{nm}/{self.ano_atual}"
-            self.txt_badge_mes.value = f"Regra de {rot_m}: {_fmt_pct(pct_inv)} guardar / {_fmt_pct(pct_livre)} livre"
+            self.txt_badge_mes.value = f"Regra de {rot_m}: {_fmt_pct(pct_inv)} {nm_inv} / {_fmt_pct(pct_livre)} {nm_livre}"
             self.box_badge_mes.visible = True
-            self.txt_titulo_slider.value = f"Quanto da sobra de {rot_m} você quer guardar/investir?"
+            self.txt_titulo_slider.value = f"Divisão do Caixa Livre ({rot_m}): {nm_inv} x {nm_livre}"
         else:
             self.box_badge_mes.visible = False
-            self.txt_titulo_slider.value = "Quanto da sobra você quer guardar/investir?"
+            self.txt_titulo_slider.value = f"Divisão do Caixa Livre: {nm_inv} x {nm_livre}"
 
-        self.txt_equacao.value = (
-            f"Receitas ({formatar_moeda(rec)}) − Despesas ({formatar_moeda(desp)}) "
-            f"= Sobra Projetada {formatar_moeda(sobra)}"
-        )
+        # Equação matemática unificada com transparência total
+        if dados.get("arquitetura_unificada") and retido_outros > 0:
+            self.txt_equacao.value = (
+                f"Receitas ({formatar_moeda(rec)}) − Retido nos Potes ({formatar_moeda(retido_outros)}) "
+                f"= Orçamento Caixa Livre {formatar_moeda(teto_caixa)} · "
+                f"Disponível Hoje: {formatar_moeda(val_livre)} ({nm_livre}) + {formatar_moeda(val_inv)} ({nm_inv})"
+            )
+        else:
+            self.txt_equacao.value = (
+                f"Receitas ({formatar_moeda(rec)}) − Despesas ({formatar_moeda(desp)}) "
+                f"= Sobra Projetada {formatar_moeda(sobra)}"
+            )
 
         # Atualiza o Painel de Blindagem contra Sobra Falsa
-        self.txt_sobra_proj_card.value = formatar_moeda(sobra)
+        self.txt_sobra_proj_card.value = formatar_moeda(teto_caixa)
         self.txt_teto_seguro_card.value = formatar_moeda(teto_seguro)
         self.txt_sobra_falsa_card.value = formatar_moeda(sobra_falsa)
 
@@ -1003,7 +1131,7 @@ class PainelGestaoSobra:
             self.icone_alerta_gargalo.name = ft.Icons.WARNING_AMBER_ROUNDED
             self.icone_alerta_gargalo.color = T.DESPESA
             self.txt_alerta_gargalo.value = (
-                f"🚨 Alerta de Descasamento: mesmo que o mês termine com {formatar_moeda(sobra)}, "
+                f"🚨 Alerta de Descasamento: mesmo que o Caixa Livre totalize {formatar_moeda(teto_caixa)}, "
                 f"seu saldo acumulado chega a {formatar_moeda(menor_saldo)} em {dt_g_br}. "
                 f"Teto seguro para gastar agora sem agravar o negativo: R$ 0,00."
             )
@@ -1018,9 +1146,9 @@ class PainelGestaoSobra:
                 else ""
             )
             self.txt_alerta_gargalo.value = (
-                f"🛡️ Sobra Falsa detectada! Dos {formatar_moeda(sobra)} previstos no mês, "
+                f"🛡️ Sobra Falsa detectada! Do Caixa Livre de {formatar_moeda(teto_caixa)}, "
                 f"{formatar_moeda(sobra_falsa)} só entram depois do gargalo de {dt_g_br}. "
-                f"Seu limite real hoje sem ficar negativo em nenhum dia futuro é {formatar_moeda(teto_seguro)}."
+                f"Seu limite seguro hoje sem ficar negativo é {formatar_moeda(teto_seguro)}."
                 + complemento_prox
             )
         else:
@@ -1029,8 +1157,8 @@ class PainelGestaoSobra:
             self.icone_alerta_gargalo.name = ft.Icons.VERIFIED_USER_ROUNDED
             self.icone_alerta_gargalo.color = COR_INVESTIMENTO
             self.txt_alerta_gargalo.value = (
-                f"✅ Fluxo de caixa blindado: toda a sobra projetada ({formatar_moeda(max(0.0, sobra))}) "
-                "já está livre de gargalos futuros neste período."
+                f"✅ Fluxo de caixa blindado: todo o Caixa Livre ({formatar_moeda(teto_caixa)}) "
+                "está 100% disponível e protegido de gargalos intermediários."
             )
 
         if prox_dt and prox_val > 0:
@@ -1042,21 +1170,21 @@ class PainelGestaoSobra:
 
         if dados["tem_sobra"]:
             if tem_armadilha and self.travar_teto_seguro:
-                self.txt_badge_status.value = f"🛡️ Teto Seguro: {formatar_moeda(teto_seguro)} (Mês: {formatar_moeda(sobra)})"
+                self.txt_badge_status.value = f"🛡️ Teto Seguro: {formatar_moeda(teto_seguro)} (Mês: {formatar_moeda(teto_caixa)})"
                 self.txt_badge_status.color = COR_BLINDAGEM
                 self.box_badge_status.bgcolor = f"{COR_BLINDAGEM}18"
             else:
-                self.txt_badge_status.value = f"Sobra Positiva: {formatar_moeda(sobra)}"
+                self.txt_badge_status.value = f"Caixa Livre: {formatar_moeda(teto_caixa)}"
                 self.txt_badge_status.color = COR_INVESTIMENTO
                 self.box_badge_status.bgcolor = f"{COR_INVESTIMENTO}18"
             self.banner_sem_sobra.visible = False
         elif dados["em_deficit"]:
-            self.txt_badge_status.value = f"Déficit no Período: {formatar_moeda(sobra)}"
+            self.txt_badge_status.value = f"Déficit no Período: {formatar_moeda(rec - desp)}"
             self.txt_badge_status.color = T.DESPESA
             self.box_badge_status.bgcolor = f"{T.DESPESA}18"
             self.txt_aviso_sem_sobra.value = (
                 f"Neste período as despesas superaram as receitas em {formatar_moeda(dados['deficit'])}. "
-                "Os Mini-Potes ficam zerados até que haja saldo residual positivo."
+                "O Caixa Livre fica zerado até que haja saldo residual positivo."
             )
             self.banner_sem_sobra.visible = True
         else:
@@ -1064,8 +1192,8 @@ class PainelGestaoSobra:
             self.txt_badge_status.color = T.TEXT_MUTED
             self.box_badge_status.bgcolor = f"{T.TEXT_MUTED}18"
             self.txt_aviso_sem_sobra.value = (
-                "Não há sobra residual neste período (Receitas = Despesas). "
-                "Defina já o percentual desejado para quando entrar nova receita."
+                "Não há sobra residual no Caixa Livre neste período. "
+                "Ajuste os percentuais ou registre novas receitas."
             )
             self.banner_sem_sobra.visible = True
 
@@ -1073,26 +1201,29 @@ class PainelGestaoSobra:
         self.txt_inv_pct.value = _fmt_pct(pct_inv)
         self.txt_livre_pct.value = _fmt_pct(pct_livre)
 
+        # Valores disponíveis dos dois cards
         self.txt_inv_valor.value = formatar_moeda(val_inv)
         self.txt_livre_valor.value = formatar_moeda(val_livre)
 
-        if tem_armadilha and self.travar_teto_seguro and sobra > 0:
+        # Detalhamento Teto x Já Gasto
+        self.txt_inv_teto_info.value = f"Teto do Mês: {formatar_moeda(teto_inv)} · Já aportado: {formatar_moeda(gasto_inv)}"
+        self.txt_livre_teto_info.value = f"Teto do Mês: {formatar_moeda(teto_livre)} · Já gasto: {formatar_moeda(gasto_livre)}"
+
+        if tem_armadilha and self.travar_teto_seguro and teto_caixa > 0:
             self.txt_inv_dica.value = (
-                f"Disponível agora s/ negativar. (No fim do mês será {formatar_moeda(val_inv_proj)})"
+                f"Disponível hoje s/ negativar. (Projetado do mês: {formatar_moeda(val_inv_proj)})"
             )
             self.txt_livre_dica.value = (
                 f"Blindado pelo Pior Dia ({dt_g_br}). (Projetado do mês: {formatar_moeda(val_livre_proj)})"
             )
             self.txt_badge_livre_status.value = f"Blindado · Teto {formatar_moeda(teto_seguro)}"
         else:
-            self.txt_inv_dica.value = "Separado da sobra do período para multiplicar seu patrimônio."
-            self.txt_livre_dica.value = (
-                "Disponível no Caixa Livre para gastar sem culpa e sem afetar os 6 Potes."
-            )
-            self.txt_badge_livre_status.value = "100% Livre no Caixa"
+            self.txt_inv_dica.value = f"Resta {formatar_moeda(val_inv)} para aportar em {nm_inv}."
+            self.txt_livre_dica.value = f"Resta {formatar_moeda(val_livre)} livre para gastar em {nm_livre}."
+            self.txt_badge_livre_status.value = "Livre sem Culpa"
 
-        self.pb_inv.value = max(0.0, min(1.0, pct_inv / 100.0))
-        self.pb_livre.value = max(0.0, min(1.0, pct_livre / 100.0))
+        self.pb_inv.value = max(0.0, min(1.0, (val_inv / teto_inv) if teto_inv > 0 else 0.0))
+        self.pb_livre.value = max(0.0, min(1.0, (val_livre / teto_livre) if teto_livre > 0 else 0.0))
 
         # Atualiza termômetro duplo proporcional
         if pct_inv <= 0:
@@ -1111,3 +1242,5 @@ class PainelGestaoSobra:
 
         if notificar_kpi and self.on_atualizar_kpi_subtitulo:
             self.on_atualizar_kpi_subtitulo(dados, self.expandido)
+
+        return dados

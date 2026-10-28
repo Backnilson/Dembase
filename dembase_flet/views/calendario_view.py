@@ -1607,6 +1607,23 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         linhas_cartoes_mes: list[ft.Control] = []
         soma_faturas_mes = 0.0
         for cf in faturas_lista:
+            # Contabiliza no mês apenas o que realmente vence dentro daquele mês/período
+            dv_str = str(cf.get("data_vencimento") or "")[:10]
+            cai_no_mes = True
+            if dv_str:
+                try:
+                    dt_v = date.fromisoformat(dv_str)
+                    if not (dt_ini_f <= dt_v <= dt_fim_f):
+                        cai_no_mes = False
+                except Exception:
+                    pass
+            elif cf.get("fatura_mes") and cf.get("fatura_ano"):
+                if int(cf["fatura_mes"]) != m or int(cf["fatura_ano"]) != a:
+                    cai_no_mes = False
+
+            if not cai_no_mes:
+                continue
+
             c_nome = str(cf.get("cartao_nome") or "Cartão")
             v_fat = float(cf.get("valor_total", 0) or 0)
             soma_faturas_mes += v_fat

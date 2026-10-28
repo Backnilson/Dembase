@@ -2,11 +2,12 @@
 =============================================================================
 DemBase v3 — views/widgets/potes_config.py  (Flet 1.0.1)
 Aba "Metas": renda de referência, seletor de Mês/Ano independente,
-gráfico de rosca em tempo real e sliders dos 6 potes amarrados à validação
-de 100% por período. Sem acesso direto ao banco: usa apenas
-services/potes_service.py e core/potes.py.
+gráfico de rosca em tempo real e controle flexível (R$ ou %) dos 6 potes.
+Unificado com a matemática do Caixa Livre e 100% de precisão.
 =============================================================================
 """
+from __future__ import annotations
+
 from datetime import date
 from decimal import Decimal
 
@@ -30,14 +31,18 @@ from core import theme as T
 from core.theme import pad, borda, mostrar_feedback
 from core.constants import formatar_moeda, MESES_NOMES
 from core import potes as P
+from core import storage
 from services import potes_service as svc
 from views.shell_view import obter_estado_periodo_atual
 
 COR_ALERTA = "#F97316"
 
 
-def _fmt_perc(v: Decimal) -> str:
-    return f"{v.normalize():f}%"
+def _fmt_perc(v: Decimal | float) -> str:
+    val = float(v)
+    if abs(val - round(val)) < 0.05:
+        return f"{int(round(val))}%"
+    return f"{val:.1f}%".replace(".", ",")
 
 
 def montar_aba_potes(page: ft.Page) -> ft.Control:
@@ -47,12 +52,16 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
     ano_ini = int(est_periodo.get("ano") or date.today().year)
     estado_periodo = {"mes": mes_ini, "ano": ano_ini, "herdado": False}
 
+    piso_fixos_atual = storage.obter_piso_custos_fixos(page, 1150.0)
+
     try:
         potes, herdado_ini = svc.carregar_potes_com_meta_mes(
             mes=estado_periodo["mes"], ano=estado_periodo["ano"]
         )
         estado_periodo["herdado"] = herdado_ini
         renda = svc.ler_renda_referencia()
+        if renda <= 0:
+            renda = Decimal("5000.00")  # Default simulador caso zerada
     except Exception as ex:
         mostrar_feedback(page, f"Erro ao carregar metas: {ex}", "erro")
         return ft.Container(
@@ -126,8 +135,12 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
                     np = por_pos[pos]
                     l["pote"] = np
                     l["nome"].value = np.nome
-                    l["slider"].value = int(np.percentual)
-                    l["perc"].value = str(int(np.percentual))
+                    val_pct = float(np.percentual)
+                    l["slider"].value = int(round(val_pct))
+                    l["perc"].value = str(int(round(val_pct)))
+                    if renda_ref[0] > 0:
+                        v_rs = float(renda_ref[0]) * (val_pct / 100.0)
+                        l["tf_rs"].value = f"{v_rs:.2f}".replace(".", ",")
             _atualizar_cabecalho_mes()
             _atualizar_tela(montado=True)
         except Exception as ex:
@@ -164,8 +177,35 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
     )
     btn_renda = ft.FilledButton(
         content="Simular",
-        style=ft.ButtonStyle(bgcolor=T.PRIMARY, color=ft.Colors.WHITE,
-                             shape=ft.RoundedRectangleBorder(radius=10), padding=pad(h=24, v=14)),
+        style=ft.ButtonStyle(
+            bgcolor=T.PRIMARY,
+            color=ft.Colors.WHITE,
+            shape=ft.RoundedRectangleBorder(radius=10),
+            padding=pad(h=24, v=14),
+        ),
+    )
+
+    # ── Campo Piso de Custos Fixos ───────────────────────────────────────────
+    def _ao_alterar_piso_fixos(e):
+        try:
+            val = P.para_decimal(tf_piso_fixos.value, default=Decimal("1150.00"))
+            storage.salvar_piso_custos_fixos_sync(page, float(val))
+        except Exception:
+            pass
+        _atualizar_tela()
+
+    tf_piso_fixos = ft.TextField(
+        value=formatar_moeda(piso_fixos_atual),
+        width=130,
+        height=38,
+        text_size=13,
+        text_align=ft.TextAlign.RIGHT,
+        keyboard_type=ft.KeyboardType.NUMBER,
+        content_padding=pad(h=8, v=6),
+        bgcolor=T.BG,
+        border_color=T.BORDER,
+        border_radius=8,
+        on_change=_ao_alterar_piso_fixos,
     )
 
     # ── Gráfico de rosca ─────────────────────────────────────────────────────
@@ -186,13 +226,20 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
     btn_salvar = ft.FilledButton(
         content="Salvar Metas",
         expand=True,
-        style=ft.ButtonStyle(bgcolor=T.PRIMARY, color=ft.Colors.WHITE,
-                             shape=ft.RoundedRectangleBorder(radius=10), padding=pad(v=16)),
+        style=ft.ButtonStyle(
+            bgcolor=T.PRIMARY,
+            color=ft.Colors.WHITE,
+            shape=ft.RoundedRectangleBorder(radius=10),
+            padding=pad(v=16),
+        ),
     )
 
     # ── Núcleo reativo ───────────────────────────────────────────────────────
     def _percentual(linha: dict) -> Decimal:
-        return Decimal(str(int(linha["slider"].value or 0)))
+        try:
+            return Decimal(str(int(linha["slider"].value or 0)))
+        except Exception:
+            return Decimal("0")
 
     def _itens() -> list[dict]:
         return [
@@ -205,9 +252,8 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         itens = _itens()
         soma = P.soma_percentuais(i["percentual"] for i in itens)
         valido = not P.validar_configuracao(itens)
-        previsto = P.calcular_previsto_por_renda(renda_ref[0], [
-            P.Pote(l["pote"].id, l["pote"].posicao, l["nome"].value, _percentual(l)) for l in linhas
-        ])
+
+        r_flt = float(renda_ref[0])
 
         donut.sections = [
             fch.PieChartSection(
@@ -225,11 +271,21 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
                 content=ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
-                        ft.Row(spacing=6, expand=True, controls=[
-                            ft.Container(width=8, height=8, bgcolor=l["pote"].cor, border_radius=4),
-                            ft.Text(l["nome"].value or "—", size=12, color=T.TEXT_PRIMARY,
-                                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
-                        ]),
+                        ft.Row(
+                            spacing=6,
+                            expand=True,
+                            controls=[
+                                ft.Container(width=8, height=8, bgcolor=l["pote"].cor, border_radius=4),
+                                ft.Text(
+                                    l["nome"].value or "—",
+                                    size=12,
+                                    color=T.TEXT_PRIMARY,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                    expand=True,
+                                ),
+                            ],
+                        ),
                         ft.Text(_fmt_perc(_percentual(l)), size=12, color=T.TEXT_MUTED),
                     ],
                 ),
@@ -238,7 +294,10 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         ]
 
         for l in linhas:
-            l["valor_rs"].value = formatar_moeda(float(previsto[l["pote"].id]))
+            p_val = float(_percentual(l))
+            val_calc = r_flt * (p_val / 100.0)
+            # Atualiza o valor formatado visível
+            l["valor_rs"].value = formatar_moeda(val_calc)
 
         cor_estado = T.PRIMARY if valido else COR_ALERTA
         txt_centro_valor.value = _fmt_perc(soma)
@@ -251,12 +310,19 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         txt_erro.visible = bool(erros)
         btn_salvar.disabled = bool(erros)
         if montado:
-            page.update()
+            try:
+                page.update()
+            except Exception:
+                pass
 
     def _ao_mover_slider(e):
         for l in linhas:
             if l["slider"] is e.control:
-                l["perc"].value = str(int(e.control.value))
+                v = int(e.control.value)
+                l["perc"].value = str(v)
+                r_flt = float(renda_ref[0])
+                if r_flt > 0:
+                    l["tf_rs"].value = f"{r_flt * (v / 100.0):.2f}".replace(".", ",")
                 break
         _atualizar_tela()
 
@@ -269,26 +335,63 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
                     v = 0
                 v = max(0, min(100, v))
                 l["slider"].value = v
+                r_flt = float(renda_ref[0])
+                if r_flt > 0:
+                    l["tf_rs"].value = f"{r_flt * (v / 100.0):.2f}".replace(".", ",")
+                break
+        _atualizar_tela()
+
+    def _ao_digitar_reais(e):
+        for l in linhas:
+            if l["tf_rs"] is e.control:
+                try:
+                    txt = str(e.control.value or "0").replace("R$", "").replace(".", "").replace(",", ".").strip()
+                    val_rs = float(txt or 0.0)
+                except ValueError:
+                    val_rs = 0.0
+                r_flt = float(renda_ref[0])
+                if r_flt > 0:
+                    v_pct = int(round(max(0.0, min(100.0, (val_rs / r_flt) * 100.0))))
+                else:
+                    v_pct = 0
+                l["slider"].value = v_pct
+                l["perc"].value = str(v_pct)
                 break
         _atualizar_tela()
 
     def _ao_alterar_nome(_):
         _atualizar_tela()
 
-    # ── Linhas dos 6 potes (sem botão de criar/remover: limite fixo) ─────────
+    # ── Linhas dos 6 potes com Edição Flexível (R$ e %) ─────────────────────
     for pote in potes:
+        pos = pote.posicao
+        val_pct = int(round(float(pote.percentual)))
         slider = ft.Slider(
-            min=0, max=100, divisions=100, value=int(pote.percentual),
+            min=0, max=100, divisions=100, value=val_pct,
             active_color=pote.cor, inactive_color=T.SURFACE_ALT, thumb_color=pote.cor,
             expand=True, on_change=_ao_mover_slider,
         )
         perc = ft.TextField(
-            value=str(int(pote.percentual)), width=64, text_align=ft.TextAlign.CENTER,
+            value=str(val_pct), width=58, text_align=ft.TextAlign.CENTER,
             keyboard_type=ft.KeyboardType.NUMBER,
             input_filter=ft.NumbersOnlyInputFilter(), max_length=3, counter=ft.Text(""),
             on_change=_ao_digitar_percentual,
-            **T.campo_estilo(content_padding=pad(h=6, v=8)),
+            **T.campo_estilo(content_padding=pad(h=4, v=6)),
         )
+
+        r_flt = float(renda)
+        val_rs_ini = r_flt * (val_pct / 100.0) if r_flt > 0 else 0.0
+        tf_rs = ft.TextField(
+            value=f"{val_rs_ini:.2f}".replace(".", ","),
+            width=92,
+            text_align=ft.TextAlign.RIGHT,
+            prefix=ft.Text("R$ ", size=11, color=T.TEXT_MUTED),
+            keyboard_type=ft.KeyboardType.NUMBER,
+            counter=ft.Text(""),
+            on_change=_ao_digitar_reais,
+            **T.campo_estilo(content_padding=pad(h=6, v=6)),
+        )
+
         nome = ft.TextField(
             value=pote.nome, max_length=P.NOME_MAX, counter=ft.Text(""),
             text_style=ft.TextStyle(size=13, weight=ft.FontWeight.W_600),
@@ -296,8 +399,34 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             **T.campo_estilo(border_color="transparent", fill_color="transparent",
                              content_padding=pad(h=0, v=6)),
         )
-        valor_rs = ft.Text("", size=11, color=T.TEXT_MUTED)
-        linhas.append({"pote": pote, "slider": slider, "perc": perc, "nome": nome, "valor_rs": valor_rs})
+        valor_rs = ft.Text(formatar_moeda(val_rs_ini), size=11, color=T.TEXT_MUTED)
+
+        # Tag de comportamento inteligente
+        if pos == 1:
+            tag_comp = ft.Container(
+                content=ft.Text("Automático", size=9.5, color=T.PRIMARY, weight=ft.FontWeight.BOLD),
+                padding=pad(h=6, v=2), border_radius=6, bgcolor=f"{T.PRIMARY}18",
+            )
+        elif pos in (2, 3, 5):
+            tag_comp = ft.Container(
+                content=ft.Text("Retido", size=9.5, color=T.RECEITA, weight=ft.FontWeight.BOLD),
+                padding=pad(h=6, v=2), border_radius=6, bgcolor=f"{T.RECEITA}18",
+            )
+        else:
+            tag_comp = ft.Container(
+                content=ft.Text("Caixa Livre", size=9.5, color="#8B5CF6", weight=ft.FontWeight.BOLD),
+                padding=pad(h=6, v=2), border_radius=6, bgcolor="#8B5CF618",
+            )
+
+        linhas.append({
+            "pote": pote,
+            "slider": slider,
+            "perc": perc,
+            "tf_rs": tf_rs,
+            "nome": nome,
+            "valor_rs": valor_rs,
+            "tag_comp": tag_comp,
+        })
 
     # ── Ações ────────────────────────────────────────────────────────────────
     def _salvar_renda(_):
@@ -311,7 +440,7 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             return
         renda_ref[0] = nova
         txt_renda.value = formatar_moeda(float(nova))
-        mostrar_feedback(page, "Renda de referência salva. Valores recalculados.", "sucesso")
+        mostrar_feedback(page, "Renda simulada salva. Valores em R$ recalculados.", "sucesso")
         _atualizar_tela()
 
     def _salvar_metas(_):
@@ -323,7 +452,7 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             nova = svc.salvar_renda_referencia(txt_renda.value)
             renda_ref[0] = nova
             txt_renda.value = formatar_moeda(float(nova))
-            salvos = svc.salvar_configuracao(itens, mes=m_alvo, ano=a_alvo)   # revalida soma == 100 e salva só neste mês/ano
+            salvos = svc.salvar_configuracao(itens, mes=m_alvo, ano=a_alvo)
         except P.ErroPotes as ex:
             mostrar_feedback(page, " ".join(ex.erros), "alerta")
             return
@@ -336,18 +465,22 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         _atualizar_cabecalho_mes()
         mostrar_feedback(
             page,
-            f"Metas de {rot_alvo} salvas com sucesso! (Os demais meses permanecem intactos)",
+            f"Metas de {rot_alvo} salvas com sucesso! (100% cravado)",
             "sucesso",
         )
         _atualizar_tela()
 
     def _resetar(_):
         padrao = {d["posicao"]: d for d in P.POTES_PADRAO}
+        r_flt = float(renda_ref[0])
         for l in linhas:
             d = padrao[l["pote"].posicao]
             l["nome"].value = d["nome"]
-            l["slider"].value = int(d["percentual"])
-            l["perc"].value = str(int(d["percentual"]))
+            v = int(d["percentual"])
+            l["slider"].value = v
+            l["perc"].value = str(v)
+            if r_flt > 0:
+                l["tf_rs"].value = f"{r_flt * (v / 100.0):.2f}".replace(".", ",")
         _atualizar_tela()
 
     btn_renda.on_click = _salvar_renda
@@ -382,7 +515,7 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
                             ],
                         ),
                         ft.Text(
-                            "Alterar as porcentagens deste mês aplica-se exclusivamente a ele, sem alterar meses anteriores ou futuros.",
+                            "Altere as porcentagens ou valores em R$ deste mês exclusivamente. Os demais meses ficam intactos.",
                             size=11,
                             color=T.TEXT_MUTED,
                         ),
@@ -436,20 +569,26 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         ),
     )
 
-    # ── Layout ───────────────────────────────────────────────────────────────
+    # ── Linha UI para cada Pote ───────────────────────────────────────────────
     def _linha_ui(l: dict) -> ft.Column:
-        return ft.Column(spacing=0, controls=[
-            ft.Row(
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[
-                    l["nome"],
-                    l["valor_rs"],
-                    l["perc"],
-                    ft.Text("%", size=11, color=T.TEXT_MUTED),
-                ],
-            ),
-            l["slider"],
-        ])
+        return ft.Column(
+            spacing=2,
+            controls=[
+                ft.Row(
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=8,
+                    controls=[
+                        ft.Container(width=10, height=10, bgcolor=l["pote"].cor, border_radius=5),
+                        l["nome"],
+                        l["tag_comp"],
+                        l["tf_rs"],
+                        l["perc"],
+                        ft.Text("%", size=11, color=T.TEXT_MUTED),
+                    ],
+                ),
+                l["slider"],
+            ],
+        )
 
     card_renda = ft.Container(
         padding=pad(all_=20), bgcolor=T.SURFACE, border_radius=16, border=borda(),
@@ -460,14 +599,14 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
                     ft.Text("SIMULADOR DE DISTRIBUIÇÃO (R$)", size=10, color=T.TEXT_MUTED,
                             weight=ft.FontWeight.W_600),
                     txt_renda,
-                    ft.Text("Digite um valor para simular a distribuição das porcentagens.",
+                    ft.Text("Digite um valor de receita para simular e converter entre R$ e %.",
                             size=11, color=T.TEXT_MUTED),
                 ]),
-                ft.Text(
-                    "Use este valor como simulador para pré-visualizar as metas em R$. "
-                    "No Dashboard, os limites são calculados automaticamente em cima da receita real do período.",
-                    col={"xs": 12, "md": 4}, size=12, color=T.TEXT_MUTED,
-                ),
+                ft.Column(col={"xs": 12, "md": 4}, spacing=4, controls=[
+                    ft.Text("PISO DE CUSTOS FIXOS (R$):", size=10, color=T.TEXT_MUTED, weight=ft.FontWeight.W_600),
+                    tf_piso_fixos,
+                    ft.Text("Garante o teto mínimo de fixos mesmo com poucos lançamentos.", size=10.5, color=T.TEXT_MUTED),
+                ]),
                 ft.Container(col={"xs": 12, "md": 3}, alignment=ft.Alignment(1, 0), content=btn_renda),
             ],
         ),
@@ -476,7 +615,7 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
     card_donut = ft.Container(
         col={"xs": 12, "md": 5}, padding=pad(all_=20), bgcolor=T.SURFACE, border_radius=16, border=borda(),
         content=ft.Column(spacing=14, controls=[
-            ft.Text("Visualização de uso", size=15, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+            ft.Text("Visualização de Uso (100% Cravado)", size=15, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
             ft.Container(
                 height=240,
                 content=ft.Stack(alignment=ft.Alignment(0, 0), controls=[
@@ -490,7 +629,7 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
             ),
             legenda,
             ft.OutlinedButton(
-                content="Resetar Valores", on_click=_resetar,
+                content="Resetar Padrões", on_click=_resetar,
                 style=ft.ButtonStyle(color=T.TEXT_MUTED, side=ft.BorderSide(1, T.BORDER),
                                      shape=ft.RoundedRectangleBorder(radius=10), padding=pad(v=14)),
             ),
@@ -501,13 +640,13 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         col={"xs": 12, "md": 7}, padding=pad(all_=20), bgcolor=T.SURFACE, border_radius=16, border=borda(),
         content=ft.Column(spacing=10, controls=[
             ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
-                ft.Text("Controle de Orçamento", size=15, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
-                ft.Text("% da renda de referência — o valor é recalculado", size=10, color=T.TEXT_MUTED),
+                ft.Text("Controle de Metas Flexível (R$ ou %)", size=15, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                ft.Text("Digite em R$ ou % · Converte na hora", size=10.5, color=T.TEXT_MUTED),
             ]),
             *[_linha_ui(l) for l in linhas],
             ft.Divider(color=T.BORDER, height=16),
             ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
-                ft.Text("Alocado", size=13, color=T.TEXT_MUTED), txt_alocado,
+                ft.Text("Total Alocado:", size=13, color=T.TEXT_MUTED), txt_alocado,
             ]),
             txt_erro,
             ft.Row(controls=[btn_salvar]),
@@ -519,8 +658,9 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
         content=ft.Row(spacing=10, controls=[
             ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED, size=16, color=T.PRIMARY),
             ft.Text(
-                "Regra do Dashboard: Os limites dos 6 potes são calculados aplicando as porcentagens "
-                "configuradas neste mês exclusivamente sobre o dinheiro que entrou na conta no período filtrado.",
+                "Regra de Ouro DemBase: Custos Fixos são ajustados às despesas reais (ou piso); "
+                "os saldos de Semi Fixos, Metas e Conhecimento ficam retidos nos potes (sem inflar o Caixa Livre); "
+                "e o restante fecha 100% entre Liberdade Financeira e Prazeres via Slider.",
                 size=11, color=T.TEXT_PRIMARY, expand=True,
             ),
         ]),
@@ -534,6 +674,5 @@ def montar_aba_potes(page: ft.Page) -> ft.Control:
     ])
 
     _atualizar_cabecalho_mes()
-    # Estado visual inicial (controles ainda não montados na página)
     _atualizar_tela(montado=False)
     return conteudo

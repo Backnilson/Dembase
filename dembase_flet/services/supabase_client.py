@@ -635,21 +635,37 @@ async def listar_categorias_async(tipo: str = None) -> list:
 
 
 
-async def obter_resumo_potes_async(data_inicio: str, data_fim: str) -> dict:
+async def obter_resumo_potes_async(data_inicio: str, data_fim: str, piso_custos_fixos: float = 1150.00) -> dict:
+    chave_p = f"{data_inicio}_{data_fim}_{float(piso_custos_fixos)}"
+    cached = obter_cache("potes_resumo", subchave=chave_p)
+    if cached is not None:
+        return dict(cached)
 
-
-
-    return await asyncio.to_thread(obter_resumo_potes, data_inicio, data_fim)
-
-
-
-
-
-
-
-
-
-
+    padrao = {"renda": 0, "total_gasto": 0, "saldo": 0,
+              "percentual_renda_usado": 0, "potes": [],
+              "sem_pote": {"qtd": 0, "total": 0}}
+    try:
+        resp = await asyncio.to_thread(
+            lambda: supabase.rpc(
+                "get_potes_resumo",
+                {"p_data_inicio": data_inicio, "p_data_fim": data_fim, "p_piso_fixos": float(piso_custos_fixos)}
+            ).execute()
+        )
+        dados = resp.data or padrao
+        salvar_cache("potes_resumo", dados, subchave=chave_p, ttl=TTL_RESUMO_POTES)
+        return dados
+    except Exception as ex:
+        # Fallback para RPC com 2 parâmetros se necessário
+        try:
+            resp = await asyncio.to_thread(
+                lambda: supabase.rpc("get_potes_resumo", {"p_data_inicio": data_inicio, "p_data_fim": data_fim}).execute()
+            )
+            dados = resp.data or padrao
+            salvar_cache("potes_resumo", dados, subchave=chave_p, ttl=TTL_RESUMO_POTES)
+            return dados
+        except Exception:
+            logger.warning(f"Erro ao obter resumo potes async: {ex}")
+            return padrao
 
 async def obter_dashboard_periodo_async(data_inicio: str, data_fim: str) -> dict:
 
@@ -1088,73 +1104,36 @@ def obter_ou_criar_fatura_por_mes_ano(cartao_id: str, mes: int, ano: int) -> dic
 
 
     dia_fech = int(cartao.get("dia_fechamento") or 1)
-
-
-
     dia_venc = int(cartao.get("dia_vencimento") or 10)
 
-
-
-    
-
-
-
     import calendar
-
-
-
-    last_day = calendar.monthrange(ano, mes)[1]
-
-
-
-    df_dia = min(dia_fech, last_day)
-
-
-
-    dv_dia = min(dia_venc, last_day)
-
-
-
-    
-
-
-
-    data_fech = f"{ano:04d}-{mes:02d}-{df_dia:02d}"
-
-
-
+    # REGRA DE OURO: mes e ano representam o MÊS e ANO DO VENCIMENTO da fatura
+    last_day_venc = calendar.monthrange(ano, mes)[1]
+    dv_dia = min(dia_venc, last_day_venc)
     data_venc = f"{ano:04d}-{mes:02d}-{dv_dia:02d}"
 
+    # Se dia_vencimento < dia_fechamento, a fatura fechou no mês anterior
+    if dia_venc < dia_fech:
+        if mes == 1:
+            mes_fech = 12
+            ano_fech = ano - 1
+        else:
+            mes_fech = mes - 1
+            ano_fech = ano
+    else:
+        mes_fech = mes
+        ano_fech = ano
 
-
-    
-
-
+    last_day_fech = calendar.monthrange(ano_fech, mes_fech)[1]
+    df_dia = min(dia_fech, last_day_fech)
+    data_fech = f"{ano_fech:04d}-{mes_fech:02d}-{df_dia:02d}"
 
     return criar_ou_obter_fatura(
-
-
-
         cartao_id=cartao_id,
-
-
-
         mes=mes,
-
-
-
         ano=ano,
-
-
-
         data_vencimento=data_venc,
-
-
-
         data_fechamento=data_fech,
-
-
-
     )
 
 
@@ -6379,94 +6358,40 @@ def registrar_distribuicao_receita(lancamento_id: str, itens: list[dict]) -> int
 
 
 
-def obter_resumo_potes(data_inicio: str, data_fim: str, forcar_atualizacao: bool = False) -> dict:
-
-
-
+def obter_resumo_potes(data_inicio: str, data_fim: str, forcar_atualizacao: bool = False, piso_custos_fixos: float = 1150.00) -> dict:
     """
-
-
-
     Chama 'get_potes_resumo' com cache de curta duração em RAM (120s) para evitar UI blocking.
-
-
-
+    Aplica a arquitetura unificada com piso de custos fixos e conexão com Caixa Livre.
     """
-
-
-
-    chave_p = f"{data_inicio}_{data_fim}"
-
-
-
+    chave_p = f"{data_inicio}_{data_fim}_{float(piso_custos_fixos)}"
     if not forcar_atualizacao:
-
-
-
         cached = obter_cache("potes_resumo", subchave=chave_p)
-
-
-
         if cached is not None:
-
-
-
             return dict(cached)
 
-
-
-
-
-
-
-    resp = supabase.rpc(
-
-
-
-        "get_potes_resumo",
-
-
-
-        {"p_data_inicio": data_inicio, "p_data_fim": data_fim},
-
-
-
-    ).execute()
-
-
-
-    dados = resp.data or {"renda": 0, "total_gasto": 0, "saldo": 0,
-
-
-
-                         "percentual_renda_usado": 0, "potes": [],
-
-
-
-                         "sem_pote": {"qtd": 0, "total": 0}}
-
-
+    padrao = {"renda": 0, "total_gasto": 0, "saldo": 0,
+              "percentual_renda_usado": 0, "potes": [],
+              "sem_pote": {"qtd": 0, "total": 0}}
+    try:
+        resp = supabase.rpc(
+            "get_potes_resumo",
+            {"p_data_inicio": data_inicio, "p_data_fim": data_fim, "p_piso_fixos": float(piso_custos_fixos)},
+        ).execute()
+        dados = resp.data or padrao
+    except Exception:
+        try:
+            resp = supabase.rpc(
+                "get_potes_resumo",
+                {"p_data_inicio": data_inicio, "p_data_fim": data_fim},
+            ).execute()
+            dados = resp.data or padrao
+        except Exception:
+            dados = padrao
 
     salvar_cache("potes_resumo", dados, subchave=chave_p, ttl=TTL_RESUMO_POTES)
-
-
-
     return dados
 
 
-
-
-
-
-
-
-
-
-
-# =============================================================================
-
-# CAIXINHAS DE TETO (Provisionamento e Ritmo de Gastos)
-# =============================================================================
 def _tratar_erro_caixinha(ex: Exception) -> str:
     """Retorna mensagem amigável caso a tabela ou RPC ainda não tenham sido migradas no Supabase."""
     err_str = str(ex)
@@ -8064,3 +7989,772 @@ async def obter_calendario_financeiro_mes_async(
     data_fim: str | None = None,
 ) -> dict:
     return await asyncio.to_thread(obter_calendario_financeiro_mes, mes, ano, data_inicio, data_fim)
+
+
+# =============================================================================
+# COFRES DE INVESTIMENTO & PATRIMÔNIO ("Meu Cofre")
+# =============================================================================
+
+def garantir_cofres_padrao(user_id: str = None) -> None:
+    """Garante a existência dos dois cofres padrão: Porquinho e Renda Fixa 102% CDI."""
+    try:
+        u = usuario_atual()
+        uid = user_id or (u.id if u else None)
+        if not uid:
+            return
+        # Tenta via RPC
+        try:
+            supabase.rpc("fn_garantir_cofres_padrao", {"p_user_id": str(uid)}).execute()
+            return
+        except Exception:
+            pass
+
+        # Fallback direto via Python
+        resp = supabase.table("cofres_investimento").select("id, tipo").eq("user_id", str(uid)).eq("ativo", True).execute()
+        tipos_existentes = {r.get("tipo") for r in (resp.data or [])}
+
+        if "reserva_emergencia" not in tipos_existentes:
+            supabase.table("cofres_investimento").insert({
+                "user_id": str(uid),
+                "nome": "Porquinho (Reserva de Emergência)",
+                "tipo": "reserva_emergencia",
+                "cor": "#10B981",
+                "icone": "savings",
+                "meta_valor": 10000.00,
+                "percentual_cdi": 100.00,
+                "ordem": 1,
+            }).execute()
+
+        if "renda_fixa" not in tipos_existentes:
+            supabase.table("cofres_investimento").insert({
+                "user_id": str(uid),
+                "nome": "Renda Fixa (102% CDI)",
+                "tipo": "renda_fixa",
+                "cor": "#00E676",
+                "icone": "trending_up",
+                "meta_valor": 50000.00,
+                "percentual_cdi": 102.00,
+                "ordem": 2,
+            }).execute()
+
+        # Config de CDI
+        cfg_resp = supabase.table("cofres_config").select("user_id").eq("user_id", str(uid)).maybe_single().execute()
+        if not (cfg_resp and cfg_resp.data):
+            supabase.table("cofres_config").insert({
+                "user_id": str(uid),
+                "taxa_cdi_anual": 10.75,
+            }).execute()
+    except Exception as ex:
+        print(f"[AVISO] garantir_cofres_padrao: {ex}")
+
+
+def listar_cofres_investimento(forcar_atualizacao: bool = False) -> list[dict]:
+    """Retorna a lista de cofres ativos do usuário autenticado."""
+    u = usuario_atual()
+    if not u:
+        return []
+    uid = str(u.id)
+    cache_k = f"cofres_investimento_{uid}"
+    if not forcar_atualizacao:
+        cached = obter_cache(cache_k)
+        if cached is not None:
+            return cached
+
+    garantir_cofres_padrao(uid)
+    try:
+        resp = (
+            supabase.table("cofres_investimento")
+            .select("*")
+            .eq("user_id", uid)
+            .eq("ativo", True)
+            .order("ordem")
+            .execute()
+        )
+        itens = resp.data or []
+        for it in itens:
+            it["saldo_atual"] = float(it.get("saldo_atual", 0.0) or 0.0)
+            it["total_aportado"] = float(it.get("total_aportado", 0.0) or 0.0)
+            it["total_rendimentos"] = float(it.get("total_rendimentos", 0.0) or 0.0)
+            it["total_resgatado"] = float(it.get("total_resgatado", 0.0) or 0.0)
+            it["meta_valor"] = float(it.get("meta_valor", 0.0) or 0.0)
+            it["percentual_cdi"] = float(it.get("percentual_cdi", 102.0) or 102.0)
+        salvar_cache(cache_k, itens, ttl=60)
+        return itens
+    except Exception as ex:
+        print(f"[ERRO] listar_cofres_investimento: {ex}")
+        return []
+
+
+def obter_cofre_por_id(cofre_id: str) -> dict | None:
+    """Busca detalhes de um cofre por ID."""
+    try:
+        resp = supabase.table("cofres_investimento").select("*").eq("id", str(cofre_id)).maybe_single().execute()
+        if resp and resp.data:
+            it = resp.data
+            it["saldo_atual"] = float(it.get("saldo_atual", 0.0) or 0.0)
+            it["total_aportado"] = float(it.get("total_aportado", 0.0) or 0.0)
+            it["total_rendimentos"] = float(it.get("total_rendimentos", 0.0) or 0.0)
+            it["total_resgatado"] = float(it.get("total_resgatado", 0.0) or 0.0)
+            it["meta_valor"] = float(it.get("meta_valor", 0.0) or 0.0)
+            it["percentual_cdi"] = float(it.get("percentual_cdi", 102.0) or 102.0)
+            return it
+    except Exception as ex:
+        print(f"[ERRO] obter_cofre_por_id: {ex}")
+    return None
+
+
+def criar_cofre_investimento(dados: dict) -> dict:
+    """Cria um novo cofre personalizado."""
+    u = usuario_atual()
+    if not u:
+        raise ValueError("Usuário não autenticado.")
+    uid = str(u.id)
+    payload = {
+        "user_id": uid,
+        "nome": str(dados.get("nome", "Novo Cofre")).strip(),
+        "tipo": dados.get("tipo", "renda_fixa"),
+        "cor": dados.get("cor", "#00E676"),
+        "icone": dados.get("icone", "savings"),
+        "meta_valor": float(dados.get("meta_valor", 0.0) or 0.0),
+        "percentual_cdi": float(dados.get("percentual_cdi", 102.0) or 102.0),
+        "ordem": int(dados.get("ordem", 10)),
+        "saldo_atual": 0.0,
+        "total_aportado": 0.0,
+        "total_rendimentos": 0.0,
+        "total_resgatado": 0.0,
+        "ativo": True,
+    }
+    resp = supabase.table("cofres_investimento").insert(payload).execute()
+    invalidar_cache(f"cofres_investimento_{uid}")
+    item = resp.data[0] if resp.data else payload
+    return item
+
+
+def atualizar_cofre_investimento(cofre_id: str, dados: dict) -> dict:
+    """Atualiza dados do cofre (nome, meta, taxa, cor, icone)."""
+    payload = {}
+    if "nome" in dados:
+        payload["nome"] = str(dados["nome"]).strip()
+    if "meta_valor" in dados:
+        payload["meta_valor"] = float(dados["meta_valor"] or 0.0)
+    if "percentual_cdi" in dados:
+        payload["percentual_cdi"] = float(dados["percentual_cdi"] or 102.0)
+    if "cor" in dados:
+        payload["cor"] = str(dados["cor"])
+    if "icone" in dados:
+        payload["icone"] = str(dados["icone"])
+    if "ativo" in dados:
+        payload["ativo"] = bool(dados["ativo"])
+
+    resp = supabase.table("cofres_investimento").update(payload).eq("id", str(cofre_id)).execute()
+    u = usuario_atual()
+    if u:
+        invalidar_cache(f"cofres_investimento_{u.id}")
+    return resp.data[0] if resp.data else {}
+
+
+def excluir_cofre_investimento(cofre_id: str) -> bool:
+    """Desativa um cofre."""
+    try:
+        supabase.table("cofres_investimento").update({"ativo": False}).eq("id", str(cofre_id)).execute()
+        u = usuario_atual()
+        if u:
+            invalidar_cache(f"cofres_investimento_{u.id}")
+        return True
+    except Exception as ex:
+        print(f"[ERRO] excluir_cofre_investimento: {ex}")
+        return False
+
+
+def registrar_aporte_cofre(
+    cofre_id: str,
+    valor: float,
+    data: str = None,
+    descricao: str = "",
+    conta_origem_id: str = None,
+    lancar_no_extrato: bool = False,
+) -> dict:
+    """Registra um aporte (saiu do bolso) no cofre."""
+    from datetime import date
+    val = round(float(valor or 0.0), 2)
+    if val <= 0:
+        raise ValueError("O valor do aporte deve ser maior que zero.")
+
+    cofre = obter_cofre_por_id(cofre_id)
+    if not cofre:
+        raise ValueError("Cofre não encontrado.")
+
+    u = usuario_atual()
+    if not u:
+        raise ValueError("Usuário não autenticado.")
+    uid = str(u.id)
+
+    saldo_ant = cofre["saldo_atual"]
+    saldo_pos = round(saldo_ant + val, 2)
+    tot_aport = round(cofre["total_aportado"] + val, 2)
+    dt = data or date.today().isoformat()
+
+    lanc_id = None
+    if lancar_no_extrato and conta_origem_id:
+        try:
+            lanc = criar_lancamento({
+                "tipo": "Despesa",
+                "subtipo": "Investimento",
+                "forma_movimentacao": "Débito",
+                "valor": val,
+                "data": dt,
+                "conta_id": conta_origem_id,
+                "descricao": descricao or f"Aporte: {cofre['nome']}",
+                "regra": "Investimento",
+                "status": "Pago",
+            })
+            if lanc and isinstance(lanc, dict):
+                lanc_id = lanc.get("id")
+        except Exception as ex:
+            print(f"[AVISO] Falha ao criar lançamento de débito do aporte: {ex}")
+
+    mov_resp = supabase.table("cofres_movimentacoes").insert({
+        "cofre_id": str(cofre_id),
+        "user_id": uid,
+        "tipo": "aporte",
+        "valor": val,
+        "saldo_anterior": saldo_ant,
+        "saldo_posterior": saldo_pos,
+        "descricao": descricao or "Aporte",
+        "data": dt,
+        "conta_origem_id": conta_origem_id,
+        "lancamento_id": lanc_id,
+    }).execute()
+
+    supabase.table("cofres_investimento").update({
+        "saldo_atual": saldo_pos,
+        "total_aportado": tot_aport,
+    }).eq("id", str(cofre_id)).execute()
+
+    invalidar_cache(f"cofres_investimento_{uid}")
+    return mov_resp.data[0] if mov_resp.data else {}
+
+
+def registrar_resgate_cofre(
+    cofre_id: str,
+    valor: float,
+    data: str = None,
+    descricao: str = "",
+    conta_destino_id: str = None,
+    lancar_no_extrato: bool = False,
+) -> dict:
+    """Registra um resgate (voltou pro caixa) do cofre."""
+    from datetime import date
+    from core.constants import formatar_moeda
+    val = round(float(valor or 0.0), 2)
+    if val <= 0:
+        raise ValueError("O valor do resgate deve ser maior que zero.")
+
+    cofre = obter_cofre_por_id(cofre_id)
+    if not cofre:
+        raise ValueError("Cofre não encontrado.")
+
+    saldo_ant = cofre["saldo_atual"]
+    if val > (saldo_ant + 0.005):
+        raise ValueError(f"Saldo insuficiente no cofre ({formatar_moeda(saldo_ant)}) para resgate de {formatar_moeda(val)}.")
+
+    u = usuario_atual()
+    if not u:
+        raise ValueError("Usuário não autenticado.")
+    uid = str(u.id)
+
+    saldo_pos = round(max(0.0, saldo_ant - val), 2)
+    tot_resg = round(cofre["total_resgatado"] + val, 2)
+    dt = data or date.today().isoformat()
+
+    lanc_id = None
+    if lancar_no_extrato and conta_destino_id:
+        try:
+            lanc = criar_lancamento({
+                "tipo": "Receita",
+                "subtipo": "Entrada",
+                "forma_movimentacao": "Pix",
+                "valor": val,
+                "data": dt,
+                "conta_id": conta_destino_id,
+                "descricao": descricao or f"Resgate: {cofre['nome']}",
+                "status": "Pago",
+            })
+            if lanc and isinstance(lanc, dict):
+                lanc_id = lanc.get("id")
+        except Exception as ex:
+            print(f"[AVISO] Falha ao criar lançamento de receita do resgate: {ex}")
+
+    mov_resp = supabase.table("cofres_movimentacoes").insert({
+        "cofre_id": str(cofre_id),
+        "user_id": uid,
+        "tipo": "resgate",
+        "valor": val,
+        "saldo_anterior": saldo_ant,
+        "saldo_posterior": saldo_pos,
+        "descricao": descricao or "Resgate",
+        "data": dt,
+        "conta_origem_id": conta_destino_id,
+        "lancamento_id": lanc_id,
+    }).execute()
+
+    supabase.table("cofres_investimento").update({
+        "saldo_atual": saldo_pos,
+        "total_resgatado": tot_resg,
+    }).eq("id", str(cofre_id)).execute()
+
+    invalidar_cache(f"cofres_investimento_{uid}")
+    return mov_resp.data[0] if mov_resp.data else {}
+
+
+def registrar_rendimento_direto(
+    cofre_id: str,
+    valor: float,
+    data: str = None,
+    descricao: str = "",
+) -> dict:
+    """Opção A: Informa diretamente o valor que rendeu no dia ou mês (juros ganhos)."""
+    from datetime import date
+    val = round(float(valor or 0.0), 2)
+    if val <= 0:
+        raise ValueError("O valor do rendimento deve ser maior que zero.")
+
+    cofre = obter_cofre_por_id(cofre_id)
+    if not cofre:
+        raise ValueError("Cofre não encontrado.")
+
+    u = usuario_atual()
+    if not u:
+        raise ValueError("Usuário não autenticado.")
+    uid = str(u.id)
+
+    saldo_ant = cofre["saldo_atual"]
+    saldo_pos = round(saldo_ant + val, 2)
+    tot_rend = round(cofre["total_rendimentos"] + val, 2)
+    dt = data or date.today().isoformat()
+
+    mov_resp = supabase.table("cofres_movimentacoes").insert({
+        "cofre_id": str(cofre_id),
+        "user_id": uid,
+        "tipo": "rendimento",
+        "valor": val,
+        "saldo_anterior": saldo_ant,
+        "saldo_posterior": saldo_pos,
+        "descricao": descricao or "Rendimento Direto",
+        "data": dt,
+    }).execute()
+
+    supabase.table("cofres_investimento").update({
+        "saldo_atual": saldo_pos,
+        "total_rendimentos": tot_rend,
+    }).eq("id", str(cofre_id)).execute()
+
+    invalidar_cache(f"cofres_investimento_{uid}")
+    return mov_resp.data[0] if mov_resp.data else {}
+
+
+def registrar_ajuste_por_saldo_atual(
+    cofre_id: str,
+    saldo_digitado: float,
+    data: str = None,
+    descricao: str = "",
+) -> dict:
+    """
+    Opção B (Ajuste por Saldo Atual - Inteligente):
+    Compara o saldo líquido digitado com o saldo anterior do cofre e registra a diferença
+    positiva como Rendimento do Período automaticamente!
+    """
+    from datetime import date
+    from core.constants import formatar_moeda
+    novo_saldo = round(float(saldo_digitado or 0.0), 2)
+    cofre = obter_cofre_por_id(cofre_id)
+    if not cofre:
+        raise ValueError("Cofre não encontrado.")
+
+    u = usuario_atual()
+    if not u:
+        raise ValueError("Usuário não autenticado.")
+    uid = str(u.id)
+
+    saldo_ant = cofre["saldo_atual"]
+    diff = round(novo_saldo - saldo_ant, 2)
+    dt = data or date.today().isoformat()
+
+    if abs(diff) < 0.005:
+        return {
+            "tipo_ajuste": "sem_alteracao",
+            "diferenca": 0.0,
+            "saldo_anterior": saldo_ant,
+            "saldo_novo": novo_saldo,
+            "mensagem": "O saldo digitado é idêntico ao saldo atual do cofre.",
+        }
+
+    if diff > 0:
+        tot_rend = round(cofre["total_rendimentos"] + diff, 2)
+        mov_resp = supabase.table("cofres_movimentacoes").insert({
+            "cofre_id": str(cofre_id),
+            "user_id": uid,
+            "tipo": "rendimento",
+            "valor": diff,
+            "saldo_anterior": saldo_ant,
+            "saldo_posterior": novo_saldo,
+            "descricao": descricao or f"Rendimento automático por ajuste de saldo ({formatar_moeda(saldo_ant)} → {formatar_moeda(novo_saldo)})",
+            "data": dt,
+        }).execute()
+
+        supabase.table("cofres_investimento").update({
+            "saldo_atual": novo_saldo,
+            "total_rendimentos": tot_rend,
+        }).eq("id", str(cofre_id)).execute()
+
+        invalidar_cache(f"cofres_investimento_{uid}")
+        return {
+            "tipo_ajuste": "rendimento",
+            "diferenca": diff,
+            "saldo_anterior": saldo_ant,
+            "saldo_novo": novo_saldo,
+            "movimentacao": mov_resp.data[0] if mov_resp.data else {},
+            "mensagem": f"Rendimento de +{formatar_moeda(diff)} registrado com sucesso!",
+        }
+    else:
+        val_resg = abs(diff)
+        tot_resg = round(cofre["total_resgatado"] + val_resg, 2)
+        mov_resp = supabase.table("cofres_movimentacoes").insert({
+            "cofre_id": str(cofre_id),
+            "user_id": uid,
+            "tipo": "resgate",
+            "valor": val_resg,
+            "saldo_anterior": saldo_ant,
+            "saldo_posterior": novo_saldo,
+            "descricao": descricao or f"Ajuste de saldo ({formatar_moeda(saldo_ant)} → {formatar_moeda(novo_saldo)})",
+            "data": dt,
+        }).execute()
+
+        supabase.table("cofres_investimento").update({
+            "saldo_atual": novo_saldo,
+            "total_resgatado": tot_resg,
+        }).eq("id", str(cofre_id)).execute()
+
+        invalidar_cache(f"cofres_investimento_{uid}")
+        return {
+            "tipo_ajuste": "resgate",
+            "diferenca": diff,
+            "saldo_anterior": saldo_ant,
+            "saldo_novo": novo_saldo,
+            "movimentacao": mov_resp.data[0] if mov_resp.data else {},
+            "mensagem": f"Ajuste de {formatar_moeda(val_resg)} aplicado ao saldo.",
+        }
+
+
+def obter_movimentacoes_cofres(cofre_id: str = None, limite: int = 50) -> list[dict]:
+    """Retorna o histórico recente de movimentações dos cofres."""
+    u = usuario_atual()
+    if not u:
+        return []
+    uid = str(u.id)
+    try:
+        query = (
+            supabase.table("cofres_movimentacoes")
+            .select("*, cofres_investimento(nome, tipo, cor, icone)")
+            .eq("user_id", uid)
+        )
+        if cofre_id:
+            query = query.eq("cofre_id", str(cofre_id))
+        resp = query.order("data", desc=True).order("criado_em", desc=True).limit(limite).execute()
+        itens = resp.data or []
+        for it in itens:
+            it["valor"] = float(it.get("valor", 0.0) or 0.0)
+            it["saldo_anterior"] = float(it.get("saldo_anterior", 0.0) or 0.0)
+            it["saldo_posterior"] = float(it.get("saldo_posterior", 0.0) or 0.0)
+            cinfo = it.get("cofres_investimento") or {}
+            it["cofre_nome"] = cinfo.get("nome", "Cofre")
+            it["cofre_cor"] = cinfo.get("cor", "#00E676")
+            it["cofre_icone"] = cinfo.get("icone", "savings")
+        return itens
+    except Exception as ex:
+        print(f"[ERRO] obter_movimentacoes_cofres: {ex}")
+        return []
+
+
+def excluir_movimentacao_cofre(movimentacao_id: str) -> bool:
+    """Exclui uma movimentação e recalcula atomicamente os saldos do cofre."""
+    try:
+        resp = supabase.table("cofres_movimentacoes").select("*").eq("id", str(movimentacao_id)).maybe_single().execute()
+        if not (resp and resp.data):
+            return False
+        mov = resp.data
+        cid = mov["cofre_id"]
+        supabase.table("cofres_movimentacoes").delete().eq("id", str(movimentacao_id)).execute()
+
+        todas = supabase.table("cofres_movimentacoes").select("*").eq("cofre_id", cid).order("data").order("criado_em").execute()
+        tot_ap = 0.0
+        tot_rend = 0.0
+        tot_resg = 0.0
+        saldo_corr = 0.0
+        for m in (todas.data or []):
+            tp = m.get("tipo")
+            v = float(m.get("valor", 0.0) or 0.0)
+            if tp == "aporte":
+                tot_ap += v
+                saldo_corr += v
+            elif tp == "rendimento":
+                tot_rend += v
+                saldo_corr += v
+            elif tp == "resgate":
+                tot_resg += v
+                saldo_corr = max(0.0, saldo_corr - v)
+
+        supabase.table("cofres_investimento").update({
+            "saldo_atual": round(saldo_corr, 2),
+            "total_aportado": round(tot_ap, 2),
+            "total_rendimentos": round(tot_rend, 2),
+            "total_resgatado": round(tot_resg, 2),
+        }).eq("id", str(cid)).execute()
+
+        u = usuario_atual()
+        if u:
+            invalidar_cache(f"cofres_investimento_{u.id}")
+        return True
+    except Exception as ex:
+        print(f"[ERRO] excluir_movimentacao_cofre: {ex}")
+        return False
+
+
+def obter_config_taxa_cdi() -> float:
+    """Retorna a taxa CDI anual configurada (padrão 10.75% a.a.)."""
+    u = usuario_atual()
+    if not u:
+        return 10.75
+    uid = str(u.id)
+    try:
+        resp = supabase.table("cofres_config").select("taxa_cdi_anual").eq("user_id", uid).maybe_single().execute()
+        if resp and resp.data:
+            return float(resp.data.get("taxa_cdi_anual", 10.75) or 10.75)
+    except Exception:
+        pass
+    return 10.75
+
+
+def salvar_config_taxa_cdi(taxa: float) -> bool:
+    """Salva a taxa CDI anual configurada."""
+    u = usuario_atual()
+    if not u:
+        return False
+    uid = str(u.id)
+    t = round(float(taxa or 10.75), 2)
+    try:
+        supabase.table("cofres_config").upsert({
+            "user_id": uid,
+            "taxa_cdi_anual": t,
+        }).execute()
+        return True
+    except Exception as ex:
+        print(f"[ERRO] salvar_config_taxa_cdi: {ex}")
+        return False
+
+
+def obter_resumo_investimentos_patrimonio(forcar_atualizacao: bool = False) -> dict:
+    """
+    Retorna o pacote consolidado de Wealth Management:
+    - Patrimônio Total Acumulado
+    - Meu Suor (Total Aportado Líquido) vs Juros (Rendimento Acumulado)
+    - Lucro % sobre o capital investido
+    - Estimativa da Máquina de Renda Passiva (R$/mês e R$/dia)
+    - Cards dos Ativos individuais (Porquinho e 102% CDI)
+    - Séries de dados para os Gráficos
+    - Badges de gamificação e marcos atingidos
+    """
+    from datetime import date
+    from collections import defaultdict
+    from core.constants import MESES_NOMES, formatar_moeda
+
+    cofres = listar_cofres_investimento(forcar_atualizacao=forcar_atualizacao)
+    taxa_cdi = obter_config_taxa_cdi()
+    movs = obter_movimentacoes_cofres(limite=200)
+
+    patrimonio_total = sum(c["saldo_atual"] for c in cofres)
+    total_aportado_bruto = sum(c["total_aportado"] for c in cofres)
+    total_resgatado = sum(c["total_resgatado"] for c in cofres)
+    total_aportado_liquido = max(0.0, total_aportado_bruto - total_resgatado)
+    total_rendimentos = sum(c["total_rendimentos"] for c in cofres)
+
+    lucro_pct = (
+        round((total_rendimentos / total_aportado_liquido) * 100.0, 2)
+        if total_aportado_liquido > 0.005
+        else 0.0
+    )
+
+    # Taxa CDI efetiva média (considerando Renda Fixa a 102% CDI)
+    taxa_anual_efetiva = (taxa_cdi * 1.02) / 100.0
+    # Taxa mensal equivalente: (1 + taxa_anual)^(1/12) - 1
+    taxa_mensal_efetiva = ((1.0 + taxa_anual_efetiva) ** (1.0 / 12.0)) - 1.0
+    renda_mensal_estimada = round(patrimonio_total * taxa_mensal_efetiva, 2)
+    renda_diaria_estimada = round(renda_mensal_estimada / 30.0, 2)
+
+    # Agregação por mês (últimos 6 meses)
+    meses_ordem = []
+    hoje_dt = date.today()
+    for i in range(5, -1, -1):
+        m = hoje_dt.month - i
+        a = hoje_dt.year
+        while m <= 0:
+            m += 12
+            a -= 1
+        meses_ordem.append(f"{a:04d}-{m:02d}")
+
+    aportes_por_mes = defaultdict(float)
+    rendimentos_por_mes = defaultdict(float)
+    resgates_por_mes = defaultdict(float)
+
+    for mv in movs:
+        dt_str = str(mv.get("data", ""))[:7]
+        tp = mv.get("tipo")
+        v = float(mv.get("valor", 0.0) or 0.0)
+        if tp == "aporte":
+            aportes_por_mes[dt_str] += v
+        elif tp == "rendimento":
+            rendimentos_por_mes[dt_str] += v
+        elif tp == "resgate":
+            resgates_por_mes[dt_str] += v
+
+    historico_mensal = []
+    for ym in meses_ordem:
+        ano_i, mes_i = int(ym[:4]), int(ym[5:7])
+        lbl_mes = f"{MESES_NOMES[mes_i - 1][:3]}/{str(ano_i)[2:]}"
+        ap_mes = round(aportes_por_mes[ym], 2)
+        rend_mes = round(rendimentos_por_mes[ym], 2)
+        resg_mes = round(resgates_por_mes[ym], 2)
+        historico_mensal.append({
+            "mes_chave": ym,
+            "label": lbl_mes,
+            "aportes": ap_mes,
+            "rendimentos": rend_mes,
+            "resgates": resg_mes,
+            "saldo_liquido_mes": round(ap_mes + rend_mes - resg_mes, 2),
+        })
+
+    # Simulação da curva acumulada retroativa que converge exatamente para os saldos atuais
+    saldo_atual_running = patrimonio_total
+    aporte_atual_running = total_aportado_liquido
+    rendimento_atual_running = total_rendimentos
+
+    evol_reversa = []
+    evol_reversa.append({
+        "label": historico_mensal[-1]["label"] if historico_mensal else "Atual",
+        "mes_chave": meses_ordem[-1] if meses_ordem else "",
+        "aporte_acumulado": aporte_atual_running,
+        "rendimento_acumulado": rendimento_atual_running,
+        "patrimonio_total": saldo_atual_running,
+    })
+
+    for i in range(len(historico_mensal) - 2, -1, -1):
+        item_prox = historico_mensal[i + 1]
+        saldo_atual_running = max(0.0, saldo_atual_running - item_prox["saldo_liquido_mes"])
+        liq_ap = item_prox["aportes"] - item_prox["resgates"]
+        aporte_atual_running = max(0.0, aporte_atual_running - liq_ap)
+        rendimento_atual_running = max(0.0, rendimento_atual_running - item_prox["rendimentos"])
+        evol_reversa.append({
+            "label": historico_mensal[i]["label"],
+            "mes_chave": historico_mensal[i]["mes_chave"],
+            "aporte_acumulado": round(aporte_atual_running, 2),
+            "rendimento_acumulado": round(rendimento_atual_running, 2),
+            "patrimonio_total": round(saldo_atual_running, 2),
+        })
+
+    evolucao_patrimonial = list(reversed(evol_reversa))
+
+    # Gamificação: Conquistas e Marcos
+    qtd_meses_aportados = sum(1 for hm in historico_mensal if hm["aportes"] > 0)
+    badges = [
+        {
+            "id": "primeiro_passo",
+            "titulo": "Primeiro Tijolo",
+            "descricao": "Primeiro aporte realizado no cofre.",
+            "icone": "emoji_events",
+            "atingido": total_aportado_bruto > 0,
+            "meta_label": "1º Aporte",
+            "progresso": 1.0 if total_aportado_bruto > 0 else 0.0,
+        },
+        {
+            "id": "mil_reais",
+            "titulo": "Reserva Inicial",
+            "descricao": "Atingiu R$ 1.000,00 de patrimônio.",
+            "icone": "military_tech",
+            "atingido": patrimonio_total >= 1000.0,
+            "meta_label": "R$ 1.000",
+            "progresso": min(1.0, patrimonio_total / 1000.0),
+        },
+        {
+            "id": "cinco_mil",
+            "titulo": "Clube dos 5K",
+            "descricao": "Acumulou R$ 5.000,00 de patrimônio.",
+            "icone": "shield",
+            "atingido": patrimonio_total >= 5000.0,
+            "meta_label": "R$ 5.000",
+            "progresso": min(1.0, patrimonio_total / 5000.0),
+        },
+        {
+            "id": "dez_mil",
+            "titulo": "Fortaleza 10K",
+            "descricao": "Alcançou R$ 10.000,00 no cofre.",
+            "icone": "workspace_premium",
+            "atingido": patrimonio_total >= 10000.0,
+            "meta_label": "R$ 10.000",
+            "progresso": min(1.0, patrimonio_total / 10000.0),
+        },
+        {
+            "id": "constancia",
+            "titulo": "Constância Lendária",
+            "descricao": "Aportou em 3 ou mais meses recentes.",
+            "icone": "local_fire_department",
+            "atingido": qtd_meses_aportados >= 3,
+            "meta_label": f"{qtd_meses_aportados}/3 Meses",
+            "progresso": min(1.0, qtd_meses_aportados / 3.0),
+        },
+        {
+            "id": "renda_ativa",
+            "titulo": "Máquina Ligada",
+            "descricao": "Ganhou mais de R$ 50,00 só com juros.",
+            "icone": "auto_awesome",
+            "atingido": total_rendimentos >= 50.0,
+            "meta_label": f"{formatar_moeda(total_rendimentos)} / R$ 50",
+            "progresso": min(1.0, total_rendimentos / 50.0),
+        },
+    ]
+
+    return {
+        "patrimonio_total": patrimonio_total,
+        "total_aportado_bruto": total_aportado_bruto,
+        "total_resgatado": total_resgatado,
+        "total_aportado_liquido": total_aportado_liquido,
+        "total_rendimentos": total_rendimentos,
+        "lucro_pct": lucro_pct,
+        "taxa_cdi_anual": taxa_cdi,
+        "renda_mensal_estimada": renda_mensal_estimada,
+        "renda_diaria_estimada": renda_diaria_estimada,
+        "cofres": cofres,
+        "movimentacoes_recentes": movs[:20],
+        "historico_mensal": historico_mensal,
+        "evolucao_patrimonial": evolucao_patrimonial,
+        "badges": badges,
+    }
+
+
+async def listar_cofres_investimento_async(forcar_atualizacao: bool = False) -> list[dict]:
+    return await asyncio.to_thread(listar_cofres_investimento, forcar_atualizacao)
+
+async def obter_resumo_investimentos_patrimonio_async(forcar_atualizacao: bool = False) -> dict:
+    return await asyncio.to_thread(obter_resumo_investimentos_patrimonio, forcar_atualizacao)
+
+async def registrar_aporte_cofre_async(**kwargs) -> dict:
+    return await asyncio.to_thread(registrar_aporte_cofre, **kwargs)
+
+async def registrar_resgate_cofre_async(**kwargs) -> dict:
+    return await asyncio.to_thread(registrar_resgate_cofre, **kwargs)
+
+async def registrar_rendimento_direto_async(**kwargs) -> dict:
+    return await asyncio.to_thread(registrar_rendimento_direto, **kwargs)
+
+async def registrar_ajuste_por_saldo_atual_async(**kwargs) -> dict:
+    return await asyncio.to_thread(registrar_ajuste_por_saldo_atual, **kwargs)
+

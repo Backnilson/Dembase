@@ -1,18 +1,22 @@
 """
 =============================================================================
 DemBase v3 — core/potes.py
-Regras de negócio dos 6 POTES financeiros (lógica pura, sem I/O).
+Regras de negócio dos 6 POTES financeiros e Destinação do Caixa Livre (lógica pura).
 
-  * Validação matemática rigorosa: soma dos 6 percentuais == 100 (Decimal).
-  * Distribuição de receita em centavos pelo método do maior resto, garantindo
-    que a soma das parcelas seja EXATAMENTE igual ao valor da receita.
+  * Nova Arquitetura Unificada:
+    1. Custos Fixos (pos 1): Automático / Ajustado à Despesa (ou piso configurável R$ 1.150,00).
+    2. Custos Semi Fixos (pos 2), Metas (pos 3), Conhecimento (pos 5): Orçamentos Retidos / Intocáveis.
+       O saldo disponível fica retido no pote e NÃO infla o Caixa Livre.
+    3. Liberdade Financeira (pos 6) e Prazeres (pos 4): Conectados diretamente ao Slider do Caixa Livre.
+       Soma dos 6 potes crava SEMPRE 100,00% da Receita do período.
+    4. Blindagem contra Sobra Falsa (Teto Seguro / Pior Dia).
 =============================================================================
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
-from typing import Iterable
+from typing import Iterable, Any
 
 # =============================================================================
 # CONSTANTES
@@ -21,21 +25,22 @@ QTD_POTES = 6
 TOTAL_PERCENTUAL = Decimal("100")
 CENTAVO = Decimal("0.01")
 NOME_MAX = 40
+PISO_CUSTOS_FIXOS_PADRAO = Decimal("1150.00")
 
 POTES_PADRAO = [
     {"posicao": 1, "nome": "Custos Fixos",         "percentual": Decimal("30"), "cor": "#007AFF"},
-    {"posicao": 2, "nome": "Conforto",             "percentual": Decimal("15"), "cor": "#FF69B4"},
+    {"posicao": 2, "nome": "Custos Semi Fixos",    "percentual": Decimal("20"), "cor": "#FF69B4"},
     {"posicao": 3, "nome": "Metas",                "percentual": Decimal("15"), "cor": "#800080"},
     {"posicao": 4, "nome": "Prazeres",             "percentual": Decimal("10"), "cor": "#FF7A00"},
     {"posicao": 5, "nome": "Conhecimento",         "percentual": Decimal("5"),  "cor": "#FFD60A"},
-    {"posicao": 6, "nome": "Liberdade Financeira", "percentual": Decimal("25"), "cor": "#6C5CE7"},
+    {"posicao": 6, "nome": "Liberdade Financeira", "percentual": Decimal("20"), "cor": "#6C5CE7"},
 ]
 
 REGRAS_VALIDAS = {"Essencial", "Estilo de Vida", "Investimento"}
 
 REGRA_POR_POSICAO = {
     1: "Essencial",       # Custos Fixos
-    2: "Essencial",       # Conforto / Custos Semi Fixos
+    2: "Essencial",       # Custos Semi Fixos
     3: "Investimento",    # Metas
     4: "Estilo de Vida",  # Prazeres
     5: "Investimento",    # Conhecimento
@@ -286,3 +291,294 @@ def calcular_previsto_por_renda(renda, potes: list[Pote]) -> dict[str, Decimal]:
     if total <= 0:
         return {p.id: Decimal("0.00") for p in potes}
     return {p.id: (total * p.percentual / TOTAL_PERCENTUAL).quantize(CENTAVO, rounding=ROUND_HALF_UP) for p in potes}
+
+
+# =============================================================================
+# ARQUITETURA UNIFICADA (6 POTES + CAIXA LIVRE)
+# =============================================================================
+def _extrair_dados_pote(p: Any, pos_default: int) -> dict:
+    if isinstance(p, dict):
+        return {
+            "id": str(p.get("id") or f"pote-{pos_default}"),
+            "posicao": int(p.get("posicao") or pos_default),
+            "nome": str(p.get("nome") or f"Pote {pos_default}"),
+            "cor": str(p.get("cor") or "#94A3B8"),
+            "percentual": float(p.get("percentual") or 0.0),
+            "gasto": float(p.get("gasto") or 0.0),
+            "qtd_transacoes": int(p.get("qtd_transacoes") or 0),
+        }
+    return {
+        "id": str(getattr(p, "id", None) or f"pote-{pos_default}"),
+        "posicao": int(getattr(p, "posicao", pos_default)),
+        "nome": str(getattr(p, "nome", f"Pote {pos_default}")),
+        "cor": str(getattr(p, "cor", "#94A3B8")),
+        "percentual": float(getattr(p, "percentual", 0.0)),
+        "gasto": float(getattr(p, "gasto", 0.0)),
+        "qtd_transacoes": int(getattr(p, "qtd_transacoes", 0)),
+    }
+
+
+def calcular_arquitetura_unificada_potes(
+    receitas: float,
+    potes: list[dict | Pote],
+    piso_custos_fixos: float = 1150.0,
+    slider_pct_investimento: float = 50.0,
+    protecao_fluxo: dict | None = None,
+    travar_pelo_teto_seguro: bool = True,
+) -> dict:
+    """
+    Unificação Matemática Rigorosa entre os 6 Potes e a Destinação do Caixa Livre:
+    1. Custos Fixos (pos 1):
+       Limite = max(gasto real, piso de R$ 1.150,00). Percentual calculado dinamicamente sobre a receita.
+    2. Custos Semi Fixos (pos 2), Metas (pos 3), Conhecimento (pos 5):
+       Orçamentos retidos / intocáveis. Os saldos disponíveis pertencem aos potes e são retidos,
+       sem inflar o Caixa Livre. Se houver estouro (gasto > limite), o excesso abate do Caixa Livre.
+    3. Liberdade Financeira (pos 6) e Prazeres (pos 4):
+       A fatia restante da receita é o orçamento do Caixa Livre. O slider divide essa fatia
+       entre Liberdade Financeira (Guardar/Investir) e Prazeres (Livre sem Culpa).
+       A soma dos 6 potes crava SEMPRE 100,00%!
+    4. Desconta os gastos de Prazeres e aportes de Liberdade Financeira, respeitando
+       a trava de Teto Seguro do Pior Dia.
+    """
+    rec = round(max(0.0, float(receitas or 0.0)), 2)
+    piso_fix = round(max(0.0, float(piso_custos_fixos if piso_custos_fixos is not None else 1150.0)), 2)
+    s_inv = round(max(0.0, min(100.0, float(slider_pct_investimento if slider_pct_investimento is not None else 50.0))), 1)
+    s_livre = round(100.0 - s_inv, 1)
+
+    # Organiza os 6 potes por posição (1..6)
+    mapa_potes: dict[int, dict] = {}
+    if potes:
+        for p in potes:
+            dados = _extrair_dados_pote(p, len(mapa_potes) + 1)
+            mapa_potes[dados["posicao"]] = dados
+
+    padrao_por_pos = {d["posicao"]: d for d in POTES_PADRAO}
+    for pos in range(1, 7):
+        if pos not in mapa_potes:
+            d_pad = padrao_por_pos[pos]
+            mapa_potes[pos] = {
+                "id": f"pote-padrao-{pos}",
+                "posicao": pos,
+                "nome": d_pad["nome"],
+                "cor": d_pad["cor"],
+                "percentual": float(d_pad["percentual"]),
+                "gasto": 0.0,
+                "qtd_transacoes": 0,
+            }
+
+    p1 = mapa_potes[1]
+    p2 = mapa_potes[2]
+    p3 = mapa_potes[3]
+    p4 = mapa_potes[4]
+    p5 = mapa_potes[5]
+    p6 = mapa_potes[6]
+
+    gasto_total = round(sum(mapa_potes[pos]["gasto"] for pos in range(1, 7)), 2)
+
+    # 1. Custos Fixos (pos 1): Automático / Ajustado à Despesa
+    g1 = p1["gasto"]
+    if rec > 0:
+        lim1 = max(g1, piso_fix)
+        pct1 = min(100.0, round((lim1 / rec) * 100.0, 2))
+    else:
+        lim1 = 0.0
+        pct1 = 0.0
+
+    # 2. Custos Semi Fixos (pos 2), Metas (pos 3), Conhecimento (pos 5): Orçamentos Retidos / Intocáveis
+    pct2 = round(max(0.0, min(100.0, p2["percentual"])), 2)
+    pct3 = round(max(0.0, min(100.0, p3["percentual"])), 2)
+    pct5 = round(max(0.0, min(100.0, p5["percentual"])), 2)
+
+    lim2 = round(rec * (pct2 / 100.0), 2)
+    lim3 = round(rec * (pct3 / 100.0), 2)
+    lim5 = round(rec * (pct5 / 100.0), 2)
+
+    g2 = p2["gasto"]
+    g3 = p3["gasto"]
+    g5 = p5["gasto"]
+
+    retido2 = max(0.0, round(lim2 - g2, 2))
+    retido3 = max(0.0, round(lim3 - g3, 2))
+    retido5 = max(0.0, round(lim5 - g5, 2))
+    retido_total = round(retido2 + retido3 + retido5 + max(0.0, round(lim1 - g1, 2)), 2)
+
+    excesso_outros = round(
+        max(0.0, g2 - lim2) + max(0.0, g3 - lim3) + max(0.0, g5 - lim5) + max(0.0, g1 - lim1), 2
+    )
+
+    # 3. Orçamento Restante do Caixa Livre (Liberdade Financeira + Prazeres)
+    soma_retidos_pct = round(pct1 + pct2 + pct3 + pct5, 2)
+    pct_caixa_livre = max(0.0, round(100.0 - soma_retidos_pct, 2))
+    teto_caixa_livre = round(rec * (pct_caixa_livre / 100.0), 2)
+
+    # 4. Divisão do Slider entre Prazeres (pos 4) e Liberdade Financeira (pos 6)
+    pct4 = round(pct_caixa_livre * (s_livre / 100.0), 2)
+    lim4 = round(teto_caixa_livre * (s_livre / 100.0), 2)
+
+    # Liberdade Financeira absorve a diferença para fechar SEMPRE exatamente 100,00%
+    pct6 = round(100.0 - (pct1 + pct2 + pct3 + pct4 + pct5), 2)
+    lim6 = max(0.0, round(teto_caixa_livre - lim4, 2))
+
+    g4 = p4["gasto"]
+    g6 = p6["gasto"]
+
+    disp4_proj = max(0.0, round(lim4 - g4 - excesso_outros, 2))
+    disp6_proj = max(0.0, round(lim6 - g6, 2))
+    sobra_livre_real = round(disp4_proj + disp6_proj, 2)
+
+    # 5. Blindagem contra Sobra Falsa (Teto Seguro / Pior Dia)
+    pf = protecao_fluxo if isinstance(protecao_fluxo, dict) else {}
+    tem_pf = bool(pf and ("teto_seguro_gasto" in pf or "menor_saldo_futuro" in pf))
+    if tem_pf:
+        menor_saldo = round(float(pf.get("menor_saldo_futuro", sobra_livre_real) or 0.0), 2)
+        teto_seguro = round(max(0.0, min(sobra_livre_real, float(pf.get("teto_seguro_gasto", sobra_livre_real) or 0.0))), 2)
+        sobra_falsa = round(max(0.0, sobra_livre_real - teto_seguro), 2)
+        tem_armadilha = bool(sobra_falsa > 0.005 or menor_saldo < -0.005)
+        fica_negativo = bool(menor_saldo < -0.005)
+        dt_gargalo = pf.get("data_gargalo")
+        prox_entrada_dt = pf.get("proxima_entrada_data")
+        prox_entrada_val = round(float(pf.get("proxima_entrada_valor", 0.0) or 0.0), 2)
+    else:
+        menor_saldo = sobra_livre_real
+        teto_seguro = sobra_livre_real
+        sobra_falsa = 0.0
+        tem_armadilha = False
+        fica_negativo = sobra_livre_real < -0.005
+        dt_gargalo = None
+        prox_entrada_dt = None
+        prox_entrada_val = 0.0
+
+    # Aplicação do Teto Seguro aos dois potes do Caixa Livre
+    if travar_pelo_teto_seguro and tem_armadilha and sobra_livre_real > 0:
+        val_inv_seguro = round(teto_seguro * (s_inv / 100.0), 2)
+        val_livre_seguro = round(teto_seguro - val_inv_seguro, 2)
+        disp4_efetivo = min(disp4_proj, val_livre_seguro)
+        disp6_efetivo = min(disp6_proj, val_inv_seguro)
+    else:
+        val_inv_seguro = disp6_proj
+        val_livre_seguro = disp4_proj
+        disp4_efetivo = disp4_proj
+        disp6_efetivo = disp6_proj
+
+    # 6. Montagem dos 6 Potes Consolidados
+    potes_resultado = [
+        {
+            "id": p1["id"],
+            "posicao": 1,
+            "nome": p1["nome"],
+            "cor": p1["cor"],
+            "percentual": pct1,
+            "previsto": lim1,
+            "gasto": g1,
+            "qtd_transacoes": p1["qtd_transacoes"],
+            "restante": round(lim1 - g1, 2),
+            "tipo_comportamento": "automatico_fixo",
+            "piso_configurado": piso_fix,
+        },
+        {
+            "id": p2["id"],
+            "posicao": 2,
+            "nome": p2["nome"],
+            "cor": p2["cor"],
+            "percentual": pct2,
+            "previsto": lim2,
+            "gasto": g2,
+            "qtd_transacoes": p2["qtd_transacoes"],
+            "restante": round(lim2 - g2, 2),
+            "tipo_comportamento": "retido_intocavel",
+            "disponivel_retido": retido2,
+        },
+        {
+            "id": p3["id"],
+            "posicao": 3,
+            "nome": p3["nome"],
+            "cor": p3["cor"],
+            "percentual": pct3,
+            "previsto": lim3,
+            "gasto": g3,
+            "qtd_transacoes": p3["qtd_transacoes"],
+            "restante": round(lim3 - g3, 2),
+            "tipo_comportamento": "retido_intocavel",
+            "disponivel_retido": retido3,
+        },
+        {
+            "id": p4["id"],
+            "posicao": 4,
+            "nome": p4["nome"],
+            "cor": p4["cor"],
+            "percentual": pct4,
+            "previsto": lim4,
+            "gasto": g4,
+            "qtd_transacoes": p4["qtd_transacoes"],
+            "restante": round(lim4 - g4, 2),
+            "tipo_comportamento": "caixa_livre_prazeres",
+            "disponivel_efetivo": disp4_efetivo,
+        },
+        {
+            "id": p5["id"],
+            "posicao": 5,
+            "nome": p5["nome"],
+            "cor": p5["cor"],
+            "percentual": pct5,
+            "previsto": lim5,
+            "gasto": g5,
+            "qtd_transacoes": p5["qtd_transacoes"],
+            "restante": round(lim5 - g5, 2),
+            "tipo_comportamento": "retido_intocavel",
+            "disponivel_retido": retido5,
+        },
+        {
+            "id": p6["id"],
+            "posicao": 6,
+            "nome": p6["nome"],
+            "cor": p6["cor"],
+            "percentual": pct6,
+            "previsto": lim6,
+            "gasto": g6,
+            "qtd_transacoes": p6["qtd_transacoes"],
+            "restante": round(lim6 - g6, 2),
+            "tipo_comportamento": "caixa_livre_investimento",
+            "disponivel_efetivo": disp6_efetivo,
+        },
+    ]
+
+    soma_pct = round(sum(p["percentual"] for p in potes_resultado), 2)
+
+    return {
+        "receitas": rec,
+        "despesas_totais": gasto_total,
+        "saldo": round(rec - gasto_total, 2),
+        "potes": potes_resultado,
+        "soma_percentuais": soma_pct,
+        "piso_custos_fixos": piso_fix,
+        "retido_outros_potes": retido_total,
+        "caixa_livre": {
+            "teto_orcamento": teto_caixa_livre,
+            "pct_orcamento": pct_caixa_livre,
+            "pct_slider_investimento": s_inv,
+            "pct_slider_livre": s_livre,
+            "sobra_livre_projetada": sobra_livre_real,
+            "sobra_livre_disponivel": round(disp4_efetivo + disp6_efetivo, 2),
+            "prazeres_nome": p4["nome"],
+            "prazeres_teto": lim4,
+            "prazeres_gasto": g4,
+            "prazeres_restante_projetado": disp4_proj,
+            "prazeres_disponivel_hoje": disp4_efetivo,
+            "liberdade_nome": p6["nome"],
+            "liberdade_teto": lim6,
+            "liberdade_gasto": g6,
+            "liberdade_restante_projetado": disp6_proj,
+            "liberdade_disponivel_hoje": disp6_efetivo,
+        },
+        "blindagem": {
+            "menor_saldo_futuro": menor_saldo,
+            "teto_seguro_gasto": teto_seguro,
+            "sobra_falsa_travada": sobra_falsa,
+            "tem_armadilha_fluxo": tem_armadilha,
+            "fica_negativo_no_meio": fica_negativo,
+            "data_gargalo": dt_gargalo,
+            "proxima_entrada_data": prox_entrada_dt,
+            "proxima_entrada_valor": prox_entrada_val,
+            "travar_pelo_teto_seguro": bool(travar_pelo_teto_seguro),
+        },
+    }

@@ -205,3 +205,7 @@ def ir_relatorio_fluxo(
     if origem:
         q["origem"] = origem
     navegar(page, montar_url("/relatorios/fluxo", q))
+
+
+def ir_investimentos(page: ft.Page) -> None:
+    navegar(page, "/investimentos")

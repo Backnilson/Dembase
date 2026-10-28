@@ -222,6 +222,7 @@ def criar_view_cartoes(
 
     cartoes_lista: list[dict] = []
     faturas_lista: list[dict] = []
+    faturas_prox_lista: list[dict] = []
     resumo_periodo: dict = {}
     # Regra 1: O estado padrão (default) ao carregar deve ser obrigatoriamente "Meus Cartões"
     aba_ativa: list[str] = ["cartoes"]
@@ -299,7 +300,7 @@ def criar_view_cartoes(
             spinner.visible = True
             _safe_update()
 
-        nonlocal cartoes_lista, faturas_lista, resumo_periodo
+        nonlocal cartoes_lista, faturas_lista, faturas_prox_lista, resumo_periodo
         try:
             cartoes_lista = db.listar_cartoes(forcar_atualizacao=forcar or not inicial)
 
@@ -309,6 +310,42 @@ def criar_view_cartoes(
             except Exception as ex_fat:
                 print(f"[CartoesView] Aviso ao listar faturas filtradas: {ex_fat}")
                 faturas_brutas = []
+
+            # Regra 3: Carrega prévia da 1ª semana do mês seguinte (vencimentos dias 01 a 07)
+            mes_prox = 1 if mes_sel[0] == 12 else mes_sel[0] + 1
+            ano_prox = ano_sel[0] + 1 if mes_sel[0] == 12 else ano_sel[0]
+            try:
+                faturas_prox_brutas = db.listar_faturas(mes=mes_prox, ano=ano_prox)
+            except Exception as ex_prox:
+                print(f"[CartoesView] Aviso ao listar faturas do próximo mês: {ex_prox}")
+                faturas_prox_brutas = []
+
+            faturas_prox_filtradas = []
+            for fp in faturas_prox_brutas:
+                dv_raw = str(fp.get("data_vencimento") or "")[:10]
+                incluir_p = False
+                if dv_raw:
+                    try:
+                        dv_dt = date.fromisoformat(dv_raw)
+                        if dv_dt.year == ano_prox and dv_dt.month == mes_prox and 1 <= dv_dt.day <= 7:
+                            incluir_p = True
+                    except Exception:
+                        pass
+                else:
+                    c_ref = next((c for c in cartoes_lista if str(c.get("id")) == str(fp.get("cartao_id"))), None)
+                    if c_ref:
+                        dia_v = int(c_ref.get("dia_vencimento") or 10)
+                        if 1 <= dia_v <= 7:
+                            incluir_p = True
+
+                if incluir_p:
+                    st_p = str(fp.get("status") or "").lower()
+                    v_tot_p = float(fp.get("valor_total", 0) or 0)
+                    v_pg_p = float(fp.get("valor_pago", 0) or 0)
+                    if st_p != "paga" and (v_tot_p - v_pg_p) > 0.01:
+                        faturas_prox_filtradas.append(fp)
+
+            faturas_prox_lista = faturas_prox_filtradas
 
             ult_mes_atual = calendar.monthrange(ano_sel[0], mes_sel[0])[1]
             ini_mes_iso = date(ano_sel[0], mes_sel[0], 1).isoformat()
@@ -1218,123 +1255,9 @@ def criar_view_cartoes(
     def _renderizar_faturas_abertas():
         cartao_dict = {str(c["id"]): c for c in cartoes_lista}
         hoje = date.today()
-        melhor_c, _ = calcular_melhor_cartao(cartoes_lista, hoje)
-        melhor_cid = str(melhor_c.get("id")) if melhor_c else None
 
-        # Monta itens de faturas abertas ESTRITAMENTE do mês/ano filtrado
-        faturas_abertas_map: dict[str, dict] = {}
-        cartoes_com_fatura_no_mes: set[str] = set()
-
-        # 2.1 Faturas do banco com status aberto / pendente NO PERÍODO SELECIONADO
-        for fat in faturas_lista:
-            f_mes = int(fat.get("mes") or 0)
-            f_ano = int(fat.get("ano") or 0)
-            # Sincronização estrita de filtro: ignora faturas de outros meses
-            if f_mes != mes_sel[0] or f_ano != ano_sel[0]:
-                continue
-
-            cid = str(fat.get("cartao_id") or "")
-            cartoes_com_fatura_no_mes.add(cid)
-
-            st = str(fat.get("status", "")).lower()
-            val_tot = float(fat.get("valor_total", 0) or 0)
-            val_pg  = float(fat.get("valor_pago", 0) or 0)
-            pendente = max(0.0, val_tot - val_pg)
-
-            # Regra de Negócio: Faturas pagas ou zeradas (R$ 0,00) NUNCA aparecem em 'Faturas Abertas'
-            if st == "paga" or val_tot <= 0.01 or pendente <= 0.01:
-                continue
-
-            c_obj = cartao_dict.get(cid, fat.get("cartoes") or {})
-            chave = f"{cid}_{f_mes}_{f_ano}"
-            faturas_abertas_map[chave] = {
-                "id": fat.get("id"),
-                "cartao_id": cid,
-                "mes": f_mes,
-                "ano": f_ano,
-                "valor_total": val_tot,
-                "valor_pago": val_pg,
-                "valor_pendente": pendente,
-                "status": fat.get("status", "Aberta"),
-                "data_vencimento": fat.get("data_vencimento"),
-                "data_fechamento": fat.get("data_fechamento"),
-                "cartao": c_obj,
-            }
-
-        # 2.2 Cartões com uso de limite no mês filtrado que ainda não possuem fatura no banco
-        cartoes_resumo = resumo_periodo.get("cartoes", [])
-        for cr in cartoes_resumo:
-            cid = str(cr.get("id") or "")
-            # Se o cartão já possui fatura no banco para o mês selecionado, não sintetiza duplicata
-            if cid in cartoes_com_fatura_no_mes:
-                continue
-
-            st_cr = str(cr.get("fatura_status", "")).lower()
-            if st_cr == "paga":
-                continue
-
-            f_val = float(cr.get("fatura_valor", 0) or 0)
-            f_pg  = float(cr.get("fatura_pago", 0) or 0)
-            pend  = max(0.0, f_val - f_pg)
-
-            c_obj = cartao_dict.get(cid, cr)
-            chave = f"{cid}_{mes_sel[0]}_{ano_sel[0]}"
-            if pend > 0.01 and chave not in faturas_abertas_map:
-                info_fech = calcular_detalhes_fechamento(c_obj, hoje)
-                faturas_abertas_map[chave] = {
-                    "id": cr.get("fatura_id") or f"virtual_{cid}_{mes_sel[0]}_{ano_sel[0]}",
-                    "cartao_id": cid,
-                    "mes": mes_sel[0],
-                    "ano": ano_sel[0],
-                    "valor_total": pend,
-                    "valor_pago": f_pg,
-                    "valor_pendente": pend,
-                    "status": cr.get("fatura_status", "Aberta"),
-                    "data_vencimento": cr.get("data_vencimento") or info_fech["dt_venc"].isoformat(),
-                    "data_fechamento": info_fech["dt_fech"].isoformat(),
-                    "cartao": c_obj,
-                }
-
-        lista_faturas = list(faturas_abertas_map.values())
-
-        if not lista_faturas:
-            grid_conteudo.controls.append(
-                ft.Container(
-                    col={"xs": 12},
-                    padding=pad(all_=45),
-                    alignment=ft.Alignment(0, 0),
-                    content=ft.Column(
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        spacing=10,
-                        controls=[
-                            ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED, size=52, color=T.RECEITA),
-                            ft.Text("Tudo em dia!", color=T.TEXT_PRIMARY, size=17, weight=ft.FontWeight.BOLD),
-                            ft.Text(
-                                f"Você não possui nenhuma fatura aberta para {MESES_NOMES[mes_sel[0]]}/{ano_sel[0]}.",
-                                color=T.TEXT_MUTED,
-                                size=13,
-                            ),
-                        ],
-                    ),
-                )
-            )
-            return
-
-        # Ordenação rigorosa por data de vencimento crescente:
-        # A fatura mais atrasada ou que vence primeiro fica no topo da lista.
-        def _chave_ordem_vencimento(item):
-            dt_raw = item.get("data_vencimento")
-            if dt_raw:
-                try:
-                    dt = datetime.fromisoformat(str(dt_raw).split("T")[0]).date()
-                    return (0, dt)
-                except Exception:
-                    pass
-            return (1, date.max)
-
-        lista_faturas.sort(key=_chave_ordem_vencimento)
-
-        for fat in lista_faturas:
+        # Helper para criação modular de cards de fatura (mês atual e prévia)
+        def _criar_card_fatura(fat: dict, is_preview_proximo_mes: bool = False) -> ft.Container:
             c_obj = fat.get("cartao") or {}
             cid = str(fat.get("cartao_id") or "")
             nome_c = c_obj.get("nome", "Cartão")
@@ -1354,9 +1277,15 @@ def criar_view_cartoes(
                 except Exception:
                     pass
 
-            lbl_venc, cor_txt_venc, cor_bg_venc = formatar_status_vencimento(
-                dt_venc, fat.get("status", "Aberta"), valor_pendente=valor_pend
-            )
+            if is_preview_proximo_mes:
+                lbl_venc = f"1ª Semana ({dt_venc.strftime('%d/%m') if dt_venc else 'Início'})"
+                cor_txt_venc = T.INFO
+                cor_bg_venc = ft.Colors.with_opacity(0.12, T.INFO)
+            else:
+                lbl_venc, cor_txt_venc, cor_bg_venc = formatar_status_vencimento(
+                    dt_venc, fat.get("status", "Aberta"), valor_pendente=valor_pend
+                )
+
             mes_f = int(fat.get("mes") or mes_sel[0])
             ano_f = int(fat.get("ano") or ano_sel[0])
             eh_zerada = (valor_pend <= 0.01)
@@ -1394,12 +1323,24 @@ def criar_view_cartoes(
                     on_click=lambda _, f=fat, c=c_obj: abrir_modal_pagar_fatura(f, c),
                 )
 
-            card_fatura = ft.Container(
+            cor_borda = (
+                ft.Colors.with_opacity(0.45, T.INFO)
+                if is_preview_proximo_mes
+                else (T.WARNING if ("Vencida" in lbl_venc or "Hoje" in lbl_venc) else T.BORDER)
+            )
+
+            rotulo_fatura = (
+                f"Fatura de {MESES_NOMES[mes_f]}/{ano_f} · Prévia"
+                if is_preview_proximo_mes
+                else f"Fatura de {MESES_NOMES[mes_f]}/{ano_f}"
+            )
+
+            return ft.Container(
                 col={"xs": 12, "sm": 6, "md": 4},
                 padding=pad(all_=18),
                 bgcolor=T.SURFACE,
                 border_radius=16,
-                border=borda(1.5, T.WARNING if ("Vencida" in lbl_venc or "Hoje" in lbl_venc) else T.BORDER),
+                border=borda(1.5, cor_borda),
                 content=ft.Column(
                     spacing=14,
                     controls=[
@@ -1437,7 +1378,7 @@ def criar_view_cartoes(
                                 ft.Row(
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     controls=[
-                                        ft.Text(f"Fatura de {MESES_NOMES[mes_f]}/{ano_f}", color=T.TEXT_MUTED, size=12),
+                                        ft.Text(rotulo_fatura, color=T.TEXT_MUTED, size=12),
                                         ft.Text(bandeira.upper(), color=T.TEXT_MUTED, size=11, weight=ft.FontWeight.W_500),
                                     ],
                                 ),
@@ -1494,7 +1435,280 @@ def criar_view_cartoes(
                     ],
                 ),
             )
-            grid_conteudo.controls.append(card_fatura)
+
+        # ── 2.1 Monta Faturas do Mês Selecionado ──
+        faturas_abertas_map: dict[str, dict] = {}
+        cartoes_com_fatura_no_mes: set[str] = set()
+
+        for fat in faturas_lista:
+            f_mes = int(fat.get("mes") or 0)
+            f_ano = int(fat.get("ano") or 0)
+            # Sincronização estrita de filtro: faturas do mês selecionado
+            if f_mes != mes_sel[0] or f_ano != ano_sel[0]:
+                continue
+
+            cid = str(fat.get("cartao_id") or "")
+            cartoes_com_fatura_no_mes.add(cid)
+
+            st = str(fat.get("status", "")).lower()
+            val_tot = float(fat.get("valor_total", 0) or 0)
+            val_pg  = float(fat.get("valor_pago", 0) or 0)
+            pendente = max(0.0, val_tot - val_pg)
+
+            if st == "paga" or val_tot <= 0.01 or pendente <= 0.01:
+                continue
+
+            c_obj = cartao_dict.get(cid, fat.get("cartoes") or {})
+            chave = f"{cid}_{f_mes}_{f_ano}"
+            faturas_abertas_map[chave] = {
+                "id": fat.get("id"),
+                "cartao_id": cid,
+                "mes": f_mes,
+                "ano": f_ano,
+                "valor_total": val_tot,
+                "valor_pago": val_pg,
+                "valor_pendente": pendente,
+                "status": fat.get("status", "Aberta"),
+                "data_vencimento": fat.get("data_vencimento"),
+                "data_fechamento": fat.get("data_fechamento"),
+                "cartao": c_obj,
+            }
+
+        # Cartões com uso de limite no mês filtrado que ainda não possuem fatura no banco
+        cartoes_resumo = resumo_periodo.get("cartoes", [])
+        for cr in cartoes_resumo:
+            cid = str(cr.get("id") or "")
+            if cid in cartoes_com_fatura_no_mes:
+                continue
+
+            st_cr = str(cr.get("fatura_status", "")).lower()
+            if st_cr == "paga":
+                continue
+
+            f_val = float(cr.get("fatura_valor", 0) or 0)
+            f_pg  = float(cr.get("fatura_pago", 0) or 0)
+            pend  = max(0.0, f_val - f_pg)
+
+            c_obj = cartao_dict.get(cid, cr)
+            chave = f"{cid}_{mes_sel[0]}_{ano_sel[0]}"
+            if pend > 0.01 and chave not in faturas_abertas_map:
+                dia_v = int(c_obj.get("dia_vencimento") or 10)
+                ult_d_v = calendar.monthrange(ano_sel[0], mes_sel[0])[1]
+                dt_v_calc = date(ano_sel[0], mes_sel[0], min(dia_v, ult_d_v))
+
+                dia_f = int(c_obj.get("dia_fechamento") or 1)
+                if dia_v < dia_f:
+                    m_f_c = 12 if mes_sel[0] == 1 else mes_sel[0] - 1
+                    a_f_c = ano_sel[0] - 1 if mes_sel[0] == 1 else ano_sel[0]
+                else:
+                    m_f_c = mes_sel[0]
+                    a_f_c = ano_sel[0]
+                ult_d_f = calendar.monthrange(a_f_c, m_f_c)[1]
+                dt_f_calc = date(a_f_c, m_f_c, min(dia_f, ult_d_f))
+
+                faturas_abertas_map[chave] = {
+                    "id": cr.get("fatura_id") or f"virtual_{cid}_{mes_sel[0]}_{ano_sel[0]}",
+                    "cartao_id": cid,
+                    "mes": mes_sel[0],
+                    "ano": ano_sel[0],
+                    "valor_total": pend,
+                    "valor_pago": f_pg,
+                    "valor_pendente": pend,
+                    "status": cr.get("fatura_status", "Aberta"),
+                    "data_vencimento": cr.get("data_vencimento") or dt_v_calc.isoformat(),
+                    "data_fechamento": dt_f_calc.isoformat(),
+                    "cartao": c_obj,
+                }
+
+        lista_faturas = list(faturas_abertas_map.values())
+
+        # ── 2.2 Monta Faturas da 1ª Semana do Mês Seguinte (Prévia) ──
+        faturas_prox_map: dict[str, dict] = {}
+        for fat in faturas_prox_lista:
+            f_mes = int(fat.get("mes") or 0)
+            f_ano = int(fat.get("ano") or 0)
+            st = str(fat.get("status", "")).lower()
+            val_tot = float(fat.get("valor_total", 0) or 0)
+            val_pg  = float(fat.get("valor_pago", 0) or 0)
+            pendente = max(0.0, val_tot - val_pg)
+
+            if st == "paga" or val_tot <= 0.01 or pendente <= 0.01:
+                continue
+
+            cid = str(fat.get("cartao_id") or "")
+            c_obj = cartao_dict.get(cid, fat.get("cartoes") or {})
+            chave = f"{cid}_{f_mes}_{f_ano}"
+            faturas_prox_map[chave] = {
+                "id": fat.get("id"),
+                "cartao_id": cid,
+                "mes": f_mes,
+                "ano": f_ano,
+                "valor_total": val_tot,
+                "valor_pago": val_pg,
+                "valor_pendente": pendente,
+                "status": fat.get("status", "Aberta"),
+                "data_vencimento": fat.get("data_vencimento"),
+                "data_fechamento": fat.get("data_fechamento"),
+                "cartao": c_obj,
+            }
+
+        lista_faturas_prox = list(faturas_prox_map.values())
+
+        # Ordenação rigorosa por data de vencimento crescente:
+        def _chave_ordem_vencimento(item):
+            dt_raw = item.get("data_vencimento")
+            if dt_raw:
+                try:
+                    dt = datetime.fromisoformat(str(dt_raw).split("T")[0]).date()
+                    return (0, dt)
+                except Exception:
+                    pass
+            return (1, date.max)
+
+        lista_faturas.sort(key=_chave_ordem_vencimento)
+        lista_faturas_prox.sort(key=_chave_ordem_vencimento)
+
+        # Se não há faturas no mês selecionado e nem no próximo
+        if not lista_faturas and not lista_faturas_prox:
+            grid_conteudo.controls.append(
+                ft.Container(
+                    col={"xs": 12},
+                    padding=pad(all_=45),
+                    alignment=ft.Alignment(0, 0),
+                    content=ft.Column(
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=10,
+                        controls=[
+                            ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED, size=52, color=T.RECEITA),
+                            ft.Text("Tudo em dia!", color=T.TEXT_PRIMARY, size=17, weight=ft.FontWeight.BOLD),
+                            ft.Text(
+                                f"Você não possui nenhuma fatura aberta para {MESES_NOMES[mes_sel[0]]}/{ano_sel[0]}.",
+                                color=T.TEXT_MUTED,
+                                size=13,
+                            ),
+                        ],
+                    ),
+                )
+            )
+            return
+
+        # 1. Seção Principal: Faturas do Mês Selecionado (Vencimento no Mês)
+        if lista_faturas:
+            if lista_faturas_prox:
+                grid_conteudo.controls.append(
+                    ft.Container(
+                        col={"xs": 12},
+                        margin=ft.Margin(left=0, top=0, right=0, bottom=2),
+                        content=ft.Row(
+                            spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            controls=[
+                                ft.Icon(ft.Icons.CALENDAR_MONTH_ROUNDED, size=18, color=T.WARNING),
+                                ft.Text(
+                                    f"Faturas de {MESES_NOMES[mes_sel[0]]}/{ano_sel[0]} (Vencimentos no Mês)",
+                                    size=15 if mobile else 16,
+                                    color=T.TEXT_PRIMARY,
+                                    weight=ft.FontWeight.BOLD,
+                                ),
+                            ],
+                        ),
+                    )
+                )
+            for fat in lista_faturas:
+                grid_conteudo.controls.append(_criar_card_fatura(fat, is_preview_proximo_mes=False))
+        else:
+            # Banner amigável indicando que o mês atual está pago / sem faturas
+            grid_conteudo.controls.append(
+                ft.Container(
+                    col={"xs": 12},
+                    padding=pad(h=20, v=16),
+                    bgcolor=ft.Colors.with_opacity(0.04, T.SURFACE_ALT),
+                    border=borda(1, T.BORDER),
+                    border_radius=12,
+                    alignment=ft.Alignment(0, 0),
+                    content=ft.Row(
+                        spacing=10,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED, size=22, color=T.RECEITA),
+                            ft.Text(
+                                f"Tudo em dia em {MESES_NOMES[mes_sel[0]]}/{ano_sel[0]}! Nenhuma fatura pendente com vencimento neste mês.",
+                                color=T.TEXT_MUTED,
+                                size=12.5,
+                                weight=ft.FontWeight.W_500,
+                            ),
+                        ],
+                    ),
+                )
+            )
+
+        # 2. Seção Separada: Próximos Vencimentos (1ª Semana do Mês Seguinte)
+        if lista_faturas_prox:
+            mes_prox = 1 if mes_sel[0] == 12 else mes_sel[0] + 1
+            ano_prox = ano_sel[0] + 1 if mes_sel[0] == 12 else ano_sel[0]
+            grid_conteudo.controls.append(
+                ft.Container(
+                    col={"xs": 12},
+                    margin=ft.Margin(left=0, top=14, right=0, bottom=4),
+                    content=ft.Column(
+                        spacing=8,
+                        controls=[
+                            ft.Divider(height=1, color=ft.Colors.with_opacity(0.4, T.BORDER)),
+                            ft.Row(
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                wrap=True,
+                                controls=[
+                                    ft.Row(
+                                        spacing=8,
+                                        tight=True,
+                                        controls=[
+                                            ft.Container(
+                                                padding=pad(all_=6),
+                                                bgcolor=ft.Colors.with_opacity(0.12, T.INFO),
+                                                border_radius=8,
+                                                content=ft.Icon(ft.Icons.UPCOMING_ROUNDED, color=T.INFO, size=18),
+                                            ),
+                                            ft.Column(
+                                                spacing=1,
+                                                tight=True,
+                                                controls=[
+                                                    ft.Text(
+                                                        "Próximos Vencimentos (1ª Semana do Mês Seguinte)",
+                                                        color=T.TEXT_PRIMARY,
+                                                        size=14.5 if mobile else 16,
+                                                        weight=ft.FontWeight.BOLD,
+                                                    ),
+                                                    ft.Text(
+                                                        f"Faturas que vencem entre 01/{mes_prox:02d} e 07/{mes_prox:02d}/{ano_prox} · Prévia financeira",
+                                                        color=T.TEXT_MUTED,
+                                                        size=11.5 if mobile else 12,
+                                                    ),
+                                                ],
+                                            ),
+                                        ],
+                                    ),
+                                    ft.Container(
+                                        padding=pad(h=8, v=3.5),
+                                        bgcolor=ft.Colors.with_opacity(0.08, T.INFO),
+                                        border=borda(1, ft.Colors.with_opacity(0.2, T.INFO)),
+                                        border_radius=6,
+                                        content=ft.Text(
+                                            f"{len(lista_faturas_prox)} fatura{'s' if len(lista_faturas_prox) != 1 else ''} na 1ª semana",
+                                            color=T.INFO,
+                                            size=11,
+                                            weight=ft.FontWeight.BOLD,
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                )
+            )
+            for fat_p in lista_faturas_prox:
+                grid_conteudo.controls.append(_criar_card_fatura(fat_p, is_preview_proximo_mes=True))
 
     # ── 3. Aba: Faturas Fechadas (Respeita Rigorosamente o Mês/Ano Filtrado) ──
     def _renderizar_faturas_fechadas():
