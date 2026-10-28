@@ -174,7 +174,7 @@ async def salvar_preferencia_tema(page: ft.Page, tema: str) -> None:
     Salva a preferência de tema do usuário: 'system', 'dark' ou 'light'.
     Persiste em SharedPreferences e em arquivo local.
     """
-    tema_valido = tema if tema in ("system", "dark", "light") else "system"
+    tema_valido = tema if tema in ("dark", "light") else "dark"
     sp = _obter_sp(page)
     if sp:
         try:
@@ -214,7 +214,7 @@ async def carregar_preferencia_tema(page: ft.Page) -> str:
     if val_sess in ("system", "dark", "light"):
         return str(val_sess)
 
-    return "system"
+    return "dark"
 
 
 def obter_preferencia_tema_memoria(page: ft.Page) -> str:
@@ -223,7 +223,7 @@ def obter_preferencia_tema_memoria(page: ft.Page) -> str:
     if val in ("system", "dark", "light"):
         return str(val)
     local = _ler_local_json()
-    return local.get("preferencia_tema", "system")
+    return local.get("preferencia_tema", "dark")
 
 
 # =============================================================================

@@ -17,15 +17,12 @@ async def main(page: ft.Page):
     page.title   = "DemBase Finanças"
     page.padding = 0
 
-    # 1. Configuração do Tema Dinâmico (Automático e Manual)
+    # 1. Configuração do Tema - Modo Escuro Padrão Absoluto DemBase
+    page.theme_mode = ft.ThemeMode.DARK
+    T.aplicar_paleta(True)
+    page.bgcolor = T.BG
+
     pref_tema = await storage.carregar_preferencia_tema(page)
-
-    def on_brightness_change(e=None):
-        pref = storage.obter_preferencia_tema_memoria(page)
-        if pref == "system":
-            T.aplicar_tema_app(page, "system")
-
-    page.on_platform_brightness_change = on_brightness_change
     T.aplicar_tema_app(page, pref_tema)
 
     # 2. Inicializa SharedPreferences

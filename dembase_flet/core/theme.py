@@ -83,7 +83,7 @@ ON_PRIMARY: str = _DARK["ON_PRIMARY"]
 TEMA_SISTEMA: str = "system"
 TEMA_ESCURO: str  = "dark"
 TEMA_CLARO: str   = "light"
-PREFERENCIA_TEMA: str = "system"
+PREFERENCIA_TEMA: str = "dark"
 
 
 def aplicar_paleta(escuro: bool = True) -> None:
@@ -98,25 +98,23 @@ def aplicar_paleta(escuro: bool = True) -> None:
 
 def aplicar_tema_app(page: ft.Page, preferencia: str = None) -> bool:
     """
-    Aplica o tema (system, dark ou light) à página e reconstrói as views em tempo real.
+    Aplica o tema à página e reconstrói as views em tempo real.
     Retorna True se o tema final aplicado for escuro, False se for claro.
+    Garante Dark Mode como padrão absoluto DemBase em qualquer dispositivo.
     """
     from core.router import reconstruir_rota_atual
     from core import storage
 
-    pref = preferencia or storage.obter_preferencia_tema_memoria(page) or "system"
-    globals()["PREFERENCIA_TEMA"] = pref
-
-    if pref == "dark":
-        escuro = True
-        page.theme_mode = ft.ThemeMode.DARK
-    elif pref == "light":
+    pref = preferencia or storage.obter_preferencia_tema_memoria(page) or "dark"
+    if pref == "light":
         escuro = False
         page.theme_mode = ft.ThemeMode.LIGHT
-    else:  # "system"
-        page.theme_mode = ft.ThemeMode.SYSTEM
-        pb = getattr(page, "platform_brightness", None)
-        escuro = (pb != ft.Brightness.LIGHT)
+    else:  # "dark" ou qualquer fallback
+        escuro = True
+        pref = "dark"
+        page.theme_mode = ft.ThemeMode.DARK
+
+    globals()["PREFERENCIA_TEMA"] = pref
 
     aplicar_paleta(escuro)
     page.bgcolor = BG

@@ -305,7 +305,7 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
 
     # ── 4. ABA APARÊNCIA & TEMA ──────────────────────────────────────────────
     def _montar_aba_tema():
-        pref_atual = storage.obter_preferencia_tema_memoria(page) or "system"
+        pref_atual = storage.obter_preferencia_tema_memoria(page) or "dark"
 
         def _card_opcao_tema(chave: str, titulo: str, subtitulo: str, icone, badge_texto: str):
             ativo = (pref_atual == chave)
