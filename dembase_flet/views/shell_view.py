@@ -53,6 +53,8 @@ from core import storage
 
 from views.widgets.custom_date_picker import abrir_modal_periodo_mobills
 
+from views.widgets.seletor_perfil import criar_seletor_perfil
+from core.membro_state import obter_visao_membro_atual, definir_visao_membro_atual
 import services.supabase_client as db
 
 
@@ -168,7 +170,7 @@ def criar_shell(
     mostrar_voltar: bool = False,
 
     can_pop: bool | None = None,
-
+    on_perfil_change=None,
 ) -> ft.View:
 
     global _sidebar_expandida
@@ -520,6 +522,33 @@ def criar_shell(
 
     # -------------------------------------------------------------------------
 
+    
+    def _ao_mudar_perfil(novo_membro_id: str | None):
+        if callable(on_perfil_change):
+            try:
+                on_perfil_change(novo_membro_id)
+            except Exception as ex:
+                print(f"[ShellView] Erro no on_perfil_change: {ex}")
+        elif callable(on_periodo_change):
+            try:
+                on_periodo_change(
+                    estado_p["data_inicio"].isoformat(),
+                    estado_p["data_fim"].isoformat(),
+                    estado_p["mes"],
+                    estado_p["ano"],
+                )
+            except Exception as ex:
+                print(f"[ShellView] Erro ao recarregar periodo apos troca de perfil: {ex}")
+        else:
+            try:
+                navegar(page, rota_efetiva)
+            except Exception as ex:
+                print(f"[ShellView] Erro ao navegar apos troca de perfil: {ex}")
+
+    seletor_perfil = criar_seletor_perfil(page, on_change=_ao_mudar_perfil, is_mobile=False)
+    seletor_perfil_mobile = criar_seletor_perfil(page, on_change=_ao_mudar_perfil, is_mobile=True)
+
+
     # AREA DE CONTEUDO
 
     # -------------------------------------------------------------------------
@@ -645,7 +674,7 @@ def criar_shell(
 
             ),
 
-            actions=[seletor_mes, ft.Container(width=4)],
+            actions=[seletor_perfil_mobile, seletor_mes, ft.Container(width=4)],
 
         )
 
@@ -1162,7 +1191,9 @@ def criar_shell(
 
                     ft.Row(spacing=8, controls=controles_esq_header),
 
-                    ft.Row(spacing=12, controls=[
+                    ft.Row(spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+
+                        seletor_perfil,
 
                         seletor_mes,
 

@@ -33,6 +33,11 @@ from views.calendario_view import (
     calcular_cor_heatmap_entrada,
 )
 from views.widgets.lancamento_sheet import abrir_lancamento
+from views.widgets.calendario_raio_x import (
+    calcular_raio_x_dia,
+    montar_texto_tooltip_raio_x,
+    abrir_modal_raio_x_dia,
+)
 
 
 def secao_calendario_dashboard(
@@ -172,11 +177,11 @@ def secao_calendario_dashboard(
                         ),
                         ft.Text(
                             (
-                                f"🛡️ Teto Seguro Agora: {formatar_moeda(teto_seg_d)} "
-                                f"(Pior dia: {formatar_moeda(menor_saldo_d)} em {formatar_data_br(dt_garg_d)[:5]})"
+                                f"🛡️ Teto Seguro p/ Gastar: {formatar_moeda(teto_seg_d)} "
+                                f"(Pior dia: {formatar_moeda(menor_saldo_d)} em {formatar_data_br(dt_garg_d)[:5]} | Já desc. {float((prot_fluxo or {}).get('pct_investimento', 50.0)):g}% p/ investir)"
                             )
                             if dt_garg_d
-                            else f"🛡️ Teto Seguro Agora: {formatar_moeda(teto_seg_d)}",
+                            else f"🛡️ Teto Seguro p/ Gastar: {formatar_moeda(teto_seg_d)} (Já desc. {float((prot_fluxo or {}).get('pct_investimento', 50.0)):g}% p/ investir)",
                             size=11.5,
                             weight=ft.FontWeight.BOLD,
                             color=T.TEXT_PRIMARY,
@@ -364,180 +369,48 @@ def secao_calendario_dashboard(
             pass
 
     def _tooltip_dia(dia_info: dict, vencs: list[dict]) -> str:
-        dt_s = str(dia_info.get("data") or "")[:10]
-        rec_d = float(dia_info.get("total_receitas", 0) or 0)
-        desp_d = float(dia_info.get("total_despesas", 0) or 0)
-        desp_cta = float(dia_info.get("despesas_conta", 0) or 0)
-        desp_crt = float(dia_info.get("despesas_cartao", 0) or 0)
-        saldo_d = rec_d - desp_d
-
-        acum = _obter_acum_dash(dt_s, dia_info)
-        d_ini_ac = str(acum.get("data_inicio_acum") or d_ini_ef)[:10]
-        rec_ac = float(acum.get("receitas_acum", 0) or 0)
-        desp_cta_ac = float(acum.get("despesas_conta_acum", 0) or 0)
-        desp_crt_ac = float(acum.get("despesas_cartao_acum", 0) or 0)
-        desp_tot_ac = float(acum.get("despesas_total_acum", 0) or 0)
-        saldo_ac = float(acum.get("saldo_acum", rec_ac - desp_tot_ac) or 0)
-        teto_apos = float(acum.get("teto_seguro_apos_dia", max(0.0, saldo_ac)) or 0)
-        menor_apos = float(acum.get("menor_saldo_apos_dia", saldo_ac) or 0)
-        dt_garg_apos = acum.get("data_gargalo_apos_dia")
-        eh_garg_princ = bool(dia_info.get("eh_gargalo_principal") or acum.get("eh_gargalo_principal"))
-
-        linhas = [
-            f"📅 {formatar_data_br(dt_s)}" + (" · ⚠️ PIOR DIA (GARGALO)" if eh_garg_princ else ""),
-            f"── Acumulado ({formatar_data_br(d_ini_ac)} até {formatar_data_br(dt_s)}) ──",
-            f"🟢 Receitas Acum.: {formatar_moeda(rec_ac)}",
-            f"🔴 Despesas Acum.: {formatar_moeda(desp_tot_ac)} (Conta: {formatar_moeda(desp_cta_ac)} | Faturas: {formatar_moeda(desp_crt_ac)})",
-            f"💰 SALDO ACUMULADO: {formatar_moeda(saldo_ac)}",
-            f"🛡️ TETO SEGURO A PARTIR DAQUI: {formatar_moeda(teto_apos)}"
-            + (f" (Menor saldo: {formatar_moeda(menor_apos)} em {formatar_data_br(dt_garg_apos)})" if dt_garg_apos else ""),
-            f"── Movimento do Dia ──",
-            f"   • Receita: {formatar_moeda(rec_d)} | Despesa: {formatar_moeda(desp_d)} (Conta: {formatar_moeda(desp_cta)} | Cartão: {formatar_moeda(desp_crt)})",
-            f"   • Saldo do Dia: {formatar_moeda(saldo_d)}",
-        ]
-        for vf in vencs:
-            linhas.append(f"💳 Vencimento {vf.get('cartao_nome')}: {formatar_moeda(float(vf.get('valor_total', 0) or 0))}")
-        for cx_l in (dia_info.get("lancamentos") or []):
-            if cx_l.get("caixinha_id") or str(cx_l.get("subtipo") or "").lower() == "provisionamento":
-                cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "Caixinha"
-                cx_v = float(cx_l.get("valor", 0) or 0)
-                cx_st = str(cx_l.get("status") or "Pendente").upper()
-                linhas.append(f"📦 Caixinha {cx_n}: {formatar_moeda(cx_v)} ({cx_st})")
-        return "\n".join(linhas)
+        pct_inv_d = (pacote_cal or {}).get("protecao_fluxo", {}).get("pct_investimento")
+        sobra_ref_d = float((pacote_cal or {}).get("protecao_fluxo", {}).get("sobra_projetada", rec_mes - desp_mes) or 0.0)
+        raio_x = calcular_raio_x_dia(
+            dia_info=dia_info,
+            vencimentos_dia=vencs,
+            data_inicio_filtro=d_ini_ef,
+            acumulados_por_dia=(pacote_cal or {}).get("acumulados_por_dia") or {},
+            pct_investimento=pct_inv_d,
+            sobra_projetada_mes=sobra_ref_d,
+        )
+        return montar_texto_tooltip_raio_x(raio_x)
 
     def _abrir_modal_dia_dash(dia_info: dict, vencs: list[dict]):
-        dt_str = str(dia_info.get("data") or "")
-        rec_d = float(dia_info.get("total_receitas", 0) or 0)
-        desp_d = float(dia_info.get("total_despesas", 0) or 0)
-        desp_cta = float(dia_info.get("despesas_conta", 0) or 0)
-        desp_crt = float(dia_info.get("despesas_cartao", 0) or 0)
-        lancs_dia = dia_info.get("lancamentos") or []
+        d_ini_ef = (pacote_cal or {}).get("data_inicio") or f"{ano_sel[0]}-{mes_sel[0]:02d}-01"
+        acum_map = (pacote_cal or {}).get("acumulados_por_dia") or {}
+        dias_cal = (pacote_cal or {}).get("dias") or []
+        pct_inv_d = (pacote_cal or {}).get("protecao_fluxo", {}).get("pct_investimento")
+        sobra_ref_d = float((pacote_cal or {}).get("protecao_fluxo", {}).get("sobra_projetada", rec_mes - desp_mes) or 0.0)
 
-        def _ir_extrato_data(_):
-            fechar_dialogo(page, dlg)
+        def _ao_extrato(dt_iso: str):
             try:
-                dt_obj = datetime.strptime(dt_str[:10], "%Y-%m-%d").date()
+                dt_obj = datetime.strptime(dt_iso[:10], "%Y-%m-%d").date()
                 ctx_d = ReportContext(data_inicio=dt_obj, data_fim=dt_obj, origem="dashboard")
                 ir_relatorio_lancamentos(page, ctx=ctx_d, origem="dashboard")
             except Exception:
                 navegar(page, "/calendario")
 
-        itens_m: list[ft.Control] = []
-        for vf in vencs:
-            v_fat = float(vf.get("valor_total", 0) or 0)
-            itens_m.append(
-                ft.Container(
-                    padding=pad(h=10, v=8),
-                    bgcolor=f"{T.WARNING}15",
-                    border_radius=8,
-                    border=borda(1, f"{T.WARNING}40"),
-                    ink=True,
-                    on_click=lambda _: (fechar_dialogo(page, dlg), ir_cartoes(page)),
-                    content=ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        controls=[
-                            ft.Text(f"💳 Vencimento {vf.get('cartao_nome')}", size=12.5, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
-                            ft.Text(formatar_moeda(v_fat), size=12.5, weight=ft.FontWeight.BOLD, color=T.WARNING),
-                        ],
-                    ),
-                )
-            )
-
-        if not lancs_dia and not vencs:
-            itens_m.append(
-                ft.Container(
-                    padding=pad(all_=20),
-                    alignment=ft.Alignment(0, 0),
-                    content=ft.Text("Sem movimentações registradas nesta data.", size=12.5, color=T.TEXT_MUTED),
-                )
-            )
-        else:
-            for l_it in lancs_dia:
-                eh_rec = (str(l_it.get("tipo")) == "Receita")
-                val_l = float(l_it.get("valor", 0) or 0)
-                cor_l = T.RECEITA if eh_rec else T.DESPESA
-                sinal_l = "+" if eh_rec else "-"
-                cat_n = l_it.get("categoria_nome") or "Sem Categoria"
-                origem_n = l_it.get("cartao_nome") or l_it.get("conta_nome") or ""
-                eh_caixinha = bool(l_it.get("caixinha_id")) or str(l_it.get("subtipo") or "").lower() == "provisionamento"
-                if eh_caixinha:
-                    cx_nome = l_it.get("caixinha_nome")
-                    origem_n = f"{origem_n} · 📦 Caixinha {cx_nome or ''}".strip(" ·")
-                st_l = str(l_it.get("status") or "Pago")
-                eh_pago = st_l.lower() == "pago"
-                itens_m.append(
-                    ft.Container(
-                        padding=pad(h=10, v=8),
-                        bgcolor=T.SURFACE_ALT,
-                        border_radius=8,
-                        content=ft.Row(
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            controls=[
-                                ft.Column(
-                                    spacing=1,
-                                    expand=True,
-                                    controls=[
-                                        ft.Text(l_it.get("descricao") or cat_n, size=12.5, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                                        ft.Text(f"{cat_n} · {origem_n}".strip(" ·"), size=10.5, color=T.TEXT_MUTED),
-                                    ],
-                                ),
-                                ft.Column(
-                                    spacing=1,
-                                    horizontal_alignment=ft.CrossAxisAlignment.END,
-                                    controls=[
-                                        ft.Text(f"{sinal_l} {formatar_moeda(val_l)}", size=12.5, weight=ft.FontWeight.BOLD, color=cor_l),
-                                        ft.Text(st_l, size=10, color=T.RECEITA if eh_pago else T.WARNING, weight=ft.FontWeight.W_600),
-                                    ],
-                                ),
-                            ],
-                        ),
-                    )
-                )
-
-        dlg = ft.AlertDialog(
-            modal=False,
-            bgcolor=T.SURFACE,
-            shape=ft.RoundedRectangleBorder(radius=16),
-            title=ft.Row(
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                controls=[
-                    ft.Text(f"📅 {formatar_data_br(dt_str)}", size=15.5, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
-                    ft.IconButton(icon=ft.Icons.CLOSE_ROUNDED, icon_size=18, on_click=lambda _: fechar_dialogo(page, dlg)),
-                ],
-            ),
-            content=ft.Container(
-                width=440 if not mobile else 320,
-                content=ft.Column(
-                    tight=True,
-                    spacing=8,
-                    controls=[
-                        ft.Row(
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            controls=[
-                                ft.Text(f"Receita: {formatar_moeda(rec_d)}", size=11.5, weight=ft.FontWeight.BOLD, color=T.RECEITA),
-                                ft.Text(f"Conta: {formatar_moeda(desp_cta)}", size=11.5, weight=ft.FontWeight.BOLD, color=T.DESPESA),
-                                ft.Text(f"Cartão: {formatar_moeda(desp_crt)}", size=11.5, weight=ft.FontWeight.BOLD, color=T.WARNING),
-                            ],
-                        ),
-                        ft.Divider(color=T.BORDER, height=6),
-                        ft.Container(
-                            height=240,
-                            content=ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, controls=itens_m),
-                        ),
-                    ],
-                ),
-            ),
-            actions=[
-                ft.TextButton("Abrir Extrato do Dia", on_click=_ir_extrato_data),
-                ft.FilledButton(
-                    content=ft.Text("+ Novo Lançamento", color=ft.Colors.WHITE, size=12),
-                    style=ft.ButtonStyle(bgcolor=T.PRIMARY),
-                    on_click=lambda _: (fechar_dialogo(page, dlg), abrir_lancamento(page, on_saved=on_refresh)),
-                ),
-            ],
+        abrir_modal_raio_x_dia(
+            page=page,
+            dia_info=dia_info,
+            vencimentos_dia=vencs,
+            data_inicio_filtro=d_ini_ef,
+            acumulados_por_dia=acum_map,
+            dias_calendario=dias_cal,
+            mobile=mobile,
+            pct_investimento=pct_inv_d,
+            sobra_projetada_mes=sobra_ref_d,
+            on_novo_lancamento=lambda: abrir_lancamento(page, on_saved=on_refresh),
+            on_filtrar_lista=lambda _: navegar(page, "/calendario"),
+            on_extrato_dia=_ao_extrato,
+            on_abrir_cartoes=lambda: ir_cartoes(page),
         )
-        abrir_dialogo(page, dlg)
 
     def _render_grade():
         # Seletor de Modo (Partindo de R$ 0 vs Com Saldo em Contas)

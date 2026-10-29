@@ -452,39 +452,33 @@ def calcular_arquitetura_unificada_potes(
     disp6_proj = max(0.0, round(lim6 - g6, 2))
     sobra_livre_real = round(disp4_proj + disp6_proj, 2)
 
-    # 5. Blindagem contra Sobra Falsa (Teto Seguro / Pior Dia)
+    # 5. Blindagem contra Sobra Falsa (Teto Seguro / Pior Dia) - FONTE ÚNICA
     pf = protecao_fluxo if isinstance(protecao_fluxo, dict) else {}
     tem_pf = bool(pf and ("teto_seguro_gasto" in pf or "menor_saldo_futuro" in pf))
-    if tem_pf:
-        menor_saldo = round(float(pf.get("menor_saldo_futuro", sobra_livre_real) or 0.0), 2)
-        teto_seguro = round(max(0.0, min(sobra_livre_real, float(pf.get("teto_seguro_gasto", sobra_livre_real) or 0.0))), 2)
-        sobra_falsa = round(max(0.0, sobra_livre_real - teto_seguro), 2)
-        tem_armadilha = bool(sobra_falsa > 0.005 or menor_saldo < -0.005)
-        fica_negativo = bool(menor_saldo < -0.005)
-        dt_gargalo = pf.get("data_gargalo")
-        prox_entrada_dt = pf.get("proxima_entrada_data")
-        prox_entrada_val = round(float(pf.get("proxima_entrada_valor", 0.0) or 0.0), 2)
-    else:
-        menor_saldo = sobra_livre_real
-        teto_seguro = sobra_livre_real
-        sobra_falsa = 0.0
-        tem_armadilha = False
-        fica_negativo = sobra_livre_real < -0.005
-        dt_gargalo = None
-        prox_entrada_dt = None
-        prox_entrada_val = 0.0
+    menor_saldo = round(float(pf.get("menor_saldo_futuro", sobra_livre_real) or 0.0), 2) if tem_pf else sobra_livre_real
+    data_gargalo = pf.get("data_gargalo") if tem_pf else None
+    prox_entrada_dt = pf.get("proxima_entrada_data") if tem_pf else None
+    prox_entrada_val = round(float(pf.get("proxima_entrada_valor", 0.0) or 0.0), 2) if tem_pf else 0.0
 
-    # Aplicação do Teto Seguro aos dois potes do Caixa Livre
-    if travar_pelo_teto_seguro and tem_armadilha and sobra_livre_real > 0:
-        val_inv_seguro = round(teto_seguro * (s_inv / 100.0), 2)
-        val_livre_seguro = round(teto_seguro - val_inv_seguro, 2)
-        disp4_efetivo = min(disp4_proj, val_livre_seguro)
-        disp6_efetivo = min(disp6_proj, val_inv_seguro)
-    else:
-        val_inv_seguro = disp6_proj
-        val_livre_seguro = disp4_proj
-        disp4_efetivo = disp4_proj
-        disp6_efetivo = disp6_proj
+    res_teto = calcular_teto_seguro_gastavel(
+        sobra_projetada=sobra_livre_real,
+        menor_saldo_futuro=menor_saldo,
+        pct_investimento=s_inv,
+        travar_pelo_pior_dia=travar_pelo_teto_seguro,
+    )
+    teto_seguro = res_teto["teto_seguro_gasto"]
+    sobra_falsa = res_teto["sobra_falsa_travada"]
+    tem_armadilha = res_teto["tem_armadilha_fluxo"]
+    fica_negativo = res_teto["fica_negativo_no_meio"]
+    dt_gargalo = data_gargalo
+
+    # Aplicação do Teto Seguro aos dois potes do Caixa Livre:
+    # A parcela de investimento (Liberdade Financeira) é SAGRADA (Princípio 1)
+    # Apenas os gastos (Prazeres) são limitados pelo teto_seguro
+    val_inv_seguro = disp6_proj
+    val_livre_seguro = min(disp4_proj, teto_seguro)
+    disp4_efetivo = val_livre_seguro
+    disp6_efetivo = val_inv_seguro
 
     # 6. Montagem dos 6 Potes Consolidados
     potes_resultado = [
@@ -617,3 +611,67 @@ def calcular_arquitetura_unificada_potes(
             "travar_pelo_teto_seguro": bool(travar_pelo_teto_seguro),
         },
     }
+
+
+
+def calcular_teto_seguro_gastavel(
+    sobra_projetada: float,
+    menor_saldo_futuro: float,
+    pct_investimento: float = 50.0,
+    travar_pelo_pior_dia: bool = True,
+) -> dict:
+    """
+    FONTE UNICA DE VERDADE para o Teto Seguro Gastavel (DemBase v3).
+    Responde rigorosamente a pergunta:
+    'Qual e o valor maximo que o usuario pode GASTAR a partir de hoje sem ficar no vermelho
+    no pior dia do mes, respeitando a sua decisao de poupar?'
+
+    Principios Obrigatorios:
+    1. A parcela de investimento (slider Guardar) NUNCA entra no Teto Seguro.
+       O dinheiro para guardar e sagrado - se o usuario definiu investir 70%, o Teto Seguro
+       so pode contemplar os 30% restantes.
+    2. Continua respeitando o menor saldo projetado (gargalo). Se o menor saldo projetado for MENOR
+       que a parte gastavel do Caixa Livre, o Teto Seguro e limitado pelo gargalo.
+       O usuario nunca pode gastar mais do que o gargalo permite.
+    3. O valor do Teto Seguro nunca pode ser negativo (minimo R$ 0,00).
+    4. O valor do Teto Seguro nunca pode ser maior que a parte gastavel do Caixa Livre.
+    5. Se a opcao 'Travar pelo Pior Dia' estiver desativada (toggle), o Teto Seguro reflete
+       apenas a parte gastavel do Caixa Livre (sem a trava do gargalo).
+    6. Reatividade instantanea com o slider de investimento (0% a 100%).
+    7. Fonte unica de verdade centralizada para todas as telas (banner do calendario, tooltip, Raio-X, dashboard).
+    """
+    sobra = max(0.0, float(sobra_projetada or 0.0))
+    menor_s = float(menor_saldo_futuro if menor_saldo_futuro is not None else sobra)
+    pct_inv = round(max(0.0, min(100.0, float(pct_investimento if pct_investimento is not None else 50.0))), 1)
+    pct_gastavel = round(100.0 - pct_inv, 1)
+
+    valor_investir = round(sobra * (pct_inv / 100.0), 2)
+    valor_gastavel = round(sobra * (pct_gastavel / 100.0), 2)
+
+    if not travar_pelo_pior_dia:
+        teto_gastavel = valor_gastavel
+    else:
+        # Gargalo limita os gastos, mas nunca ultrapassa a parte de prazeres/gastavel nem fica negativo
+        teto_gastavel = round(max(0.0, min(menor_s, valor_gastavel)), 2)
+
+    sobra_falsa = round(max(0.0, sobra - teto_gastavel), 2)
+    sobra_falsa_gastavel = round(max(0.0, valor_gastavel - teto_gastavel), 2)
+    tem_armadilha = bool(sobra_falsa > 0.005 or menor_s < -0.005)
+    fica_negativo = bool(menor_s < -0.005)
+
+    return {
+        "sobra_projetada": sobra,
+        "menor_saldo_futuro": menor_s,
+        "pct_investimento": pct_inv,
+        "pct_gastavel": pct_gastavel,
+        "valor_investir": valor_investir,
+        "valor_gastavel": valor_gastavel,
+        "teto_seguro_gasto": teto_gastavel,
+        "sobra_falsa_travada": sobra_falsa,
+        "tem_armadilha_fluxo": tem_armadilha,
+        "fica_negativo_no_meio": fica_negativo,
+        "travar_pelo_pior_dia": travar_pelo_pior_dia,
+        "rotulo": "Teto Seguro p/ Gastar",
+        "subtexto": f"Já descontado o que você reservou para investir ({pct_inv:g}%)",
+    }
+

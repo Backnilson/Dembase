@@ -316,6 +316,14 @@ class LancamentoForm(ft.Column):
         )
 
         # 6. Forma de Movimentação (Sempre Visível na Área Principal - Decisão 5)
+        self.dd_membro = ft.Dropdown(
+            label="Perfil Familiar *",
+            value=str(self.state.membro_id) if self.state.membro_id else None,
+            expand=True,
+            on_select=self._ao_mudar_membro,
+            **T.dropdown_estilo(),
+        )
+
         self.dd_forma = ft.Dropdown(
             label="Forma de movimentação *",
             value=self.state.forma_movimentacao,
@@ -783,6 +791,7 @@ class LancamentoForm(ft.Column):
                 padding=pad(bottom=4),
             ),
             self.txt_descricao,
+            self.dd_membro,
             self.dd_forma,
             self.row_conta,
             self.row_destino,
@@ -803,6 +812,7 @@ class LancamentoForm(ft.Column):
             self.contas = db.listar_contas()
             self.cartoes = db.listar_cartoes()
             self.categorias = db.listar_categorias()
+            self.membros = db.listar_membros()
         except Exception as ex:
             mostrar_feedback(self._page, f"Erro ao obter dados: {ex}", "erro")
 
@@ -812,6 +822,7 @@ class LancamentoForm(ft.Column):
         self._atualizar_opcoes_categoria(atualizar_ui=False)
         self._atualizar_opcoes_subtipo(atualizar_ui=False)
         self._atualizar_opcoes_caixinhas(atualizar_ui=False)
+        self._atualizar_opcoes_membro(atualizar_ui=False)
 
         if self.state.categoria_id:
             self._carregar_subcategorias(self.state.categoria_id, atualizar_ui=False)
@@ -1355,13 +1366,56 @@ class LancamentoForm(ft.Column):
         self._safe_update(self)
         self._notificar_mudanca()
 
+
+    def _atualizar_opcoes_membro(self, atualizar_ui: bool = False):
+        if not hasattr(self, "membros") or not self.membros:
+            try:
+                self.membros = db.listar_membros()
+            except Exception:
+                self.membros = []
+
+        opts = []
+        for m in (self.membros or []):
+            txt_lbl = f"👤 {m.get('nome', 'Membro')}" + (" (Principal)" if m.get("principal") else "")
+            opts.append(ft.dropdown.Option(key=str(m["id"]), text=txt_lbl))
+
+        if hasattr(self, "dd_membro"):
+            self.dd_membro.options = opts
+            if self.state.membro_id:
+                self.dd_membro.value = str(self.state.membro_id)
+            elif opts:
+                prin = next((m for m in self.membros if m.get("principal")), self.membros[0])
+                self.state.membro_id = str(prin["id"])
+                self.dd_membro.value = self.state.membro_id
+            if atualizar_ui:
+                self._safe_update(self.dd_membro)
+
+    def _ao_mudar_membro(self, e):
+        val = e.data or e.control.value
+        self.state.membro_id = str(val) if val else None
+        self._notificar_mudanca()
+
     def _ao_mudar_conta(self, e):
         val = e.data or e.control.value
         if self.state.eh_credito:
             self.state.cartao_id = self._obter_cartao_id(val)
             self._atualizar_opcoes_fatura(atualizar_ui=True)
+            if self.state.cartao_id and hasattr(self, "cartoes"):
+                k_sel = next((k for k in self.cartoes if str(k.get("id")) == str(self.state.cartao_id)), None)
+                if k_sel and k_sel.get("membro_id"):
+                    self.state.membro_id = str(k_sel["membro_id"])
+                    if hasattr(self, "dd_membro"):
+                        self.dd_membro.value = self.state.membro_id
+                        self._safe_update(self.dd_membro)
         else:
             self.state.conta_id = self._obter_conta_id(val)
+            if self.state.conta_id and hasattr(self, "contas"):
+                c_sel = next((c for c in self.contas if str(c.get("id")) == str(self.state.conta_id)), None)
+                if c_sel and c_sel.get("membro_id"):
+                    self.state.membro_id = str(c_sel["membro_id"])
+                    if hasattr(self, "dd_membro"):
+                        self.dd_membro.value = self.state.membro_id
+                        self._safe_update(self.dd_membro)
         self._notificar_mudanca()
 
     def _ao_mudar_destino(self, e):

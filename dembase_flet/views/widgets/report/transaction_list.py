@@ -489,7 +489,42 @@ class TransactionList(ft.Column):
         )
         forma = item.get("forma_movimentacao") or "Pix"
 
-        badges: list[ft.Control] = [
+        # Identificacao de Perfil Familiar ("Eu, Ela & Nos")
+        membro_nome = item.get("membro_nome")
+        membro_cor = item.get("membro_cor")
+        if not membro_nome and isinstance(item.get("membros"), dict):
+            membro_nome = item["membros"].get("nome")
+            membro_cor = item["membros"].get("cor")
+        if not membro_nome and item.get("membro_id"):
+            m_info = db.obter_membro(item["membro_id"])
+            if m_info:
+                membro_nome = m_info.get("nome")
+                membro_cor = m_info.get("cor")
+
+        badge_membro = None
+        if membro_nome:
+            cor_mb = membro_cor or "#6366F1"
+            badge_membro = ft.Container(
+                padding=pad(h=6, v=2),
+                bgcolor=f"{cor_mb}1A",
+                border_radius=6,
+                border=borda(1, f"{cor_mb}4D"),
+                content=ft.Row(
+                    spacing=3,
+                    tight=True,
+                    controls=[
+                        ft.Icon(ft.Icons.PERSON_ROUNDED, size=11, color=cor_mb),
+                        ft.Text(membro_nome, size=10.5, color=cor_mb, weight=ft.FontWeight.BOLD),
+                    ],
+                ),
+                tooltip=f"Perfil: {membro_nome}",
+            )
+
+        badges: list[ft.Control] = []
+        if badge_membro:
+            badges.append(badge_membro)
+
+        badges.extend([
             ft.Container(
                 padding=pad(h=6, v=2),
                 bgcolor=T.SURFACE_ALT,
@@ -507,7 +542,7 @@ class TransactionList(ft.Column):
                 border_radius=6,
                 content=ft.Text(forma, size=10.5, color=T.TEXT_MUTED),
             ),
-        ]
+        ])
 
         if eh_transf and conta_nome and destino_nome:
             badges.append(

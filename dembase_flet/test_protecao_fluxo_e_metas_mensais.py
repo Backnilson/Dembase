@@ -109,9 +109,10 @@ def test_1_cenario_real_sobra_falsa_dia_29_e_30():
     assert abs(rateio_travado["sobra_projetada"] - 676.95) < 0.01
     assert abs(rateio_travado["teto_seguro_gasto"] - 192.95) < 0.01
     assert abs(rateio_travado["sobra_falsa_travada"] - 484.00) < 0.01
-    # Com 50% de retenção sobre o Teto Seguro (R$ 192,95):
-    assert abs(rateio_travado["valor_investimento"] - 96.48) < 0.02
-    assert abs(rateio_travado["valor_livre_culpa"] - 96.47) < 0.02
+    # Nova Regra de Negócio (Tarefa 3): A parcela de investimento é sagrada (Princípio 1: R$ 338,48)
+    # e o Teto Seguro Gastável limita a fatia livre para gastar ao gargalo (R$ 192,95):
+    assert abs(rateio_travado["valor_investimento"] - 338.48) < 0.02
+    assert abs(rateio_travado["valor_livre_culpa"] - 192.95) < 0.02
     # E preserva os valores projetados do mês inteiro (50% de R$ 676,95 = R$ 338,48):
     assert abs(rateio_travado["valor_investimento_projetado"] - 338.48) < 0.02
     assert abs(rateio_travado["valor_livre_projetado"] - 338.47) < 0.02

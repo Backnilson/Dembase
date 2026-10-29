@@ -24,6 +24,8 @@ from views.widgets.potes_config import montar_aba_potes
 from views.caixinhas_view import montar_aba_caixinhas
 from views.categorias_view import montar_aba_categorias
 import services.supabase_client as db
+import asyncio
+import services.demo_generator as demo_gen
 
 DESTINOS_PADRAO = ["Eu", "Casa", "Moto", "Carro", "DJ", "Família", "Outros"]
 
@@ -55,6 +57,8 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
         aba_inicial = 5
     elif aba_query in ("destinos", "destino"):
         aba_inicial = 6
+    elif aba_query in ("demo", "vitrine", "demonstracao"):
+        aba_inicial = 7
 
     aba_ativa = [aba_inicial]
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2, visible=False)
@@ -522,6 +526,344 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
     # ── Alternar Abas ────────────────────────────────────────────────────────
     botoes_abas_lista: list[tuple[int, ft.Container]] = []
 
+    # ── 7. ABA MODO DEMONSTRAÇÃO (PERFIL VITRINE) ────────────────────────────
+    def _montar_aba_demo():
+        txt_status_demo = ft.Text(
+            "Pronto para gerar ou resetar a base de demonstração.",
+            size=13,
+            color=T.TEXT_MUTED,
+        )
+        spinner_demo = ft.ProgressRing(width=22, height=22, stroke_width=2.5, color=T.PRIMARY, visible=False)
+        btn_gerar_ref = [None]
+        btn_resetar_ref = [None]
+
+        def _definir_estado_loading(carregando: bool, mensagem: str = ""):
+            spinner_demo.visible = carregando
+            if mensagem:
+                txt_status_demo.value = mensagem
+            if btn_gerar_ref[0]:
+                btn_gerar_ref[0].disabled = carregando
+            if btn_resetar_ref[0]:
+                btn_resetar_ref[0].disabled = carregando
+            page.update()
+
+        async def _executar_geracao(_):
+            _definir_estado_loading(True, "Iniciando geração dos 15 meses de dados da Família Silva...")
+            try:
+                def status_cb(msg: str):
+                    txt_status_demo.value = f"⚡ {msg}"
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+
+                resumo = await asyncio.to_thread(demo_gen.gerar_perfil_vitrine, None, status_cb)
+                _definir_estado_loading(False, "Perfil Vitrine gerado com sucesso!")
+
+                # Modal de sucesso com resumo
+                modal_sucesso = ft.AlertDialog(
+                    title=ft.Row([
+                        ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED, color=T.RECEITA, size=24),
+                        ft.Text("Perfil Vitrine Concluído!", weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                    ], spacing=10),
+                    content=ft.Column(
+                        spacing=8,
+                        tight=True,
+                        controls=[
+                            ft.Text("A base fictícia de demonstração foi gerada com 100% de sucesso:", color=T.TEXT_MUTED, size=13),
+                            ft.Container(height=4),
+                            ft.Text(f"• Total de Lançamentos: {resumo.get('total_lancamentos', 0)} (15 meses)", size=13, weight=ft.FontWeight.BOLD),
+                            ft.Text(f"• Faturas de Cartão: {resumo.get('total_faturas', 0)} faturas", size=13),
+                            ft.Text(f"• Movimentações no Meu Cofre: {resumo.get('total_movimentacoes_cofre', 0)}", size=13),
+                            ft.Text(f"• Reserva de Emergência: R$ {resumo.get('saldo_reserva', 0):,.2f}", size=13, color=T.RECEITA),
+                            ft.Text(f"• Renda Fixa 102% CDI: R$ {resumo.get('saldo_cdi', 0):,.2f}", size=13, color=T.RECEITA),
+                            ft.Text("• Membros: Carlos (Principal) & Marina (Esposa)", size=13),
+                            ft.Container(height=8),
+                            ft.Text("Dica: Use o Seletor de Perfil no topo para alternar entre Carlos, Marina e a Visão Casa!", size=12, color=T.PRIMARY, italic=True),
+                        ],
+                    ),
+                    actions=[
+                        ft.FilledButton(
+                            content=ft.Text("Excelente!"),
+                            style=ft.ButtonStyle(bgcolor=T.PRIMARY),
+                            on_click=lambda _: fechar_dialogo(page, modal_sucesso),
+                        ),
+                    ],
+                )
+                abrir_dialogo(page, modal_sucesso)
+                mostrar_feedback(page, "Base de demonstração gerada com sucesso!", "sucesso")
+            except Exception as ex:
+                _definir_estado_loading(False, f"Erro: {ex}")
+                mostrar_feedback(page, f"Falha na geração demo: {ex}", "erro")
+
+        async def _executar_reset(_):
+            _definir_estado_loading(True, "Limpando registros do perfil demo...")
+            try:
+                def status_cb(msg: str):
+                    txt_status_demo.value = f"🧹 {msg}"
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+
+                await asyncio.to_thread(demo_gen.resetar_perfil_vitrine, None, status_cb)
+                _definir_estado_loading(False, "Perfil demo resetado e limpo com sucesso.")
+                mostrar_feedback(page, "Perfil demo limpo com sucesso!", "sucesso")
+            except Exception as ex:
+                _definir_estado_loading(False, f"Erro ao resetar: {ex}")
+                mostrar_feedback(page, f"Falha ao resetar demo: {ex}", "erro")
+
+        def _confirmar_geracao(_):
+            modal_conf = ft.AlertDialog(
+                title=ft.Row([
+                    ft.Icon(ft.Icons.AUTO_FIX_HIGH_ROUNDED, color=T.PRIMARY, size=24),
+                    ft.Text("Gerar Perfil Vitrine?", weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                ], spacing=10),
+                content=ft.Column(
+                    tight=True,
+                    spacing=12,
+                    controls=[
+                        ft.Text(
+                            "Isso vai apagar e regerar apenas os dados do perfil Demo (Carlos & Marina), "
+                            "populando 15 meses de histórico realista para gravação e apresentações.",
+                            color=T.TEXT_PRIMARY,
+                            size=13,
+                        ),
+                        ft.Container(
+                            padding=pad(all_=12),
+                            bgcolor=f"{T.RECEITA}14",
+                            border_radius=10,
+                            border=borda(color=T.RECEITA),
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.SECURITY_ROUNDED, color=T.RECEITA, size=20),
+                                ft.Text(
+                                    "Seus dados reais NUNCA serão tocados. A trava de segurança é 100% blindada.",
+                                    color=T.RECEITA,
+                                    size=12,
+                                    weight=ft.FontWeight.W_500,
+                                    expand=True,
+                                ),
+                            ], spacing=8),
+                        ),
+                    ],
+                ),
+                actions=[
+                    ft.TextButton(
+                        content=ft.Text("Cancelar", color=T.TEXT_MUTED),
+                        on_click=lambda _: fechar_dialogo(page, modal_conf),
+                    ),
+                    ft.FilledButton(
+                        content=ft.Text("Confirmar e Gerar"),
+                        style=ft.ButtonStyle(bgcolor=T.PRIMARY),
+                        on_click=lambda e: (fechar_dialogo(page, modal_conf), page.run_task(_executar_geracao, e)),
+                    ),
+                ],
+            )
+            abrir_dialogo(page, modal_conf)
+
+        def _confirmar_reset(_):
+            modal_conf = ft.AlertDialog(
+                title=ft.Row([
+                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=T.DESPESA, size=24),
+                    ft.Text("Limpar Perfil Demo?", weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                ], spacing=10),
+                content=ft.Column(
+                    tight=True,
+                    spacing=12,
+                    controls=[
+                        ft.Text(
+                            "Isso vai apagar lançamentos, contas e cartões apenas da conta de demonstração.",
+                            color=T.TEXT_PRIMARY,
+                            size=13,
+                        ),
+                        ft.Container(
+                            padding=pad(all_=12),
+                            bgcolor=f"{T.DESPESA}14",
+                            border_radius=10,
+                            border=borda(color=T.DESPESA),
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.SHIELD_ROUNDED, color=T.DESPESA, size=20),
+                                ft.Text(
+                                    "Seus dados reais não serão tocados.",
+                                    color=T.DESPESA,
+                                    size=12,
+                                    weight=ft.FontWeight.W_500,
+                                    expand=True,
+                                ),
+                            ], spacing=8),
+                        ),
+                    ],
+                ),
+                actions=[
+                    ft.TextButton(
+                        content=ft.Text("Cancelar", color=T.TEXT_MUTED),
+                        on_click=lambda _: fechar_dialogo(page, modal_conf),
+                    ),
+                    ft.FilledButton(
+                        content=ft.Text("Confirmar Limpeza"),
+                        style=ft.ButtonStyle(bgcolor=T.DESPESA),
+                        on_click=lambda e: (fechar_dialogo(page, modal_conf), page.run_task(_executar_reset, e)),
+                    ),
+                ],
+            )
+            abrir_dialogo(page, modal_conf)
+
+        btn_gerar = ft.FilledButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.AUTO_FIX_HIGH_ROUNDED, size=18),
+                ft.Text("Gerar Dados de Demonstração (15 Meses)", weight=ft.FontWeight.BOLD),
+            ], tight=True, spacing=8),
+            style=ft.ButtonStyle(bgcolor=T.PRIMARY),
+            on_click=_confirmar_geracao,
+        )
+        btn_resetar = ft.OutlinedButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.DELETE_SWEEP_ROUNDED, size=18, color=T.DESPESA),
+                ft.Text("Resetar Perfil Demo", color=T.DESPESA),
+            ], tight=True, spacing=8),
+            style=ft.ButtonStyle(side=ft.BorderSide(1, T.DESPESA)),
+            on_click=_confirmar_reset,
+        )
+        btn_gerar_ref[0] = btn_gerar
+        btn_resetar_ref[0] = btn_resetar
+
+        def _card_destaque(icone, titulo: str, desc: str, cor_ico: str):
+            return ft.Container(
+                col={"xs": 12, "sm": 6, "md": 3},
+                padding=pad(all_=14),
+                bgcolor=T.SURFACE_ALT,
+                border_radius=12,
+                border=borda(),
+                content=ft.Column(
+                    spacing=8,
+                    controls=[
+                        ft.Row([
+                            ft.Container(
+                                padding=pad(all_=8),
+                                bgcolor=f"{cor_ico}1E",
+                                border_radius=8,
+                                content=ft.Icon(icone, color=cor_ico, size=20),
+                            ),
+                            ft.Text(titulo, size=14, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                        ], spacing=8),
+                        ft.Text(desc, size=12, color=T.TEXT_MUTED, height=1.3),
+                    ],
+                ),
+            )
+
+        return ft.Container(
+            padding=pad(all_=24),
+            bgcolor=T.SURFACE,
+            border_radius=16,
+            border=borda(),
+            content=ft.Column(
+                spacing=20,
+                controls=[
+                    # Cabeçalho da Aba
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Row([
+                                ft.Container(
+                                    width=44, height=44,
+                                    bgcolor=f"{T.PRIMARY}22",
+                                    border_radius=12,
+                                    alignment=ft.Alignment(0, 0),
+                                    content=ft.Icon(ft.Icons.AUTO_FIX_HIGH_ROUNDED, color=T.PRIMARY, size=24),
+                                ),
+                                ft.Column([
+                                    ft.Row([
+                                        ft.Text("Perfil Vitrine & Demonstração", color=T.TEXT_PRIMARY, size=18, weight=ft.FontWeight.BOLD),
+                                        ft.Container(
+                                            padding=pad(h=8, v=3),
+                                            bgcolor=f"{T.PRIMARY}22",
+                                            border_radius=6,
+                                            content=ft.Text("15 Meses Narrativos", color=T.PRIMARY, size=11, weight=ft.FontWeight.BOLD),
+                                        ),
+                                    ], spacing=8),
+                                    ft.Text("Popule o perfil com histórico familiar realista para gravação de vídeos e apresentações", color=T.TEXT_MUTED, size=13),
+                                ], spacing=2),
+                            ], spacing=12),
+                        ],
+                    ),
+                    ft.Divider(color=T.BORDER, height=1),
+
+                    # Alerta de Segurança e Isolamento
+                    ft.Container(
+                        padding=pad(h=16, v=14),
+                        bgcolor=f"{T.RECEITA}12",
+                        border_radius=12,
+                        border=borda(color=T.RECEITA),
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.SHIELD_ROUNDED, color=T.RECEITA, size=24),
+                            ft.Column([
+                                ft.Text("Isolamento Absoluto de Dados", color=T.RECEITA, size=14, weight=ft.FontWeight.BOLD),
+                                ft.Text(
+                                    "Esta rotina atua EXCLUSIVAMENTE na conta de testes (teste@dembase.com). "
+                                    "Seus dados reais estão 100% isolados, protegidos e nunca serão alterados ou apagados.",
+                                    color=T.TEXT_PRIMARY,
+                                    size=12,
+                                ),
+                            ], spacing=2, expand=True),
+                        ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ),
+
+                    # Grid de Recursos da Vitrine
+                    ft.ResponsiveRow(
+                        spacing=12,
+                        run_spacing=12,
+                        controls=[
+                            _card_destaque(
+                                ft.Icons.PEOPLE_ALT_ROUNDED,
+                                "Multi-Perfis",
+                                "Carlos & Marina com contas separadas (Nubank e Inter) e visão 'Casa' consolidada.",
+                                "#3B82F6",
+                            ),
+                            _card_destaque(
+                                ft.Icons.AUTO_GRAPH_ROUNDED,
+                                "Curva Narrativa",
+                                "15 meses: Vermelho -> Amarelo -> Verde -> Imprevisto com resgate -> 13º Salário.",
+                                "#10B981",
+                            ),
+                            _card_destaque(
+                                ft.Icons.CREDIT_CARD_ROUNDED,
+                                "Cartões & Parcelas",
+                                "Faturas e compras em andamento: Notebook Dell (10x) e Geladeira Frost Free (8x).",
+                                "#820AD1",
+                            ),
+                            _card_destaque(
+                                ft.Icons.SAVINGS_ROUNDED,
+                                "Meu Cofre",
+                                "Porquinho com resgate de emergência e reposição + Renda Fixa 102% CDI.",
+                                "#00E676",
+                            ),
+                        ],
+                    ),
+
+                    ft.Divider(color=T.BORDER, height=1),
+
+                    # Barra de Ações e Status
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        wrap=True,
+                        spacing=14,
+                        controls=[
+                            ft.Row([
+                                btn_gerar,
+                                btn_resetar,
+                            ], spacing=10, wrap=True),
+                            ft.Row([
+                                spinner_demo,
+                                txt_status_demo,
+                            ], spacing=10),
+                        ],
+                    ),
+                ],
+            ),
+        )
+
     def renderizar_aba():
         area_conteudo.controls.clear()
         idx = aba_ativa[0]
@@ -537,8 +879,10 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
             area_conteudo.controls.append(_montar_aba_tema())
         elif idx == 5:
             area_conteudo.controls.append(_montar_aba_graficos())
-        else:
+        elif idx == 6:
             area_conteudo.controls.append(_montar_aba_destinos())
+        else:
+            area_conteudo.controls.append(_montar_aba_demo())
         try:
             page.update()
         except Exception:
@@ -558,6 +902,7 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
         (4, "Aparência & Tema",  ft.Icons.PALETTE_OUTLINED),
         (5, "Gráficos",          ft.Icons.DASHBOARD_CUSTOMIZE_ROUNDED),
         (6, "Destinos",          ft.Icons.LOCATION_ON_OUTLINED),
+        (7, "Modo Demo",         ft.Icons.AUTO_FIX_HIGH_ROUNDED),
     ]
 
     controles_abas: list[ft.Control] = []

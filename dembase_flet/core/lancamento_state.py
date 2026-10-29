@@ -55,6 +55,7 @@ class LancamentoFormState:
     regra: Optional[str] = "Essencial"  # Apenas para Despesa
     pote_id: Optional[str] = None       # Sistema dinâmico de 6 potes
     caixinha_id: Optional[str] = None   # Vínculo opcional com Caixinha de Teto
+    membro_id: Optional[str] = None     # Vínculo com Perfil Familiar (Eu, Ela & Nós)
     is_fixa: bool = False
     is_repetir: bool = False
     frequencia: str = "mensal"

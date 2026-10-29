@@ -61,6 +61,7 @@ def abrir_lancamento(
         state.categoria_id = str(lancamento.get("categoria_id")) if lancamento.get("categoria_id") else None
         state.subcategoria_id = str(lancamento.get("subcategoria_id")) if lancamento.get("subcategoria_id") else None
         state.destino_id = str(lancamento.get("destino_id")) if lancamento.get("destino_id") else None
+        state.membro_id = str(lancamento.get("membro_id")) if lancamento.get("membro_id") else None
         regra_salva = lancamento.get("regra")
         pote_salvo = lancamento.get("pote_id")
         state.pote_id = str(pote_salvo) if pote_salvo else None
@@ -130,6 +131,12 @@ def abrir_lancamento(
         if state.subcategoria_id or state.subtipo or state.serie_id or state.recorrente_id:
             state.mais_detalhes_aberto = True
     else:
+        from core.membro_state import obter_membro_padrao_para_lancamento
+        state.membro_id = obter_membro_padrao_para_lancamento(
+            page,
+            conta_id=conta_inicial,
+            cartao_id=cartao_inicial,
+        )
         if tipo_inicial:
             state.mudar_tipo(tipo_inicial)
         if cartao_inicial:
@@ -311,6 +318,7 @@ def abrir_lancamento(
                 "regra": obter_regra_pote(state.regra or state.pote_id) if state.eh_despesa else None,
                 "pote_id": str(state.pote_id) if (state.eh_despesa and state.pote_id) else None,
                 "caixinha_id": form._obter_caixinha_id(state.caixinha_id) if state.eh_despesa else None,
+                "membro_id": state.membro_id if state.membro_id else None,
             }
 
             if is_edicao:

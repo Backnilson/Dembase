@@ -21,7 +21,7 @@ from core import theme as T
 from core import storage
 from core.theme import pad, borda
 from core.constants import formatar_moeda, formatar_data_br, MESES_NOMES
-from core.potes import calcular_arquitetura_unificada_potes, POTES_PADRAO
+from core.potes import calcular_teto_seguro_gastavel, calcular_arquitetura_unificada_potes, POTES_PADRAO
 import services.supabase_client as db
 
 
@@ -119,42 +119,37 @@ def calcular_rateio_sobra(
 
     pf = protecao_fluxo if isinstance(protecao_fluxo, dict) else {}
     tem_dados_pf = bool(pf and ("teto_seguro_gasto" in pf or "menor_saldo_futuro" in pf))
-    if tem_dados_pf:
-        menor_saldo_futuro = round(float(pf.get("menor_saldo_futuro", sobra) or 0.0), 2)
-        teto_seguro = round(max(0.0, min(max(0.0, sobra), float(pf.get("teto_seguro_gasto", max(0.0, sobra)) or 0.0))), 2)
-        sobra_falsa = round(max(0.0, max(0.0, sobra) - teto_seguro), 2)
-        tem_armadilha = bool(sobra_falsa > 0.005 or menor_saldo_futuro < -0.005)
-        fica_negativo_meio = bool(menor_saldo_futuro < -0.005)
-        data_gargalo = pf.get("data_gargalo")
-        prox_entrada_dt = pf.get("proxima_entrada_data")
-        prox_entrada_val = round(float(pf.get("proxima_entrada_valor", 0.0) or 0.0), 2)
-    else:
-        menor_saldo_futuro = sobra
-        teto_seguro = max(0.0, sobra)
-        sobra_falsa = 0.0
-        tem_armadilha = False
-        fica_negativo_meio = sobra < -0.005
-        data_gargalo = None
-        prox_entrada_dt = None
-        prox_entrada_val = 0.0
+    menor_saldo_futuro = round(float(pf.get("menor_saldo_futuro", sobra) or 0.0), 2) if tem_dados_pf else sobra
+    data_gargalo = pf.get("data_gargalo") if tem_dados_pf else None
+    prox_entrada_dt = pf.get("proxima_entrada_data") if tem_dados_pf else None
+    prox_entrada_val = round(float(pf.get("proxima_entrada_valor", 0.0) or 0.0), 2) if tem_dados_pf else 0.0
 
+    # FONTE ÚNICA DE VERDADE: Teto Seguro p/ Gastar baseado na parte gastável do Caixa Livre
+    res_teto = calcular_teto_seguro_gastavel(
+        sobra_projetada=max(0.0, sobra),
+        menor_saldo_futuro=menor_saldo_futuro,
+        pct_investimento=pct_inv,
+        travar_pelo_pior_dia=travar_pelo_teto_seguro,
+    )
+    teto_seguro = res_teto["teto_seguro_gasto"]
+    sobra_falsa = res_teto["sobra_falsa_travada"]
+    tem_armadilha = res_teto["tem_armadilha_fluxo"]
+    fica_negativo_meio = res_teto["fica_negativo_no_meio"]
+
+    # Princípio 1: O valor de investimento é SAGRADO e nunca entra no Teto Seguro.
+    # Se sobra > 0, o que o usuário definiu guardar continua reservado para investir!
+    # O valor livre para gastar é limitado pelo teto_seguro.
     if sobra > 0:
-        if travar_pelo_teto_seguro and tem_dados_pf:
-            base_segura = teto_seguro
-            val_inv_seguro = round(base_segura * (pct_inv / 100.0), 2)
-            val_livre_seguro = round(base_segura - val_inv_seguro, 2)
-            val_livre_teto_absoluto = round(min(val_livre_proj, teto_seguro), 2)
-        else:
-            val_inv_seguro = val_inv_proj
-            val_livre_seguro = val_livre_proj
-            val_livre_teto_absoluto = val_livre_proj
+        val_inv_seguro = val_inv_proj
+        val_livre_seguro = teto_seguro
+        val_livre_teto_absoluto = teto_seguro
     else:
         val_inv_seguro = 0.0
         val_livre_seguro = 0.0
         val_livre_teto_absoluto = 0.0
 
-    val_inv_efetivo = val_inv_seguro if (travar_pelo_teto_seguro and tem_armadilha) else val_inv_proj
-    val_livre_efetivo = val_livre_seguro if (travar_pelo_teto_seguro and tem_armadilha) else val_livre_proj
+    val_inv_efetivo = val_inv_proj
+    val_livre_efetivo = teto_seguro
 
     return {
         "receitas": rec,
@@ -639,7 +634,7 @@ class PainelGestaoSobra:
                                 self.txt_sobra_proj_sub,
                             ),
                             _mini_metrica(
-                                "DISPONÍVEL AGORA S/ NEGATIVAR",
+                                "TETO SEGURO P/ GASTAR",
                                 ft.Icons.VERIFIED_USER_ROUNDED,
                                 COR_BLINDAGEM,
                                 self.txt_teto_seguro_card,
@@ -1147,19 +1142,20 @@ class PainelGestaoSobra:
         self.txt_sobra_falsa_card.value = formatar_moeda(sobra_falsa)
 
         dt_g_br = formatar_data_br(dt_gargalo) if dt_gargalo else "—"
+        sub_investir = f"Já descontado {_fmt_pct(pct_inv)} p/ investir"
         if fica_negativo:
             self.txt_teto_seguro_card.color = T.DESPESA
-            self.txt_teto_seguro_sub.value = f"Vale crítico de {formatar_moeda(menor_saldo)} em {dt_g_br}"
+            self.txt_teto_seguro_sub.value = f"Vale crítico de {formatar_moeda(menor_saldo)} em {dt_g_br} ({sub_investir})"
             self.icone_alerta_gargalo.name = ft.Icons.WARNING_AMBER_ROUNDED
             self.icone_alerta_gargalo.color = T.DESPESA
             self.txt_alerta_gargalo.value = (
-                f"🚨 Alerta de Descasamento: mesmo que o Caixa Livre totalize {formatar_moeda(teto_caixa)}, "
+                f"🚨 Alerta de Descasamento: mesmo que a sobra totalize {formatar_moeda(teto_caixa)}, "
                 f"seu saldo acumulado chega a {formatar_moeda(menor_saldo)} em {dt_g_br}. "
-                f"Teto seguro para gastar agora sem agravar o negativo: R$ 0,00."
+                f"Teto Seguro p/ Gastar: R$ 0,00."
             )
         elif tem_armadilha:
             self.txt_teto_seguro_card.color = COR_BLINDAGEM
-            self.txt_teto_seguro_sub.value = f"Menor saldo (Gargalo) em {dt_g_br}"
+            self.txt_teto_seguro_sub.value = f"Gargalo em {dt_g_br} | {sub_investir}"
             self.icone_alerta_gargalo.name = ft.Icons.SHIELD_ROUNDED
             self.icone_alerta_gargalo.color = COR_GARGALO
             complemento_prox = (
@@ -1168,14 +1164,13 @@ class PainelGestaoSobra:
                 else ""
             )
             self.txt_alerta_gargalo.value = (
-                f"🛡️ Sobra Falsa detectada! Do Caixa Livre de {formatar_moeda(teto_caixa)}, "
-                f"{formatar_moeda(sobra_falsa)} só entram depois do gargalo de {dt_g_br}. "
-                f"Seu limite seguro hoje sem ficar negativo é {formatar_moeda(teto_seguro)}."
+                f"🛡️ Blindagem Ativa: Teto Seguro p/ Gastar é {formatar_moeda(teto_seguro)} ({sub_investir}). "
+                f"Há uma Sobra Falsa de {formatar_moeda(sobra_falsa)} retida até {dt_g_br}."
                 + complemento_prox
             )
         else:
             self.txt_teto_seguro_card.color = COR_INVESTIMENTO
-            self.txt_teto_seguro_sub.value = "Fluxo saudável sem gargalo intermediário"
+            self.txt_teto_seguro_sub.value = f"Fluxo saudável | {sub_investir}"
             self.icone_alerta_gargalo.name = ft.Icons.VERIFIED_USER_ROUNDED
             self.icone_alerta_gargalo.color = COR_INVESTIMENTO
             self.txt_alerta_gargalo.value = (

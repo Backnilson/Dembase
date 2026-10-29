@@ -138,6 +138,15 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
         try:
             dados = db.obter_resumo_investimentos_patrimonio(forcar_atualizacao=forcar)
             estado["resumo"] = dados
+            try:
+                from core.periodo import obter_estado_periodo_atual
+                est_p = obter_estado_periodo_atual(page)
+                d_ini = str(est_p["data_inicio"])[:10]
+                d_fim = str(est_p["data_fim"])[:10]
+                estado["cobertura"] = db.obter_cobertura_reserva(d_ini, d_fim)
+            except Exception as ex_cob:
+                print(f"[InvestimentosView] Aviso ao carregar cobertura da reserva: {ex_cob}")
+                estado["cobertura"] = {}
             estado["cofres"] = dados.get("cofres", [])
             _renderizar_tudo()
         except Exception as ex:
@@ -266,6 +275,109 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
             lucro_ativo = round((tot_rend / ap_liq * 100), 1) if ap_liq > 0 else 0.0
 
             # Card Individual
+            # Cobertura Real de Sobrevivência (apenas para Reserva de Emergência)
+            cobertura_section = ft.Container()
+            if tipo == "reserva_emergencia":
+                cob = estado.get("cobertura") or {}
+                custo_ind = float(cob.get("custo_individual", 0.0) or 0.0)
+                custo_casa = float(cob.get("custo_casa", 0.0) or 0.0)
+                m_ind_rpc = cob.get("meses_individual")
+                m_casa_rpc = cob.get("meses_casa")
+
+                meses_ind_val = float(m_ind_rpc) if m_ind_rpc is not None else ((saldo / custo_ind) if custo_ind > 0 else None)
+                meses_casa_val = float(m_casa_rpc) if m_casa_rpc is not None else ((saldo / custo_casa) if custo_casa > 0 else None)
+
+                cobertura_section = ft.Container(
+                    padding=pad(all_=12),
+                    bgcolor=f"{cor}0D",
+                    border_radius=12,
+                    border=borda(1, f"{cor}30"),
+                    content=ft.Column(
+                        spacing=8,
+                        controls=[
+                            ft.Row(
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Row(
+                                        spacing=6,
+                                        tight=True,
+                                        controls=[
+                                            ft.Icon(ft.Icons.SHIELD_ROUNDED, color=cor, size=15),
+                                            ft.Text("Cobertura Real de Sobrevivência", size=12, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                                        ],
+                                    ),
+                                    ft.Icon(
+                                        ft.Icons.HELP_OUTLINE_ROUNDED,
+                                        size=13,
+                                        color=T.TEXT_MUTED,
+                                        tooltip="Meses que sua reserva atual cobre apenas seus custos vs os custos da casa inteira (Custos Fixos + Semi Fixos)",
+                                    ),
+                                ],
+                            ),
+                            ft.Row(
+                                spacing=8,
+                                controls=[
+                                    ft.Container(
+                                        expand=True,
+                                        padding=pad(h=10, v=8),
+                                        bgcolor=T.SURFACE,
+                                        border_radius=8,
+                                        border=borda(1, T.BORDER),
+                                        content=ft.Column(
+                                            spacing=2,
+                                            controls=[
+                                                ft.Row(
+                                                    spacing=4,
+                                                    tight=True,
+                                                    controls=[
+                                                        ft.Icon(ft.Icons.PERSON_ROUNDED, size=12, color=T.PRIMARY),
+                                                        ft.Text("Apenas Meu Custo", size=10.5, color=T.TEXT_MUTED, weight=ft.FontWeight.W_500),
+                                                    ],
+                                                ),
+                                                ft.Text(
+                                                    f"{meses_ind_val:.1f} meses" if meses_ind_val is not None else "0.0 meses",
+                                                    size=14,
+                                                    weight=ft.FontWeight.BOLD,
+                                                    color=cor if (meses_ind_val or 0) >= 6 else (T.WARNING if (meses_ind_val or 0) >= 3 else T.DESPESA),
+                                                ),
+                                                ft.Text(f"{formatar_moeda(custo_ind)}/mês", size=10, color=T.TEXT_MUTED),
+                                            ],
+                                        ),
+                                    ),
+                                    ft.Container(
+                                        expand=True,
+                                        padding=pad(h=10, v=8),
+                                        bgcolor=T.SURFACE,
+                                        border_radius=8,
+                                        border=borda(1, T.BORDER),
+                                        content=ft.Column(
+                                            spacing=2,
+                                            controls=[
+                                                ft.Row(
+                                                    spacing=4,
+                                                    tight=True,
+                                                    controls=[
+                                                        ft.Icon(ft.Icons.HOME_ROUNDED, size=12, color="#818CF8"),
+                                                        ft.Text("Custo da Casa (Total)", size=10.5, color=T.TEXT_MUTED, weight=ft.FontWeight.W_500),
+                                                    ],
+                                                ),
+                                                ft.Text(
+                                                    f"{meses_casa_val:.1f} meses" if meses_casa_val is not None else "0.0 meses",
+                                                    size=14,
+                                                    weight=ft.FontWeight.BOLD,
+                                                    color=cor if (meses_casa_val or 0) >= 6 else (T.WARNING if (meses_casa_val or 0) >= 3 else T.DESPESA),
+                                                ),
+                                                ft.Text(f"{formatar_moeda(custo_casa)}/mês", size=10, color=T.TEXT_MUTED),
+                                            ],
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                )
+
             card_ativo = ft.Container(
                 col={"xs": 12, "sm": 12, "md": 6, "lg": 6},
                 padding=pad(all_=18),
@@ -342,6 +454,7 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
 
                         # Meta (se houver)
                         meta_section,
+                        cobertura_section,
 
                         # Botões Rápidos de Ação
                         ft.Row(
@@ -1678,6 +1791,7 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
         titulo="Meu Cofre · Investimentos",
         conteudo=conteudo_principal,
         mostrar_voltar=False,
+        on_perfil_change=lambda _: carregar_dados(forcar=True),
     )
     return view
 
