@@ -13,6 +13,7 @@ import flet as ft
 
 from core import theme as T
 from core.theme import pad, borda
+from core.guard import proteger_clique
 
 
 def clickable_card(
@@ -41,7 +42,7 @@ def clickable_card(
         bgcolor=bgcolor or T.SURFACE,
         border_radius=border_radius,
         border=borda_padrao,
-        on_click=on_click,
+        on_click=proteger_clique(on_click) if on_click else None,
         ink=bool(on_click),
         tooltip=tooltip,
         animate=ft.Animation(150, ft.AnimationCurve.DECELERATE),

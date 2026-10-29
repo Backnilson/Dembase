@@ -25,6 +25,7 @@ from datetime import date, datetime
 import flet as ft
 
 from core import theme as T
+from core.guard import proteger_clique
 from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
 from core.constants import formatar_moeda, formatar_data_br
 from core.periodo import obter_estado_periodo_atual
@@ -917,6 +918,7 @@ def criar_view_cartoes(
             ],
         )
 
+        @proteger_clique
         def salvar_cartao(_):
             nome = txt_nome.value.strip()
             if not nome:

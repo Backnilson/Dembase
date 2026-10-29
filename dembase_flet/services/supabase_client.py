@@ -2994,7 +2994,52 @@ def atualizar_cartao(cartao_id: str, dados: dict):
 
 
 
-    return supabase.table("cartoes").update(payload).eq("id", cartao_id).execute()
+    resp = supabase.table("cartoes").update(payload).eq("id", cartao_id).execute()
+
+    # Cascata: se alterou dia de vencimento ou fechamento, sincroniza faturas abertas/fechadas
+    if "dia_vencimento" in payload or "dia_fechamento" in payload:
+        try:
+            sincronizar_faturas_do_cartao(cartao_id)
+        except Exception as ex:
+            print(f"[atualizar_cartao] Falha na cascata de faturas: {ex}")
+            raise
+        invalidar_cache()
+
+    return resp
+
+
+def calcular_datas_fatura(mes: int, ano: int, dia_fech: int, dia_venc: int) -> tuple[str, str]:
+    """Calcula (data_vencimento, data_fechamento) em formato ISO. mes e ano representam o vencimento."""
+    import calendar
+    dv = min(dia_venc, calendar.monthrange(ano, mes)[1])
+    if dia_venc < dia_fech:
+        mf, af = (12, ano - 1) if mes == 1 else (mes - 1, ano)
+    else:
+        mf, af = mes, ano
+    df = min(dia_fech, calendar.monthrange(af, mf)[1])
+    return f"{ano:04d}-{mes:02d}-{dv:02d}", f"{af:04d}-{mf:02d}-{df:02d}"
+
+
+def sincronizar_faturas_do_cartao(cartao_id: str, cliente=None) -> int:
+    """
+    Recalcula data_vencimento e data_fechamento das faturas NÃO pagas (status 'aberta' ou 'fechada')
+    de um cartão de acordo com os dias atuais cadastrados. Preserva faturas pagas/históricas.
+    """
+    cli = cliente or supabase
+    c = (cli.table("cartoes").select("dia_fechamento,dia_vencimento").eq("id", cartao_id).single().execute().data) or {}
+    dia_fech = int(c.get("dia_fechamento") or 1)
+    dia_venc = int(c.get("dia_vencimento") or 10)
+    faturas = (
+        cli.table("faturas").select("id,mes,ano,data_vencimento,data_fechamento,status")
+        .eq("cartao_id", cartao_id).in_("status", ["aberta", "fechada"]).execute().data
+    ) or []
+    alteradas = 0
+    for f in faturas:
+        novo_v, novo_f = calcular_datas_fatura(int(f["mes"]), int(f["ano"]), dia_fech, dia_venc)
+        if str(f.get("data_vencimento") or "")[:10] != novo_v or str(f.get("data_fechamento") or "")[:10] != novo_f:
+            cli.table("faturas").update({"data_vencimento": novo_v, "data_fechamento": novo_f}).eq("id", f["id"]).execute()
+            alteradas += 1
+    return alteradas
 
 
 

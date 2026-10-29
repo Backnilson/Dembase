@@ -881,7 +881,20 @@ def configurar_rotas(page: ft.Page):
 
             return _build_dashboard(page, match)
 
-        return defn.builder(page, match)
+        try:
+            return defn.builder(page, match)
+        except Exception as ex:
+            # Fallback: nunca deixa a tela em branco; oferece "Tentar novamente"
+            print(f"[Router] Falha ao construir {rota_str}: {ex}")
+            from core.guard import view_erro_retry
+
+            def _retry(_=None):
+                try:
+                    page._reconstruir_rota(forcar_rebuild=True)
+                except Exception as ex2:
+                    print(f"[Router] Retry falhou: {ex2}")
+
+            return view_erro_retry(rota_str, str(ex) or "Falha de rede ou tempo esgotado.", _retry)
 
 
 
