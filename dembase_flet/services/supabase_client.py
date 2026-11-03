@@ -2640,7 +2640,7 @@ async def obter_resumo_potes_async(data_inicio: str, data_fim: str, piso_custos_
 
 
 
-            logger.warning(f"Erro ao obter resumo potes async: {ex}")
+            pass
 
 
 

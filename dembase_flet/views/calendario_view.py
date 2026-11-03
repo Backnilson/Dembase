@@ -458,7 +458,10 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                 _filtrar_aba_lista_act(dt_s)
 
         pct_inv_atual = (pacote_calendario.get("protecao_fluxo") or {}).get("pct_investimento")
-        sobra_ref_cal = float((pacote_calendario.get("protecao_fluxo") or {}).get("sobra_projetada", rec_mes - desp_mes) or 0.0)
+        kpis_m_cal = pacote_calendario.get("kpis") or {}
+        rec_m_cal = float(kpis_m_cal.get("receitas_mes", 0) or 0.0)
+        desp_m_cal = float(kpis_m_cal.get("despesas_mes", 0) or 0.0)
+        sobra_ref_cal = float((pacote_calendario.get("protecao_fluxo") or {}).get("sobra_projetada", rec_m_cal - desp_m_cal) or 0.0)
 
         abrir_modal_raio_x_dia(
             page=page,

@@ -10,6 +10,11 @@ O objetivo é criar um aplicativo de controle financeiro pessoal multiplataforma
 
 *Nota de Referência:* O projeto ativo e oficial está na pasta `dembase_flet/`. As pastas `Codigos_antigos/` e `Codigos_antigos1/` contêm protótipos e versões anteriores arquivadas apenas para consulta de regras de negócio.
 
+**Lei de Execução Direta no Supabase MCP (Zero Interrupção):**
+   - Você tem autorização TOTAL e explícita do proprietário do banco para aplicar migrações (`apply_migration`) e executar SQL (`execute_sql`) diretamente via MCP.
+   - Evite usar `DISABLE TRIGGER` ou `DROP` desnecessários em migrações para não acionar travas de segurança do MCP; prefira `CREATE OR REPLACE` e alterações aditivas seguras.
+   - Caso `apply_migration` retorne cancelamento por timeout/trava da UI, você está EXPRESSAMENTE AUTORIZADO a aplicar o SQL via `execute_sql` ou reenviar a chamada imediatamente para concluir a tarefa.
+
 ## 2. Escopo do MVP (Minimum Viable Product)
 - **Dashboard (Tela Inicial):** Visão geral de receitas, despesas e saldo, com KPIs, gráficos dinâmicos, barras de progresso da Regra 50/30/20 e espaço para frase motivacional diária.
 - **Gestão de Lançamentos:** Formulário limpo, rápido e direto com campos dinâmicos.

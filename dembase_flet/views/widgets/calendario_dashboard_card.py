@@ -61,7 +61,7 @@ def secao_calendario_dashboard(
     ini_m_iso = date(a, m, 1).isoformat()
     fim_m_iso = date(a, m, ult_m).isoformat()
 
-    d_ini_ef = str(data_inicio or (pacote_cal or {}).get("filtro_inicio") or ini_m_iso)[:10]
+    d_ini_ef = str(data_inicio or (pacote_cal or {}).get("data_inicio") or (pacote_cal or {}).get("filtro_inicio") or ini_m_iso)[:10]
     d_fim_ef = str(data_fim or (pacote_cal or {}).get("filtro_fim") or fim_m_iso)[:10]
     eh_parcial = bool((pacote_cal or {}).get("eh_periodo_parcial")) or (d_ini_ef != ini_m_iso or d_fim_ef != fim_m_iso)
     eh_multi_mes = bool((pacote_cal or {}).get("eh_multi_mes")) or (d_ini_ef[:7] != d_fim_ef[:7])
@@ -382,7 +382,6 @@ def secao_calendario_dashboard(
         return montar_texto_tooltip_raio_x(raio_x)
 
     def _abrir_modal_dia_dash(dia_info: dict, vencs: list[dict]):
-        d_ini_ef = (pacote_cal or {}).get("data_inicio") or f"{ano_sel[0]}-{mes_sel[0]:02d}-01"
         acum_map = (pacote_cal or {}).get("acumulados_por_dia") or {}
         dias_cal = (pacote_cal or {}).get("dias") or []
         pct_inv_d = (pacote_cal or {}).get("protecao_fluxo", {}).get("pct_investimento")
