@@ -9,6 +9,7 @@ edição rápida de Pote Financeiro in-line.
 from __future__ import annotations
 
 from datetime import datetime
+from functools import partial
 from typing import Callable
 import flet as ft
 
@@ -16,7 +17,7 @@ from core import theme as T
 from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
 from core.constants import formatar_moeda, formatar_data_br
 from core.responsive import is_mobile
-from views.widgets.lancamento_sheet import abrir_lancamento
+from views.widgets.lancamento_sheet import abrir_lancamento, abrir_lancamento_async
 from views.widgets.report.empty_state import criar_empty_state
 import services.supabase_client as db
 
@@ -168,6 +169,9 @@ class TransactionList(ft.Column):
                 val = float(it.get("valor", 0) or 0)
                 direcao = it.get("direcao_conta")
                 tipo = (it.get("tipo") or "Despesa").lower()
+                eh_consumo_cx_neutro = bool(it.get("caixinha_id")) and str(it.get("subtipo") or "").strip().lower() != "provisionamento"
+                if eh_consumo_cx_neutro:
+                    continue
                 if direcao == "Entrada" or (not direcao and "rec" in tipo):
                     saldo_dia += val
                 elif direcao == "Saida" or (not direcao and "desp" in tipo):
@@ -451,6 +455,12 @@ class TransactionList(ft.Column):
         )
         abrir_dialogo(self._page, dlg)
 
+    async def _editar_item(self, item: dict, _e=None) -> None:
+        """Abre o modal de edição sem bloquear o loop (rede em thread)."""
+        await abrir_lancamento_async(
+            self._page, lancamento=item, on_saved=self.on_refresh,
+        )
+
     def _criar_card_lancamento(self, item: dict) -> ft.Container:
         tipo = item.get("tipo") or "Despesa"
         direcao = item.get("direcao_conta")
@@ -614,6 +624,27 @@ class TransactionList(ft.Column):
                             content=ft.Text("À vista", size=10.5, color=T.TEXT_MUTED, weight=ft.FontWeight.W_600),
                         )
                     )
+            elif bool(item.get("caixinha_id")) and str(item.get("subtipo") or "").strip().lower() != "provisionamento":
+                cx_nome = item.get("caixinha_nome") or (
+                    (item.get("caixinhas_teto") or {}).get("nome") if isinstance(item.get("caixinhas_teto"), dict) else None
+                ) or "Caixinha"
+                badges.append(
+                    ft.Container(
+                        padding=pad(h=7, v=2),
+                        bgcolor=f"{T.PRIMARY}1A",
+                        border_radius=6,
+                        border=borda(1, f"{T.PRIMARY}4D"),
+                        tooltip="Consumo de Provisão: descontado exclusivamente da Caixinha (neutro no Banco e nos 6 Potes)",
+                        content=ft.Row(
+                            spacing=4,
+                            tight=True,
+                            controls=[
+                                ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, size=11, color=T.PRIMARY),
+                                ft.Text(f"Caixinha · {cx_nome} (Neutro no Pote/Banco)", size=10, color=T.PRIMARY, weight=ft.FontWeight.BOLD),
+                            ],
+                        ),
+                    )
+                )
             elif conta_nome:
                 badges.append(
                     ft.Container(
@@ -714,11 +745,7 @@ class TransactionList(ft.Column):
             # === DESKTOP LAYOUT (100% INTACTO) ===
             area_clicavel_edicao = ft.Container(
                 expand=True,
-                on_click=lambda _, it=item: abrir_lancamento(
-                    self._page,
-                    lancamento=it,
-                    on_saved=self.on_refresh,
-                ),
+                on_click=partial(self._editar_item, item),
                 ink=True,
                 tooltip="Clique para editar este lançamento",
                 content=ft.Row(
@@ -825,11 +852,7 @@ class TransactionList(ft.Column):
             )
 
         linha_topo_mobile = ft.Container(
-            on_click=lambda _, it=item: abrir_lancamento(
-                self._page,
-                lancamento=it,
-                on_saved=self.on_refresh,
-            ),
+            on_click=partial(self._editar_item, item),
             ink=True,
             tooltip="Clique para editar este lançamento",
             content=ft.Row(

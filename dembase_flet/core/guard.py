@@ -10,95 +10,22 @@ Proteções de interface:
 """
 from __future__ import annotations
 
-import asyncio
-import inspect
-import threading
-import time
-from functools import wraps
 from typing import Callable
 
 import flet as ft
 
 from core import theme as T
 
-# Tempo mínimo (s) de bloqueio: cobre navegação que retorna antes do rebuild da view.
-_HOLD_MIN_S = 0.6
-_OPACIDADE_BLOQUEADO = 0.55
-
-
-def _bloquear(ctrl) -> tuple:
-    """Aplica estado de carregamento visual e devolve o estado anterior."""
-    anterior = (getattr(ctrl, "disabled", False), getattr(ctrl, "opacity", 1.0))
-    try:
-        ctrl.disabled = True
-        ctrl.opacity = _OPACIDADE_BLOQUEADO
-        ctrl.update()
-    except Exception:
-        pass
-    return anterior
-
-
-def _liberar(ctrl, anterior: tuple) -> None:
-    try:
-        ctrl.disabled, ctrl.opacity = anterior
-        ctrl.update()
-    except Exception:
-        # Controle pode ter sido removido da página pela navegação — ignora.
-        pass
-
-
-def proteger_clique(handler: Callable, hold: float = _HOLD_MIN_S) -> Callable:
+def proteger_clique(handler: Callable, hold: float = 0.0) -> Callable:
     """
-    Envolve um on_click (sync ou async). No primeiro clique bloqueia o controle
-    (disabled + opacidade) e descarta cliques subsequentes até o fim da operação.
+    Mantido por compatibilidade. A proteção anti-duplo-clique agora é GLOBAL e
+    vive em core/click_guard.py (instalada no main.py): cobre todos os on_click
+    com feedback visual imediato, descarte de cliques repetidos e liberação
+    garantida em caso de erro. Esta função apenas devolve o handler intacto
+    (a versão anterior usava time.sleep no event loop, que congelava a UI).
     """
-    if handler is None:
-        return handler
-    if getattr(handler, "_dembase_protegido", False):
-        return handler
+    return handler
 
-    em_execucao = threading.Lock()
-
-    def _entrar(e) -> tuple | None:
-        if not em_execucao.acquire(blocking=False):
-            return None
-        return _bloquear(getattr(e, "control", None)) if getattr(e, "control", None) is not None else ((False, 1.0),)
-
-    if inspect.iscoroutinefunction(handler):
-        @wraps(handler)
-        async def _wrapper(e=None, *a, **kw):
-            estado = _entrar(e)
-            if estado is None:
-                return None
-            t0 = time.monotonic()
-            try:
-                return await handler(e, *a, **kw)
-            finally:
-                restante = hold - (time.monotonic() - t0)
-                if restante > 0:
-                    await asyncio.sleep(restante)
-                if getattr(e, "control", None) is not None and len(estado) == 2:
-                    _liberar(e.control, estado)
-                em_execucao.release()
-    else:
-        @wraps(handler)
-        def _wrapper(e=None, *a, **kw):
-            estado = _entrar(e)
-            if estado is None:
-                return None
-            t0 = time.monotonic()
-            try:
-                return handler(e, *a, **kw)
-            finally:
-                restante = hold - (time.monotonic() - t0)
-                if restante > 0:
-                    time.sleep(restante)
-                if getattr(e, "control", None) is not None and len(estado) == 2:
-                    _liberar(e.control, estado)
-                em_execucao.release()
-
-    _wrapper._dembase_protegido = True
-    return _wrapper
 
 
 def view_erro_retry(

@@ -92,8 +92,8 @@ def criar_painel_marca() -> ft.Container:
                     controls=[
                         _diferencial_item(
                             ft.Icons.PIE_CHART_OUTLINE_ROUNDED,
-                            "Regra Orçamentária 50/30/20",
-                            "Distribuição inteligente entre essenciais, estilo de vida e investimentos.",
+                            "Sistema dos 6 Potes e Caixinhas",
+                            "Distribuição inteligente da renda nos 6 Potes e metas dedicadas por Caixinhas.",
                         ),
                         _diferencial_item(
                             ft.Icons.DATE_RANGE_ROUNDED,

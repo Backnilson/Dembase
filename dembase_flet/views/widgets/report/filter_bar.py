@@ -463,8 +463,6 @@ class FilterBar(ft.Column):
         if not self.fixar_pote:
             campos.append(dd_pote)
         campos.append(dd_forma)
-        if not self.fixar_regra:
-            campos.append(dd_regra)
 
         if self.mobile:
             sheet = ft.BottomSheet(

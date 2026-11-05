@@ -296,136 +296,168 @@ def criar_view_cartoes(
     )
 
     # ── Carregar Dados ────────────────────────────────────────────────────────
-    def carregar_cartoes(inicial: bool = False, forcar: bool = False):
-        if not inicial:
-            spinner.visible = True
-            _safe_update()
-
+    def _aplicar_dados_cartoes(c_lista, fat_brutas, fat_prox_brutas, res_per):
         nonlocal cartoes_lista, faturas_lista, faturas_prox_lista, resumo_periodo
-        try:
-            cartoes_lista = db.listar_cartoes(forcar_atualizacao=forcar or not inicial)
+        cartoes_lista = c_lista or []
+        faturas_brutas = fat_brutas or []
+        faturas_prox_brutas = fat_prox_brutas or []
+        mes_prox = 1 if mes_sel[0] == 12 else mes_sel[0] + 1
+        ano_prox = ano_sel[0] + 1 if mes_sel[0] == 12 else ano_sel[0]
 
-            # Regra 2: Carrega faturas estritamente para o mês/ano e período filtrado
+        faturas_prox_filtradas = []
+        for fp in faturas_prox_brutas:
+            dv_raw = str(fp.get("data_vencimento") or "")[:10]
+            incluir_p = False
+            if dv_raw:
+                try:
+                    dv_dt = date.fromisoformat(dv_raw)
+                    if dv_dt.year == ano_prox and dv_dt.month == mes_prox and 1 <= dv_dt.day <= 7:
+                        incluir_p = True
+                except Exception:
+                    pass
+            else:
+                c_ref = next((c for c in cartoes_lista if str(c.get("id")) == str(fp.get("cartao_id"))), None)
+                if c_ref:
+                    dia_v = int(c_ref.get("dia_vencimento") or 10)
+                    if 1 <= dia_v <= 7:
+                        incluir_p = True
+            if incluir_p:
+                st_p = str(fp.get("status") or "").lower()
+                v_tot_p = float(fp.get("valor_total", 0) or 0)
+                v_pg_p = float(fp.get("valor_pago", 0) or 0)
+                if st_p != "paga" and (v_tot_p - v_pg_p) > 0.01:
+                    faturas_prox_filtradas.append(fp)
+
+        faturas_prox_lista = faturas_prox_filtradas
+
+        ult_mes_atual = calendar.monthrange(ano_sel[0], mes_sel[0])[1]
+        ini_mes_iso = date(ano_sel[0], mes_sel[0], 1).isoformat()
+        fim_mes_iso = date(ano_sel[0], mes_sel[0], ult_mes_atual).isoformat()
+        eh_periodo_parcial = (data_ini_sel[0] != ini_mes_iso or data_fim_sel[0] != fim_mes_iso)
+
+        if eh_periodo_parcial:
             try:
-                faturas_brutas = db.listar_faturas(mes=mes_sel[0], ano=ano_sel[0])
-            except Exception as ex_fat:
-                print(f"[CartoesView] Aviso ao listar faturas filtradas: {ex_fat}")
-                faturas_brutas = []
+                d_i_dt = date.fromisoformat(data_ini_sel[0][:10])
+                d_f_dt = date.fromisoformat(data_fim_sel[0][:10])
+            except Exception:
+                d_i_dt = date(ano_sel[0], mes_sel[0], 1)
+                d_f_dt = date(ano_sel[0], mes_sel[0], ult_mes_atual)
 
-            # Regra 3: Carrega prévia da 1ª semana do mês seguinte (vencimentos dias 01 a 07)
-            mes_prox = 1 if mes_sel[0] == 12 else mes_sel[0] + 1
-            ano_prox = ano_sel[0] + 1 if mes_sel[0] == 12 else ano_sel[0]
-            try:
-                faturas_prox_brutas = db.listar_faturas(mes=mes_prox, ano=ano_prox)
-            except Exception as ex_prox:
-                print(f"[CartoesView] Aviso ao listar faturas do próximo mês: {ex_prox}")
-                faturas_prox_brutas = []
-
-            faturas_prox_filtradas = []
-            for fp in faturas_prox_brutas:
-                dv_raw = str(fp.get("data_vencimento") or "")[:10]
-                incluir_p = False
+            mapa_cartoes_id = {str(c.get("id")): c for c in cartoes_lista}
+            filtradas_faixa = []
+            for f_item in faturas_brutas:
+                dv_raw = str(f_item.get("data_vencimento") or "")[:10]
+                incluir = False
                 if dv_raw:
                     try:
                         dv_dt = date.fromisoformat(dv_raw)
-                        if dv_dt.year == ano_prox and dv_dt.month == mes_prox and 1 <= dv_dt.day <= 7:
-                            incluir_p = True
+                        if d_i_dt <= dv_dt <= d_f_dt:
+                            incluir = True
+                        elif d_i_dt.month == d_f_dt.month and (d_i_dt.day <= dv_dt.day <= d_f_dt.day):
+                            incluir = True
                     except Exception:
                         pass
                 else:
-                    c_ref = next((c for c in cartoes_lista if str(c.get("id")) == str(fp.get("cartao_id"))), None)
-                    if c_ref:
-                        dia_v = int(c_ref.get("dia_vencimento") or 10)
-                        if 1 <= dia_v <= 7:
-                            incluir_p = True
+                    c_ref = mapa_cartoes_id.get(str(f_item.get("cartao_id"))) or {}
+                    dia_v = int(c_ref.get("dia_vencimento") or 10)
+                    if d_i_dt.day <= dia_v <= d_f_dt.day:
+                        incluir = True
+                if incluir:
+                    filtradas_faixa.append(f_item)
+            faturas_lista = filtradas_faixa
+        else:
+            faturas_lista = faturas_brutas
 
-                if incluir_p:
-                    st_p = str(fp.get("status") or "").lower()
-                    v_tot_p = float(fp.get("valor_total", 0) or 0)
-                    v_pg_p = float(fp.get("valor_pago", 0) or 0)
-                    if st_p != "paga" and (v_tot_p - v_pg_p) > 0.01:
-                        faturas_prox_filtradas.append(fp)
+        txt_sub_periodo_cartoes.value = (
+            f"Período ativo: {formatar_data_br(data_ini_sel[0])} a {formatar_data_br(data_fim_sel[0])} • "
+            "Gerencie limites, identifique o melhor cartão e liquide faturas"
+        )
 
-            faturas_prox_lista = faturas_prox_filtradas
+        resumo_periodo = res_per if isinstance(res_per, dict) else {}
 
-            ult_mes_atual = calendar.monthrange(ano_sel[0], mes_sel[0])[1]
-            ini_mes_iso = date(ano_sel[0], mes_sel[0], 1).isoformat()
-            fim_mes_iso = date(ano_sel[0], mes_sel[0], ult_mes_atual).isoformat()
-            eh_periodo_parcial = (data_ini_sel[0] != ini_mes_iso or data_fim_sel[0] != fim_mes_iso)
+        total_limite = sum(float(c.get("limite_total", 0) or 0) for c in cartoes_lista)
+        total_disp   = sum(float(c.get("limite_disponivel", c.get("limite_total", 0)) or 0) for c in cartoes_lista)
 
-            if eh_periodo_parcial:
+        total_fat = sum(
+            max(0.0, float(f.get("valor_total", 0) or 0) - float(f.get("valor_pago", 0) or 0))
+            for f in faturas_lista
+            if int(f.get("mes") or 0) == mes_sel[0] and int(f.get("ano") or 0) == ano_sel[0]
+            and str(f.get("status", "")).lower() != "paga"
+            and float(f.get("valor_total", 0) or 0) > 0.01
+        )
+
+        total_faturas_filtro = sum(
+            float(f.get("valor_total", 0) or 0)
+            for f in faturas_lista
+            if int(f.get("mes") or 0) == mes_sel[0] and int(f.get("ano") or 0) == ano_sel[0]
+        )
+        if total_faturas_filtro == 0.0 and resumo_periodo.get("cartoes"):
+            for cr in resumo_periodo["cartoes"]:
+                total_faturas_filtro += float(cr.get("fatura_valor", 0) or 0)
+
+        txt_total_limite.value     = formatar_moeda(float(total_limite or 0))
+        txt_total_disponivel.value = formatar_moeda(float(total_disp or 0))
+        txt_total_faturas.value    = formatar_moeda(float(total_fat or 0))
+        txt_faturas_filtro.value   = formatar_moeda(float(total_faturas_filtro or 0))
+
+        atualizar_banner_melhor_cartao()
+        renderizar_conteudo()
+
+    def carregar_cartoes(inicial: bool = False, forcar: bool = False):
+        mes_atual = mes_sel[0]
+        ano_atual = ano_sel[0]
+        mes_prox = 1 if mes_atual == 12 else mes_atual + 1
+        ano_prox = ano_atual + 1 if mes_atual == 12 else ano_atual
+        loop_check = getattr(page, "loop", None)
+        eh_loop_ativo = isinstance(loop_check, asyncio.AbstractEventLoop) and loop_check.is_running() and hasattr(page, "run_task")
+
+        if eh_loop_ativo:
+            spinner.visible = True
+            if not inicial:
+                _safe_update()
+
+            async def _carregar_cartoes_async():
                 try:
-                    d_i_dt = date.fromisoformat(data_ini_sel[0][:10])
-                    d_f_dt = date.fromisoformat(data_fim_sel[0][:10])
-                except Exception:
-                    d_i_dt = date(ano_sel[0], mes_sel[0], 1)
-                    d_f_dt = date(ano_sel[0], mes_sel[0], ult_mes_atual)
+                    res = await asyncio.gather(
+                        asyncio.to_thread(db.listar_cartoes, forcar),
+                        asyncio.to_thread(db.listar_faturas, None, mes_atual, ano_atual),
+                        asyncio.to_thread(db.listar_faturas, None, mes_prox, ano_prox),
+                        asyncio.to_thread(db.obter_resumo_cartoes, mes_atual, ano_atual),
+                        return_exceptions=True,
+                    )
+                    c_l = res[0] if not isinstance(res[0], Exception) else []
+                    f_b = res[1] if not isinstance(res[1], Exception) else []
+                    f_p = res[2] if not isinstance(res[2], Exception) else []
+                    r_p = res[3] if not isinstance(res[3], Exception) else {}
+                    _aplicar_dados_cartoes(c_l, f_b, f_p, r_p)
+                except Exception as ex:
+                    if not inicial:
+                        mostrar_feedback(page, f"Erro ao listar cartões e faturas: {ex}", "erro")
+                finally:
+                    spinner.visible = False
+                    _safe_update()
 
-                mapa_cartoes_id = {str(c.get("id")): c for c in cartoes_lista}
-                filtradas_faixa = []
-                for f_item in faturas_brutas:
-                    dv_raw = str(f_item.get("data_vencimento") or "")[:10]
-                    incluir = False
-                    if dv_raw:
-                        try:
-                            dv_dt = date.fromisoformat(dv_raw)
-                            if d_i_dt <= dv_dt <= d_f_dt:
-                                incluir = True
-                            elif d_i_dt.month == d_f_dt.month and (d_i_dt.day <= dv_dt.day <= d_f_dt.day):
-                                incluir = True
-                        except Exception:
-                            pass
-                    else:
-                        c_ref = mapa_cartoes_id.get(str(f_item.get("cartao_id"))) or {}
-                        dia_v = int(c_ref.get("dia_vencimento") or 10)
-                        if d_i_dt.day <= dia_v <= d_f_dt.day:
-                            incluir = True
-                    if incluir:
-                        filtradas_faixa.append(f_item)
-                faturas_lista = filtradas_faixa
-            else:
-                faturas_lista = faturas_brutas
+            page.run_task(_carregar_cartoes_async)
+            return
 
-            txt_sub_periodo_cartoes.value = (
-                f"Período ativo: {formatar_data_br(data_ini_sel[0])} a {formatar_data_br(data_fim_sel[0])} · "
-                "Gerencie limites, identifique o melhor cartão e liquide faturas"
-            )
-
-            resumo_periodo = {}
+        if not inicial:
+            spinner.visible = True
+            _safe_update()
+        try:
+            c_l = db.listar_cartoes(forcar_atualizacao=forcar)
             try:
-                resumo_periodo = db.obter_resumo_cartoes(mes_sel[0], ano_sel[0])
+                f_b = db.listar_faturas(mes=mes_atual, ano=ano_atual)
             except Exception:
-                pass
-
-            total_limite = sum(float(c.get("limite_total", 0) or 0) for c in cartoes_lista)
-            total_disp   = sum(float(c.get("limite_disponivel", c.get("limite_total", 0)) or 0) for c in cartoes_lista)
-
-            # Faturas Abertas: soma estrita de pendências das faturas abertas do período filtrado
-            total_fat = sum(
-                max(0.0, float(f.get("valor_total", 0) or 0) - float(f.get("valor_pago", 0) or 0))
-                for f in faturas_lista
-                if int(f.get("mes") or 0) == mes_sel[0] and int(f.get("ano") or 0) == ano_sel[0]
-                and str(f.get("status", "")).lower() != "paga"
-                and float(f.get("valor_total", 0) or 0) > 0.01
-            )
-
-            # Faturas do Filtro: soma de todos os gastos em fatura do período filtrado
-            total_faturas_filtro = sum(
-                float(f.get("valor_total", 0) or 0)
-                for f in faturas_lista
-                if int(f.get("mes") or 0) == mes_sel[0] and int(f.get("ano") or 0) == ano_sel[0]
-            )
-            if total_faturas_filtro == 0.0 and resumo_periodo.get("cartoes"):
-                for cr in resumo_periodo["cartoes"]:
-                    total_faturas_filtro += float(cr.get("fatura_valor", 0) or 0)
-
-            txt_total_limite.value     = formatar_moeda(float(total_limite or 0))
-            txt_total_disponivel.value = formatar_moeda(float(total_disp or 0))
-            txt_total_faturas.value    = formatar_moeda(float(total_fat or 0))
-            txt_faturas_filtro.value   = formatar_moeda(float(total_faturas_filtro or 0))
-
-            atualizar_banner_melhor_cartao()
-            renderizar_conteudo()
+                f_b = []
+            try:
+                f_p = db.listar_faturas(mes=mes_prox, ano=ano_prox)
+            except Exception:
+                f_p = []
+            try:
+                r_p = db.obter_resumo_cartoes(mes_atual, ano_atual)
+            except Exception:
+                r_p = {}
+            _aplicar_dados_cartoes(c_l, f_b, f_p, r_p)
         except Exception as ex:
             if not inicial:
                 mostrar_feedback(page, f"Erro ao listar cartões e faturas: {ex}", "erro")

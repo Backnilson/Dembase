@@ -8,6 +8,8 @@ consolidada da família (Casa / Todos), com recálculo reativo instantâneo.
 """
 from __future__ import annotations
 
+import asyncio
+
 from typing import Callable, Optional
 import flet as ft
 
@@ -92,19 +94,43 @@ def criar_seletor_perfil(
                 fechar_dialogo(page, dialog_perfis)
             except Exception:
                 pass
+            try:
+                page.update()
+            except Exception:
+                pass
 
-            # Define a nova visão e executa a RPC no Supabase
-            novo_est = definir_visao_membro_atual(page, membro_id, membro_info)
-            _atualizar_rotulo()
+            def _executar_troca_sync():
+                novo_est = definir_visao_membro_atual(page, membro_id, membro_info)
+                _atualizar_rotulo()
+                if callable(on_change):
+                    try:
+                        on_change(novo_est.get("membro_id"))
+                    except Exception as ex:
+                        print(f"[SeletorPerfil] Erro no callback on_change: {ex}")
+                return novo_est
 
-            _trocando = False
+            loop_check = getattr(page, "loop", None)
+            eh_loop_ativo = (
+                isinstance(loop_check, asyncio.AbstractEventLoop)
+                and loop_check.is_running()
+                and hasattr(page, "run_task")
+            )
 
-            # Dispara callback para recalcular as métricas da tela atual
-            if callable(on_change):
+            if eh_loop_ativo:
+                async def _trocar_perfil_async():
+                    nonlocal _trocando
+                    try:
+                        await asyncio.to_thread(_executar_troca_sync)
+                    except Exception as ex:
+                        print(f"[SeletorPerfil] Erro ao trocar perfil: {ex}")
+                    finally:
+                        _trocando = False
+                page.run_task(_trocar_perfil_async)
+            else:
                 try:
-                    on_change(novo_est.get("membro_id"))
-                except Exception as ex:
-                    print(f"[SeletorPerfil] Erro no callback on_change: {ex}")
+                    _executar_troca_sync()
+                finally:
+                    _trocando = False
 
         # Modal de Adicionar Novo Membro
         def _abrir_modal_novo_membro(_=None):

@@ -10,6 +10,8 @@ suporte à tecla ESC, persistência e edição de séries/recorrências.
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import date, datetime
 from typing import Callable, Optional
 
@@ -23,6 +25,67 @@ from core.theme import pad, mostrar_feedback
 import services.supabase_client as db
 import services.potes_service as potes_svc
 from views.widgets.lancamento_form import LancamentoForm
+
+
+def _cache_formulario_quente(lancamento: Optional[dict] = None) -> bool:
+    """Retorna True se todos os cadastros usados pelo formulário já estão em RAM."""
+    try:
+        if any(
+            db.obter_cache(k) is None
+            for k in ("contas", "cartoes", "categorias", "membros", "caixinhas_opcoes")
+        ):
+            return False
+        if db.obter_cache("subcategorias", subchave="__todas__") is None:
+            return False
+        if db.obter_cache("lancamentos", subchave="__memoria_autofill__") is None:
+            return False
+        if isinstance(lancamento, dict) and lancamento.get("categoria_id"):
+            cat = str(lancamento["categoria_id"]).strip()
+            if db.obter_cache("subcategorias", subchave=cat) is None:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _preaquecer_formulario(lancamento: Optional[dict] = None) -> None:
+    """
+    Pré-carrega (em paralelo fora do event loop) tudo que o formulário consulta
+    ao abrir. Com o cache RAM aquecido, abrir_lancamento() monta o modal em 0ms.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    funcoes = [
+        db.listar_contas,
+        db.listar_cartoes,
+        db.listar_categorias,
+        db.listar_membros,
+        db.listar_caixinhas_opcoes,
+        db.listar_subcategorias,
+        potes_svc.carregar_potes,
+    ]
+    if hasattr(db, "obter_memoria_lancamentos"):
+        funcoes.append(db.obter_memoria_lancamentos)
+    if isinstance(lancamento, dict) and lancamento.get("categoria_id"):
+        cat = str(lancamento["categoria_id"])
+        funcoes.append(lambda: db.listar_subcategorias(cat))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futs = [pool.submit(fn) for fn in funcoes]
+        for f in futs:
+            try:
+                f.result(timeout=8)
+            except Exception:
+                pass
+
+
+async def abrir_lancamento_async(page: ft.Page, **kwargs) -> None:
+    """
+    Versão não bloqueante de abrir_lancamento: se o cache RAM já estiver quente,
+    abre instantaneamente em 0ms; caso contrário pré-aquece em paralelo em thread.
+    """
+    if not _cache_formulario_quente(kwargs.get("lancamento")):
+        await asyncio.to_thread(_preaquecer_formulario, kwargs.get("lancamento"))
+    abrir_lancamento(page, **kwargs)
 
 
 def abrir_lancamento(
@@ -40,6 +103,11 @@ def abrir_lancamento(
     Abre o modal/bottom sheet de criação ou edição de lançamento financeiro.
     Usa a pilha nativa de diálogos do Flet 1.0.1 (page.show_dialog / page.pop_dialog).
     """
+    _agora = time.monotonic()
+    if _agora - getattr(page, "_dembase_lanc_ts", 0.0) < 1.5:
+        return
+    page._dembase_lanc_ts = _agora
+
     raw_id = None
     if lancamento is not None and isinstance(lancamento, dict):
         raw_id = lancamento.get("id") or lancamento.get("lancamento_id") or lancamento.get("id_lancamento")
@@ -52,12 +120,15 @@ def abrir_lancamento(
         state.serie_id = str(lancamento.get("serie_id")) if lancamento.get("serie_id") else None
         state.recorrente_id = str(lancamento.get("recorrente_id")) if lancamento.get("recorrente_id") else None
         state.mudar_tipo(lancamento.get("tipo", "Despesa"))
-        state.subtipo = lancamento.get("subtipo")
+        state.subtipo = lancamento.get("subtipo") or state.tipo
         state.forma_movimentacao = lancamento.get("forma_movimentacao", "Pix")
         state.descricao = lancamento.get("descricao") or ""
         state.valor = float(lancamento.get("valor", 0.0))
         state.conta_id = str(lancamento.get("conta_id")) if lancamento.get("conta_id") else None
         state.cartao_id = str(lancamento.get("cartao_id")) if lancamento.get("cartao_id") else None
+        state.caixinha_id = str(lancamento.get("caixinha_id")) if lancamento.get("caixinha_id") else None
+        if state.caixinha_id and str(state.subtipo or "").strip().lower() != "provisionamento":
+            state.forma_movimentacao = "Caixinha"
         state.categoria_id = str(lancamento.get("categoria_id")) if lancamento.get("categoria_id") else None
         state.subcategoria_id = str(lancamento.get("subcategoria_id")) if lancamento.get("subcategoria_id") else None
         state.destino_id = str(lancamento.get("destino_id")) if lancamento.get("destino_id") else None
@@ -127,9 +198,7 @@ def abrir_lancamento(
         if lancamento.get("tipo_recorrencia") == "fixa" or bool(lancamento.get("recorrente_id")):
             state.is_fixa = True
 
-        # Abre detalhes caso o registro já tenha dados secundários
-        if state.subcategoria_id or state.subtipo or state.serie_id or state.recorrente_id:
-            state.mais_detalhes_aberto = True
+        state.mais_detalhes_aberto = True
     else:
         from core.membro_state import obter_membro_padrao_para_lancamento
         state.membro_id = obter_membro_padrao_para_lancamento(
@@ -149,13 +218,14 @@ def abrir_lancamento(
             state.categoria_id = str(categoria_inicial)
         if regra_inicial and state.eh_despesa:
             state.regra = obter_regra_pote(regra_inicial)
-            state.mais_detalhes_aberto = True
         if pote_inicial and state.eh_despesa:
             state.pote_id = str(pote_inicial)
             state.regra = obter_regra_pote(pote_inicial)
 
     # 2. Instanciação do formulário
     form = LancamentoForm(page, state)
+    if pote_inicial or regra_inicial:
+        form._pote_escolhido_manualmente = True
 
     # 3. Controle de Fechamento e Tecla ESC (Flet 1.0.1)
     mobile = is_mobile(page)
@@ -205,7 +275,7 @@ def abrir_lancamento(
 
     page.on_keyboard_event = _ao_pressionar_tecla
 
-    # 4. Botões de Ação (com tight=True e dimensões explícitas para nunca cortar/espremer)
+    # 4. Botões de Ação
     texto_botao_acao = "Salvar Alterações" if is_edicao else "Confirmar Lançamento"
 
     def _conteudo_padrao_btn_salvar() -> ft.Control:
@@ -266,7 +336,7 @@ def abrir_lancamento(
         except Exception:
             pass
 
-        try:
+        def _gravar_no_banco_sync() -> str:
             tipo_db = (
                 "Transferência"
                 if state.eh_transferencia
@@ -274,13 +344,29 @@ def abrir_lancamento(
             )
             desc_final = (state.descricao or "").strip()
             if not desc_final:
-                desc_final = "Transferência" if state.eh_transferencia else (state.subtipo or "Lançamento")
+                desc_final = "Transferência" if state.eh_transferencia else tipo_db
 
-            conta_id_final = form._obter_conta_id(state.conta_id) if not state.eh_credito else None
+            eh_cx = state.eh_caixinha
+            conta_id_final = (
+                form._obter_conta_id(state.conta_id)
+                if (not state.eh_credito and not eh_cx)
+                else None
+            )
             cartao_id_final = form._obter_cartao_id(state.cartao_id) if state.eh_credito else None
+            caixinha_id_final = (
+                form._obter_caixinha_id(state.caixinha_id)
+                if (state.eh_despesa and (eh_cx or state.caixinha_id))
+                else None
+            )
             cat_id_final = form._obter_cat_id(state.categoria_id) if not state.eh_transferencia else None
             subcat_id_final = form._obter_subcat_id(state.subcategoria_id) if not state.eh_transferencia else None
             destino_id_final = form._obter_conta_id(state.destino_id) if state.eh_transferencia else None
+
+            subtipo_final = (
+                "Consumo Caixinha"
+                if eh_cx
+                else (state.subtipo if (is_edicao and state.subtipo) else tipo_db)
+            )
 
             # Resolução da Fatura Manual (se selecionada pelo usuário)
             fatura_id_final = None
@@ -302,22 +388,22 @@ def abrir_lancamento(
 
             dados = {
                 "tipo": tipo_db,
-                "subtipo": state.subtipo or tipo_db,
-                "forma_movimentacao": state.forma_movimentacao,
+                "subtipo": subtipo_final,
+                "forma_movimentacao": "Caixinha" if eh_cx else state.forma_movimentacao,
                 "valor": state.valor,
                 "data": str(state.data_selecionada),
                 "hora": state.hora,
                 "descricao": desc_final,
-                "status": "Pago" if (state.status_pago or state.eh_transferencia) else "Pendente",
+                "status": "Pago" if (state.status_pago or state.eh_transferencia or eh_cx) else "Pendente",
                 "conta_id": conta_id_final,
                 "cartao_id": cartao_id_final,
                 "fatura_id": fatura_id_final,
                 "categoria_id": cat_id_final,
                 "subcategoria_id": subcat_id_final,
                 "destino_id": destino_id_final,
-                "regra": obter_regra_pote(state.regra or state.pote_id) if state.eh_despesa else None,
+                "regra": obter_regra_pote(state.regra or state.pote_id, getattr(form, "_potes_cache", None)) if state.eh_despesa else None,
                 "pote_id": str(state.pote_id) if (state.eh_despesa and state.pote_id) else None,
-                "caixinha_id": form._obter_caixinha_id(state.caixinha_id) if state.eh_despesa else None,
+                "caixinha_id": caixinha_id_final,
                 "membro_id": state.membro_id if state.membro_id else None,
             }
 
@@ -342,7 +428,6 @@ def abrir_lancamento(
 
                 # 2. Deslocamento de Fatura (se alterada)
                 if state.fatura_foi_alterada and state.fatura_id:
-                    # Aplica lógica de cascata exclusivamente para COMPRAS PARCELADAS reais
                     if state.is_compra_parcelada and state.serie_id and not state.is_fixa and not state.recorrente_id:
                         res_desloc = db.deslocar_faturas_parcelamento(
                             state.lancamento_id,
@@ -361,9 +446,6 @@ def abrir_lancamento(
                             max_d = calendar.monthrange(n_ano, n_mes)[1]
                             dados["data"] = str(date(n_ano, n_mes, min(d.day, max_d)))
                     else:
-                        # Assinatura recorrente ou lançamento avulso:
-                        # APENAS associa à nova fatura, mantendo estritamente a data original da transação
-                        # para evitar qualquer colisão na restrição de data única (idx_lancamentos_rec_data)
                         dados["fatura_id"] = state.fatura_id
                         fats_recalc = [f for f in [state.fatura_id_original, state.fatura_id] if f]
                         if fats_recalc:
@@ -379,8 +461,17 @@ def abrir_lancamento(
                     if state.parcela_atual:
                         dados["parcela_atual"] = state.parcela_atual
 
-                # Realiza OBRIGATORIAMENTE o UPDATE na linha existente (jamais INSERT duplicado)
                 db.atualizar_lancamento(state.lancamento_id, dados)
+                if hasattr(db, "registrar_memoria_evolutiva_lancamento"):
+                    try:
+                        db.registrar_memoria_evolutiva_lancamento(
+                            dados,
+                            modo="fixa" if state.is_fixa else "unica",
+                            lancamento_id=str(state.lancamento_id),
+                            total_parcelas=state.quantidade,
+                        )
+                    except Exception:
+                        pass
 
                 if modo_serie == "proximos" and (state.serie_id or state.recorrente_id):
                     try:
@@ -398,12 +489,21 @@ def abrir_lancamento(
                     except Exception:
                         pass
 
-                # Invalida caches para atualizar telas imediatamente
+                if caixinha_id_final:
+                    try:
+                        db.recalcular_saldo_caixinha(caixinha_id_final)
+                    except Exception:
+                        pass
+
                 db.invalidar_cache("faturas")
                 db.invalidar_cache("cartoes")
+                db.invalidar_cache("contas")
+                db.invalidar_cache("caixinhas")
+                db.invalidar_cache("potes_resumo")
+                db.invalidar_cache("dashboard")
                 db.invalidar_cache("lancamentos")
-
-                mostrar_feedback(page, "Lançamento atualizado com sucesso!", "sucesso")
+                db.aquecer_cache()
+                return "Lançamento atualizado com sucesso!"
             else:
                 modo = state.modo_recorrencia()
                 valor_modo = "parcelado" if (state.eh_credito and modo == "parcelada") else "repetido"
@@ -417,6 +517,26 @@ def abrir_lancamento(
                 if not res.get("sucesso", True):
                     raise RuntimeError(res.get("erro", "Falha ao gravar lançamento."))
 
+                if hasattr(db, "registrar_memoria_evolutiva_lancamento"):
+                    try:
+                        lid_novo = res.get("id") if isinstance(res, dict) else None
+                        db.registrar_memoria_evolutiva_lancamento(
+                            dados,
+                            modo=modo,
+                            lancamento_id=str(lid_novo) if lid_novo else None,
+                            total_parcelas=state.quantidade,
+                        )
+                    except Exception:
+                        pass
+
+                db.invalidar_cache("lancamentos")
+                db.invalidar_cache("contas")
+                db.invalidar_cache("cartoes")
+                db.invalidar_cache("faturas")
+                db.invalidar_cache("caixinhas")
+                db.invalidar_cache("potes_resumo")
+                db.invalidar_cache("dashboard")
+
                 if state.eh_receita:
                     try:
                         lanc_id = res.get("id") or (res.get("lancamento", {}).get("id") if isinstance(res.get("lancamento"), dict) else None)
@@ -427,38 +547,72 @@ def abrir_lancamento(
                     except Exception:
                         pass
 
-                if state.caixinha_id:
+                if caixinha_id_final:
                     try:
-                        db.recalcular_saldo_caixinha(state.caixinha_id)
+                        db.recalcular_saldo_caixinha(caixinha_id_final)
                         db.invalidar_cache("caixinhas")
                     except Exception as ex_cx:
                         print(f"[LancamentoSheet] Aviso ao atualizar saldo da caixinha: {ex_cx}")
 
-                mostrar_feedback(page, "Lançamento salvo com sucesso!", "sucesso")
+                db.aquecer_cache()
+                return "Lançamento salvo com sucesso!"
 
-            fechar_dialog()
+        loop_check = getattr(page, "loop", None)
+        eh_loop_ativo = (
+            isinstance(loop_check, asyncio.AbstractEventLoop)
+            and loop_check.is_running()
+            and hasattr(page, "run_task")
+        )
 
-            if on_saved:
+        if eh_loop_ativo:
+            async def _executar_salvamento_async():
                 try:
-                    on_saved()
+                    msg_sucesso = await asyncio.to_thread(_gravar_no_banco_sync)
+                    fechar_dialog()
+                    mostrar_feedback(page, msg_sucesso, "sucesso")
+                    if on_saved:
+                        try:
+                            on_saved()
+                        except Exception:
+                            pass
+                except Exception as ex:
+                    btn_salvar.disabled = False
+                    btn_salvar.content = _conteudo_padrao_btn_salvar()
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+                    mostrar_feedback(page, f"Erro ao salvar: {ex}", "erro")
+                finally:
+                    salvando_lock[0] = False
+
+            page.run_task(_executar_salvamento_async)
+        else:
+            try:
+                msg_sucesso = _gravar_no_banco_sync()
+                fechar_dialog()
+                mostrar_feedback(page, msg_sucesso, "sucesso")
+                if on_saved:
+                    try:
+                        on_saved()
+                    except Exception:
+                        pass
+            except Exception as ex:
+                btn_salvar.disabled = False
+                btn_salvar.content = _conteudo_padrao_btn_salvar()
+                try:
+                    page.update()
                 except Exception:
                     pass
-
-        except Exception as ex:
-            btn_salvar.disabled = False
-            btn_salvar.content = _conteudo_padrao_btn_salvar()
-            try:
-                page.update()
-            except Exception:
-                pass
-            mostrar_feedback(page, f"Erro ao salvar: {ex}", "erro")
-        finally:
-            salvando_lock[0] = False
-
+                mostrar_feedback(page, f"Erro ao salvar: {ex}", "erro")
+            finally:
+                salvando_lock[0] = False
     def ao_clicar_salvar(_):
         # Garante que os IDs no state estejam normalizados antes de validar
         if state.eh_credito:
             state.cartao_id = form._obter_cartao_id(state.cartao_id or form.dd_conta.value)
+        elif state.eh_caixinha:
+            state.caixinha_id = form._obter_caixinha_id(state.caixinha_id or form.dd_caixinha.value)
         else:
             state.conta_id = form._obter_conta_id(state.conta_id or form.dd_conta.value)
 
@@ -467,14 +621,14 @@ def abrir_lancamento(
         else:
             state.categoria_id = form._obter_cat_id(state.categoria_id or form.dd_categoria.value)
             state.subcategoria_id = form._obter_subcat_id(state.subcategoria_id or form.dd_subcategoria.value)
-            state.caixinha_id = form._obter_caixinha_id(state.caixinha_id or form.dd_caixinha.value) if state.eh_despesa else None
+            if not state.eh_caixinha:
+                state.caixinha_id = form._obter_caixinha_id(state.caixinha_id) if (state.eh_despesa and state.caixinha_id) else None
 
         valido, erro_msg = state.validar()
         if not valido:
             mostrar_feedback(page, erro_msg or "Verifique os campos obrigatórios.", "alerta")
             return
 
-        # Modal Helper para fechar caixas de diálogo no Flet 1.0.1
         def _fechar_modal(dlg):
             try:
                 page.pop_dialog()
@@ -496,7 +650,6 @@ def abrir_lancamento(
             mudou_fatura = state.fatura_foi_alterada
             mudou_qtd = state.quantidade_parcelas_alterada
 
-            # Validação prévia de redução menor que parcelas pagas
             if mudou_qtd and state.quantidade < (state.total_parcelas_original or 1):
                 try:
                     resumo_chk = db.obter_resumo_serie_parcelamento(state.serie_id)
@@ -590,7 +743,7 @@ def abrir_lancamento(
                 _abrir_dialogo_redimensionamento(aplicar_cascata_val=False)
                 return
 
-        # CENÁRIO 2: Edição geral de série existente (recorrente ou parcelada sem mudança de fatura/qtd)
+        # CENÁRIO 2: Edição geral de série existente
         total_parc = int(lancamento.get("total_parcelas", 1) or 1) if (lancamento and isinstance(lancamento, dict)) else 1
         tem_serie_real = bool(state.recorrente_id) or (bool(state.serie_id) and (total_parc > 1 or state.is_fixa))
 
@@ -655,8 +808,7 @@ def abrir_lancamento(
     )
 
     if mobile:
-        # BottomSheet para Mobile (scrollable=True é obrigatório no Flet 1.0.1 para não cortar a metade inferior!)
-        altura_sheet = int((page.height or 760) * 0.86)
+        altura_sheet = int((page.height or 760) * 0.90)
         conteudo_sheet = ft.Container(
             content=ft.Column(
                 controls=[
@@ -671,10 +823,10 @@ def abrir_lancamento(
                         spacing=10,
                     ),
                 ],
-                spacing=10,
+                spacing=8,
                 expand=True,
             ),
-            padding=pad(h=16, v=12),
+            padding=pad(h=16, v=10),
             height=altura_sheet,
             bgcolor=T.SURFACE,
         )
@@ -687,21 +839,19 @@ def abrir_lancamento(
             on_dismiss=_ao_dispensar_dialog,
         )
     else:
-        # AlertDialog para Desktop usando slots nativos title, content e actions
-        # Assim o cabeçalho e o botão Salvar ficam 100% fixos e visíveis sem corte.
-        altura_disp = int((page.height or 768) * 0.58)
-        altura_corpo = max(340, min(440, altura_disp))
+        altura_disp = int((page.height or 800) * 0.74)
+        altura_corpo = max(460, min(580, altura_disp))
 
         container_dialog = ft.AlertDialog(
-            modal=False,  # Permite fechar com tecla ESC ou clique fora
+            modal=False,
             bgcolor=T.SURFACE,
             shape=ft.RoundedRectangleBorder(radius=16),
-            inset_padding=pad(h=20, v=16),
-            title_padding=pad(left=20, right=12, top=14, bottom=0),
-            content_padding=pad(left=20, right=20, top=8, bottom=8),
-            actions_padding=pad(left=20, right=20, top=8, bottom=16),
+            inset_padding=pad(h=20, v=14),
+            title_padding=pad(left=20, right=12, top=12, bottom=0),
+            content_padding=pad(left=20, right=20, top=6, bottom=6),
+            actions_padding=pad(left=20, right=20, top=6, bottom=14),
             actions_alignment=ft.MainAxisAlignment.END,
-            title= ft.Column(
+            title=ft.Column(
                 controls=[
                     header_row,
                     ft.Divider(height=1, color=T.BORDER),
@@ -711,7 +861,7 @@ def abrir_lancamento(
             ),
             content=ft.Container(
                 content=form,
-                width=480,
+                width=520,
                 height=altura_corpo,
             ),
             actions=[
@@ -722,3 +872,4 @@ def abrir_lancamento(
         )
 
     page.show_dialog(container_dialog)
+    page._dembase_lanc_ts = time.monotonic()

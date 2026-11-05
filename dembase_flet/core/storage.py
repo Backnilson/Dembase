@@ -229,22 +229,39 @@ def obter_preferencia_tema_memoria(page: ft.Page) -> str:
 # =============================================================================
 # PREFERÊNCIAS DE GRÁFICOS DO DASHBOARD
 # =============================================================================
+def _migrar_ids_graficos(ids: list[str]) -> list[str]:
+    """Substitui o ID legado 'regra_5030' por 'minhas_caixinhas' preservando a posição."""
+    res: list[str] = []
+    for gid in ids:
+        g_norm = "minhas_caixinhas" if gid == "regra_5030" else gid
+        if g_norm not in res:
+            res.append(g_norm)
+    return res
+
+
 def obter_graficos_dashboard_memoria(page: ft.Page, padrao: list[str]) -> list[str]:
     """Retorna a lista ordenada de IDs de gráficos ativos para o Dashboard."""
     val_sess = session_get(page, "graficos_dashboard")
     if isinstance(val_sess, list) and val_sess:
-        return list(val_sess)
+        migrados = _migrar_ids_graficos(list(val_sess))
+        if migrados != val_sess:
+            session_set(page, "graficos_dashboard", migrados)
+        return migrados
     local = _ler_local_json()
     val_local = local.get("graficos_dashboard")
     if isinstance(val_local, list) and val_local:
-        session_set(page, "graficos_dashboard", val_local)
-        return list(val_local)
-    return list(padrao)
+        migrados = _migrar_ids_graficos(list(val_local))
+        if migrados != val_local:
+            local["graficos_dashboard"] = migrados
+            _salvar_local_json(local)
+        session_set(page, "graficos_dashboard", migrados)
+        return migrados
+    return _migrar_ids_graficos(list(padrao))
 
 
 def salvar_graficos_dashboard_sync(page: ft.Page, ids: list[str]) -> None:
     """Salva de forma síncrona a lista de IDs de gráficos ativos na sessão e em disco."""
-    lista = list(ids)
+    lista = _migrar_ids_graficos(list(ids))
     session_set(page, "graficos_dashboard", lista)
     dados = _ler_local_json()
     dados["graficos_dashboard"] = lista

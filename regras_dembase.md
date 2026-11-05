@@ -142,3 +142,25 @@ dembase_flet/
 
 5. **Idioma:**
    - Toda comunicação, explicações e comentários devem ser em **Português do Brasil**.
+
+
+## 7. Diretrizes Críticas de Integridade Contábil (6 Potes & Caixinhas)
+
+### 7.1 Assinatura Canônica Única da RPC dos 6 Potes
+- A função PostgreSQL `public.get_potes_resumo` deve possuir **exclusivamente uma assinatura única** no schema:
+  `get_potes_resumo(p_data_inicio date, p_data_fim date, p_piso_fixos numeric DEFAULT 1150.00) RETURNS jsonb`.
+- **Proibição de Sobrecargas:** Nunca crie funções sobrecarregadas com o mesmo nome e número menor de argumentos (ex: `get_potes_resumo(date, date)`), pois o PostgREST emite erro `HTTP 300 / PGRST203` (Multiple Choices) quando um parâmetro possui valor padrão (`DEFAULT`).
+- No Python ([`services/supabase_client.py`](file:///c:/Users/Denilson/Documents/GitHub/Dembase/dembase_flet/services/supabase_client.py)), a chamada RPC deve enviar os parâmetros e nunca engolir silenciosamente exceções críticas. Se houver falha na RPC, **o cache em memória NÃO pode ser salvo com dados vazios (`potes: []`)**, prevenindo o envenenamento de cache (*cache poisoning*).
+
+### 7.2 Invariante de Integridade dos 6 Potes
+- **Gasto Real e Contagem de Transações Sagrados:**
+  A soma dos gastos dos 6 potes deve refletir: `Despesas normais vinculadas ao pote + Aportes de provisionamento de caixinhas daquele pote`. Despesas internas de consumo de caixinha já provisionada são neutras para evitar dupla contagem.
+- **Invariante em Tempo de Execução:** Se a despesa total apurada do período for superior a zero (`total_gasto > 0.005`), a soma dos gastos dos potes **NUNCA** pode ser zero. Se isso ocorrer, a aplicação emite um log imediato de alerta:
+  `[ALERTA_INTEGRIDADE_POTES] ATENCAO: Despesa total do periodo e R$ X, mas soma dos potes e R$ 0,00!`.
+- Na mesclagem da UI ([`views/dashboard_view.py`](file:///c:/Users/Denilson/Documents/GitHub/Dembase/dembase_flet/views/dashboard_view.py)), os gastos reais (`gasto`) e o número de transações (`qtd_transacoes`) apurados pela RPC/banco são **preservados**, atualizando-se do `painel_sobra` apenas os limites (`previsto`), percentuais (`percentual`) e sobras calculadas.
+
+### 7.3 Card "Minhas Caixinhas" e Reatividade ao Período
+- O card Minhas Caixinhas (na seção Análise Visual do Período) reage dinamicamente a qualquer alteração de período (mês, dia único ou intervalo customizado) no topo:
+  - `obter_resumo_caixinhas` e `listar_caixinhas` aceitam obrigatoriamente `data_inicio` e `data_fim`.
+  - Calculam em tempo real o valor provisionado do ciclo (`valor_provisionado_periodo`), o gasto consumido no período (`total_gasto`) e o saldo disponível (`saldo_atual`).
+- **Badges Canônicas dos Potes:** Cada caixinha deve exibir a badge com o nome oficial e cor do Pote Financeiro ao qual está vinculada (`Custos Fixos`, `Custos Semi Fixos`, `Metas`, `Prazeres`, `Conhecimento`, `Liberdade Financeira`). É **terminantemente proibido** exibir rótulos genéricos como `"6 Potes"` ou `"Pote Vinculado"`.

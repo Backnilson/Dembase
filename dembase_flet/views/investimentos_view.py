@@ -129,20 +129,57 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
 
     # ── Função Central de Carregamento e Reatividade ──────────────────────────
     def carregar_dados(forcar: bool = False):
+        from core.periodo import obter_estado_periodo_atual
+        est_p = obter_estado_periodo_atual(page)
+        d_ini = str(est_p["data_inicio"])[:10]
+        d_fim = str(est_p["data_fim"])[:10]
+
+        loop_check = getattr(page, "loop", None)
+        eh_loop_ativo = isinstance(loop_check, asyncio.AbstractEventLoop) and loop_check.is_running() and hasattr(page, "run_task")
+
+        if eh_loop_ativo:
+            spinner.visible = True
+            try:
+                page.update()
+            except Exception:
+                pass
+
+            async def _carregar_inv_async():
+                try:
+                    res = await asyncio.gather(
+                        asyncio.to_thread(db.obter_resumo_investimentos_patrimonio, forcar),
+                        asyncio.to_thread(db.obter_cobertura_reserva, d_ini, d_fim),
+                        return_exceptions=True,
+                    )
+                    dados = res[0] if not isinstance(res[0], Exception) else {}
+                    cob = res[1] if not isinstance(res[1], Exception) else {}
+                    estado["resumo"] = dados
+                    estado["cobertura"] = cob if isinstance(cob, dict) else {}
+                    estado["cofres"] = dados.get("cofres", [])
+                    _renderizar_tudo()
+                except Exception as ex:
+                    print(f"[ERRO] carregar_dados investimentos: {ex}")
+                    mostrar_feedback(page, f"Erro ao carregar investimentos: {ex}", "erro")
+                finally:
+                    spinner.visible = False
+                    estado["carregando"] = False
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+
+            page.run_task(_carregar_inv_async)
+            return
+
         spinner.visible = True
         try:
             page.update()
         except Exception:
             pass
-
         try:
             dados = db.obter_resumo_investimentos_patrimonio(forcar_atualizacao=forcar)
             estado["resumo"] = dados
             try:
-                from core.periodo import obter_estado_periodo_atual
-                est_p = obter_estado_periodo_atual(page)
-                d_ini = str(est_p["data_inicio"])[:10]
-                d_fim = str(est_p["data_fim"])[:10]
                 estado["cobertura"] = db.obter_cobertura_reserva(d_ini, d_fim)
             except Exception as ex_cob:
                 print(f"[InvestimentosView] Aviso ao carregar cobertura da reserva: {ex_cob}")
@@ -995,19 +1032,44 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
             row_cofres.controls = _criar_opcoes_cofres()
             row_cofres.update()
 
-        # Opcional: debitar de uma conta bancária
-        sw_debitar_conta = ft.Switch(value=False, active_color=T.PRIMARY)
+        # Debitar da Conta Bancária e vincular a um dos 6 Potes (Etapa A)
+        potes_disp = []
+        try:
+            potes_disp = db.listar_potes() or []
+        except Exception:
+            potes_disp = []
+        pote_padrao_id = None
+        if potes_disp:
+            p_inv = next(
+                (p for p in potes_disp if any(k in str(p.get("nome", "")).lower() for k in ("liberdade", "invest", "meta"))),
+                potes_disp[0],
+            )
+            pote_padrao_id = str(p_inv["id"])
+
+        sw_debitar_conta = ft.Switch(value=True, active_color=T.PRIMARY)
         dropdown_conta = ft.Dropdown(
-            label="Conta Bancária de Origem",
-            options=[ft.dropdown.Option(c["id"], c["nome"]) for c in contas],
-            value=contas[0]["id"] if contas else None,
-            visible=False,
+            label="Conta Bancária de Origem *",
+            options=[ft.dropdown.Option(str(c["id"]), c["nome"]) for c in contas],
+            value=str(contas[0]["id"]) if contas else None,
+            visible=True,
+            **T.dropdown_estilo(),
+        )
+        dropdown_pote = ft.Dropdown(
+            label="Pote Financeiro (6 Potes) *",
+            options=[
+                ft.dropdown.Option(str(p["id"]), f"{p.get('nome', 'Pote')} ({p.get('percentual', 0)}%)")
+                for p in potes_disp
+            ],
+            value=pote_padrao_id,
+            visible=True,
             **T.dropdown_estilo(),
         )
 
         def _toggle_debitar(_):
             dropdown_conta.visible = sw_debitar_conta.value
+            dropdown_pote.visible = sw_debitar_conta.value
             dropdown_conta.update()
+            dropdown_pote.update()
 
         sw_debitar_conta.on_change = _toggle_debitar
 
@@ -1015,6 +1077,12 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
             val = parse_moeda_seguro(txt_valor.value)
             if val <= 0:
                 mostrar_feedback(page, "Informe um valor válido para o aporte.", "alerta")
+                return
+            if sw_debitar_conta.value and not dropdown_conta.value:
+                mostrar_feedback(page, "Selecione a Conta Bancária de origem.", "alerta")
+                return
+            if sw_debitar_conta.value and not dropdown_pote.value:
+                mostrar_feedback(page, "Selecione o Pote Financeiro (6 Potes).", "alerta")
                 return
 
             fechar_dialogo(page, dlg)
@@ -1026,6 +1094,7 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
                     descricao=txt_desc.value.strip(),
                     conta_origem_id=dropdown_conta.value if sw_debitar_conta.value else None,
                     lancar_no_extrato=sw_debitar_conta.value,
+                    pote_id=dropdown_pote.value if sw_debitar_conta.value else None,
                 )
                 mostrar_feedback(page, f"Aporte de {formatar_moeda(val)} registrado com sucesso!", "sucesso")
                 carregar_dados(forcar=True)
@@ -1061,11 +1130,12 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
                         ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             controls=[
-                                ft.Text("Debitar da conta bancária?", size=12, color=T.TEXT_PRIMARY),
+                                ft.Text("Debitar da conta bancária e consumir Pote?", size=12, color=T.TEXT_PRIMARY),
                                 sw_debitar_conta,
                             ],
                         ),
                         dropdown_conta,
+                        dropdown_pote,
                     ],
                 ),
             ),
@@ -1567,7 +1637,7 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
                                 ft.Column(
                                     spacing=2,
                                     controls=[
-                                        ft.Text("MEU COFRE · PATRIMÔNIO ACUMULADO", size=11.5, weight=ft.FontWeight.BOLD, color=T.PRIMARY),
+                                        ft.Text("INVESTIMENTOS · PATRIMÔNIO ACUMULADO", size=11.5, weight=ft.FontWeight.BOLD, color=T.PRIMARY),
                                         txt_sub_patrimonio,
                                     ],
                                 ),
@@ -1788,7 +1858,7 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
     view = criar_shell(
         page=page,
         rota_ativa=ROTA_INVESTIMENTOS,
-        titulo="Meu Cofre · Investimentos",
+        titulo="Investimentos",
         conteudo=conteudo_principal,
         mostrar_voltar=False,
         on_perfil_change=lambda _: carregar_dados(forcar=True),

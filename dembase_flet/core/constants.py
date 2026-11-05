@@ -13,13 +13,13 @@ from datetime import datetime, date
 TIPOS_LANCAMENTO = ["Receita", "Despesa", "Transferência"]
 
 SUBTIPOS_RECEITA        = ["Receita", "Entrada"]
-SUBTIPOS_DESPESA        = ["Despesa", "Saída", "Dívida", "Empréstimo"]
+SUBTIPOS_DESPESA        = ["Despesa", "Saída", "Dívida", "Empréstimo", "Consumo Caixinha"]
 SUBTIPOS_TRANSFERENCIA  = ["Transferência", "TED", "DOC", "Pix"]
 
-# Receita e Transferência NÃO aceitam Crédito
-FORMAS_RECEITA        = ["Débito", "Pix", "Dinheiro"]
-FORMAS_DESPESA        = ["Crédito", "Débito", "Pix", "Dinheiro"]
-FORMAS_TRANSFERENCIA  = ["Débito", "Pix", "Dinheiro"]
+# Receita e Transferência NÃO aceitam Crédito nem Caixinha
+FORMAS_RECEITA        = ["Pix", "Débito", "Dinheiro"]
+FORMAS_DESPESA        = ["Pix", "Crédito", "Débito", "Dinheiro", "Caixinha"]
+FORMAS_TRANSFERENCIA  = ["Pix", "Débito", "Dinheiro"]
 
 STATUS_OPCOES = ["Pago", "Pendente"]
 
@@ -77,13 +77,6 @@ def parse_moeda_seguro(val: object) -> float:
     """
     Converte qualquer valor (string, int, float, None, formatado em PT-BR ou EN-US)
     para float de forma ultra segura, tratando números negativos e símbolos monetários.
-    Exemplos:
-      "-150,00" -> -150.0
-      "R$ -150,00" -> -150.0
-      "-R$ 150,00" -> -150.0
-      "R$ 1.250,50" -> 1250.5
-      "-1.250,50" -> -1250.5
-      None -> 0.0
     """
     if val is None:
         return 0.0
@@ -152,10 +145,6 @@ def parse_moeda_seguro(val: object) -> float:
 def formatar_moeda_input(valor: object) -> str:
     """
     Formata valor para exibição limpa em TextField monetário (sem prefixo 'R$ ').
-    Exemplos:
-      -150.5 -> "-150,50"
-      1250.0 -> "1.250,00"
-      None -> "0,00"
     """
     num = parse_moeda_seguro(valor)
     s = f"{abs(num):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -242,4 +231,3 @@ def session_clear(page):
                 return
     except Exception:
         pass
-

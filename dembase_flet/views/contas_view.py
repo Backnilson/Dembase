@@ -8,6 +8,7 @@ Gestão de Contas Bancárias e Carteiras com Drill-down para Extrato Analítico.
 =============================================================================
 """
 from __future__ import annotations
+import asyncio
 import flet as ft
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
@@ -86,6 +87,33 @@ def criar_view_contas(
             pass
 
     # ── Carregar Dados ────────────────────────────────────────────────────────
+    def _aplicar_pacote_contas(pacote: dict):
+        nonlocal contas_lista
+        contas_lista = pacote.get("contas") or []
+        total_atual = pacote.get("saldo_total_atual")
+        total_prev  = pacote.get("saldo_total_previsto")
+        total_ent   = pacote.get("entradas_periodo_total")
+        total_sai   = pacote.get("saidas_periodo_total")
+
+        if total_atual is None:
+            total_atual = sum(float(c.get("saldo_atual", c.get("saldo_inicial", 0)) or 0) for c in contas_lista)
+        if total_prev is None:
+            total_prev  = sum(float(c.get("saldo_previsto", c.get("saldo_inicial", 0)) or 0) for c in contas_lista)
+        if total_ent is None:
+            total_ent   = sum(float(c.get("entradas_periodo", 0) or 0) for c in contas_lista)
+        if total_sai is None:
+            total_sai   = sum(float(c.get("saidas_periodo", 0) or 0) for c in contas_lista)
+
+        mov_periodo = float(total_ent or 0) - float(total_sai or 0)
+
+        txt_total_atual.value    = formatar_moeda(float(total_atual or 0))
+        txt_total_previsto.value = formatar_moeda(float(total_prev or 0))
+        txt_total_mov.value      = formatar_moeda(mov_periodo)
+        txt_total_mov.color      = T.RECEITA if mov_periodo >= 0 else T.DESPESA
+        txt_qtd_contas.value     = f"{len(contas_lista)} ativa(s)"
+
+        renderizar_cards()
+
     def carregar_contas(d_ini: str | None = None, d_fim: str | None = None, inicial: bool = False):
         if d_ini:
             data_ini_sel[0] = d_ini
@@ -96,37 +124,34 @@ def criar_view_contas(
             f"Movimentação no período: {formatar_data_br(data_ini_sel[0])} a {formatar_data_br(data_fim_sel[0])}"
         )
 
+        loop_check = getattr(page, "loop", None)
+        eh_loop_ativo = isinstance(loop_check, asyncio.AbstractEventLoop) and loop_check.is_running() and hasattr(page, "run_task")
+
+        if eh_loop_ativo:
+            spinner.visible = True
+            if not inicial:
+                _safe_update()
+
+            async def _carregar_contas_async():
+                try:
+                    pacote = await asyncio.to_thread(db.obter_lista_contas_resumo, data_ini_sel[0], data_fim_sel[0])
+                    _aplicar_pacote_contas(pacote or {})
+                except Exception as ex:
+                    if not inicial:
+                        mostrar_feedback(page, f"Erro ao listar contas: {ex}", "erro")
+                finally:
+                    spinner.visible = False
+                    _safe_update()
+
+            page.run_task(_carregar_contas_async)
+            return
+
         if not inicial:
             spinner.visible = True
             _safe_update()
-
-        nonlocal contas_lista
         try:
             pacote = db.obter_lista_contas_resumo(data_ini_sel[0], data_fim_sel[0])
-            contas_lista = pacote.get("contas") or []
-            total_atual = pacote.get("saldo_total_atual")
-            total_prev  = pacote.get("saldo_total_previsto")
-            total_ent   = pacote.get("entradas_periodo_total")
-            total_sai   = pacote.get("saidas_periodo_total")
-
-            if total_atual is None:
-                total_atual = sum(float(c.get("saldo_atual", c.get("saldo_inicial", 0)) or 0) for c in contas_lista)
-            if total_prev is None:
-                total_prev  = sum(float(c.get("saldo_previsto", c.get("saldo_inicial", 0)) or 0) for c in contas_lista)
-            if total_ent is None:
-                total_ent   = sum(float(c.get("entradas_periodo", 0) or 0) for c in contas_lista)
-            if total_sai is None:
-                total_sai   = sum(float(c.get("saidas_periodo", 0) or 0) for c in contas_lista)
-
-            mov_periodo = float(total_ent or 0) - float(total_sai or 0)
-
-            txt_total_atual.value    = formatar_moeda(float(total_atual or 0))
-            txt_total_previsto.value = formatar_moeda(float(total_prev or 0))
-            txt_total_mov.value      = formatar_moeda(mov_periodo)
-            txt_total_mov.color      = T.RECEITA if mov_periodo >= 0 else T.DESPESA
-            txt_qtd_contas.value     = f"{len(contas_lista)} ativa(s)"
-
-            renderizar_cards()
+            _aplicar_pacote_contas(pacote or {})
         except Exception as ex:
             if not inicial:
                 mostrar_feedback(page, f"Erro ao listar contas: {ex}", "erro")

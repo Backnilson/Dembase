@@ -10,6 +10,7 @@ from core import theme as T
 from core.router import configurar_rotas, navegar, ROTA_AUTH
 from core.window_manager import ajustar_janela_login
 from core import storage
+from core import click_guard
 import services.supabase_client as db
 
 
@@ -34,6 +35,10 @@ async def main(page: ft.Page):
         db.fazer_logout()
     except Exception:
         pass
+
+    # 3.1 Proteção global de cliques: feedback instantâneo ("rodinha") + descarte
+    # de cliques repetidos durante qualquer ação/navegação (core/click_guard.py).
+    click_guard.instalar(page)
 
     # 4. Configuração das rotas (com guarda estrito de autenticação)
     configurar_rotas(page)

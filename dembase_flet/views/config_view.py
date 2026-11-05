@@ -834,7 +834,7 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
                             ),
                             _card_destaque(
                                 ft.Icons.SAVINGS_ROUNDED,
-                                "Meu Cofre",
+                                "Investimentos",
                                 "Porquinho com resgate de emergência e reposição + Renda Fixa 102% CDI.",
                                 "#00E676",
                             ),

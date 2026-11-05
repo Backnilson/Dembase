@@ -24,6 +24,10 @@ def is_credito_str(forma: Optional[str]) -> bool:
     return "cred" in _norm(forma)
 
 
+def is_caixinha_str(forma: Optional[str]) -> bool:
+    return "caixinha" in _norm(forma)
+
+
 def is_transferencia_str(tipo: Optional[str]) -> bool:
     return "trans" in _norm(tipo)
 
@@ -54,7 +58,7 @@ class LancamentoFormState:
     subtipo: Optional[str] = None
     regra: Optional[str] = "Essencial"  # Apenas para Despesa
     pote_id: Optional[str] = None       # Sistema dinâmico de 6 potes
-    caixinha_id: Optional[str] = None   # Vínculo opcional com Caixinha de Teto
+    caixinha_id: Optional[str] = None   # Vínculo com Caixinha de Teto
     membro_id: Optional[str] = None     # Vínculo com Perfil Familiar (Eu, Ela & Nós)
     is_fixa: bool = False
     is_repetir: bool = False
@@ -71,7 +75,7 @@ class LancamentoFormState:
     serie_id: Optional[str] = None
     recorrente_id: Optional[str] = None
     lancamento_id: Optional[str] = None
-    mais_detalhes_aberto: bool = False
+    mais_detalhes_aberto: bool = True
 
     def definir_valor_total(self, total: float):
         self.valor = max(0.0, float(total or 0.0))
@@ -102,6 +106,11 @@ class LancamentoFormState:
         else:
             self.tipo = "Despesa"
 
+        if not self.subtipo:
+            self.subtipo = "Consumo Caixinha" if self.eh_caixinha else (
+                "Transferência" if self.eh_transferencia else self.tipo
+            )
+
         # Se for inicializado com data futura e status_manual=False, ajusta status para Pendente
         if not self.status_manual and self.data_selecionada > date.today():
             self.status_pago = False
@@ -109,6 +118,13 @@ class LancamentoFormState:
     @property
     def eh_credito(self) -> bool:
         return is_despesa_str(self.tipo) and is_credito_str(self.forma_movimentacao)
+
+    @property
+    def eh_caixinha(self) -> bool:
+        return is_despesa_str(self.tipo) and (
+            is_caixinha_str(self.forma_movimentacao)
+            or (bool(self.caixinha_id) and _norm(self.subtipo) != "provisionamento")
+        )
 
     @property
     def eh_transferencia(self) -> bool:
@@ -165,7 +181,7 @@ class LancamentoFormState:
         else:
             self.tipo = "Despesa"
 
-        self.subtipo = None
+        self.subtipo = "Transferência" if self.eh_transferencia else self.tipo
         self.categoria_id = None
         self.subcategoria_id = None
 
@@ -174,11 +190,13 @@ class LancamentoFormState:
             self.is_fixa = False
             self.is_repetir = False
             self.status_pago = True
-            if is_credito_str(self.forma_movimentacao):
+            self.caixinha_id = None
+            if is_credito_str(self.forma_movimentacao) or is_caixinha_str(self.forma_movimentacao):
                 self.forma_movimentacao = "Pix"
         elif self.eh_receita:
             self.regra = None
-            if is_credito_str(self.forma_movimentacao):
+            self.caixinha_id = None
+            if is_credito_str(self.forma_movimentacao) or is_caixinha_str(self.forma_movimentacao):
                 self.forma_movimentacao = "Pix"
         elif self.eh_despesa:
             if not self.regra:
@@ -190,8 +208,22 @@ class LancamentoFormState:
             # Crédito suporta compras parceladas e recorrência contínua (assinaturas).
             # Repetições avulsas com término não se aplicam a cartão.
             self.is_repetir = False
+            self.caixinha_id = None
+            if self.subtipo == "Consumo Caixinha":
+                self.subtipo = "Despesa"
+        elif is_caixinha_str(nova_forma):
+            self.conta_id = None
+            self.cartao_id = None
+            self.is_fixa = False
+            self.is_repetir = False
+            self.quantidade = 1
+            self.status_pago = True
+            self.subtipo = "Consumo Caixinha"
         else:
             self.cartao_id = None
+            self.caixinha_id = None
+            if self.subtipo == "Consumo Caixinha":
+                self.subtipo = "Despesa"
             if not self.is_repetir and not self.is_fixa:
                 self.quantidade = 1
 
@@ -217,7 +249,7 @@ class LancamentoFormState:
 
     def modo_recorrencia(self) -> str:
         """Determina o modo a ser gravado no banco."""
-        if self.eh_transferencia:
+        if self.eh_transferencia or self.eh_caixinha:
             return "unica"
         if self.eh_credito:
             if self.is_fixa:
@@ -246,6 +278,15 @@ class LancamentoFormState:
         if self.eh_credito:
             if not self.cartao_id:
                 return False, "Selecione o cartão de crédito."
+            if not self.categoria_id:
+                return False, "Selecione uma categoria."
+            if not (self.pote_id or self.regra):
+                return False, "Selecione o pote da despesa."
+            return True, None
+
+        if self.eh_caixinha:
+            if not self.caixinha_id:
+                return False, "Selecione uma caixinha."
             if not self.categoria_id:
                 return False, "Selecione uma categoria."
             if not (self.pote_id or self.regra):

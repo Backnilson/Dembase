@@ -686,7 +686,7 @@ def criar_view_dashboard(
 
 
 
-        def _aplicar_dados(pacote_p, d_5030, b_6m, r_cart, r_potes, r_cal=None):
+        def _aplicar_dados(pacote_p, r_caixinhas, b_6m, r_cart, r_potes, r_cal=None):
 
             overview = pacote_p.get("overview") if isinstance(pacote_p, dict) else None
 
@@ -732,7 +732,7 @@ def criar_view_dashboard(
 
                 try:
 
-                    potes_base = db.obter_potes(mes=m, ano=a)
+                    potes_base = db.listar_potes(mes=m, ano=a)
 
                 except Exception:
 
@@ -784,7 +784,9 @@ def criar_view_dashboard(
 
                 "overview": overview,
 
-                "regra_5030": d_5030 if isinstance(d_5030, dict) else {},
+                "resumo_caixinhas": r_caixinhas if isinstance(r_caixinhas, dict) else {},
+
+                "on_refresh": lambda: carregar(inicial=False),
 
                 "despesas_por_categoria": (
 
@@ -853,16 +855,36 @@ def criar_view_dashboard(
 
 
             try:
-
                 pot_calc = painel_sobra.obter_dados_atuais().get("potes_atualizados")
+                if pot_calc and isinstance(pot_calc, list):
+                    mapa_efetivo = {
+                        p.get("posicao"): p
+                        for p in resumo_potes_efetivo.get("potes", [])
+                        if isinstance(p, dict) and p.get("posicao")
+                    }
+                    potes_finais = []
+                    for pc in pot_calc:
+                        pos = pc.get("posicao")
+                        pef = mapa_efetivo.get(pos, {})
+                        p_mesclado = dict(pc)
+                        if float(pc.get("gasto", 0) or 0) == 0 and float(pef.get("gasto", 0) or 0) > 0:
+                            p_mesclado["gasto"] = float(pef.get("gasto", 0) or 0)
+                            p_mesclado["qtd_transacoes"] = int(pef.get("qtd_transacoes", 0) or 0)
+                            prev = float(p_mesclado.get("previsto", 0) or 0)
+                            p_mesclado["restante"] = round(prev - p_mesclado["gasto"], 2)
+                            p_mesclado["percentual_usado"] = round((p_mesclado["gasto"] / prev * 100), 2) if prev > 0 else 0
+                        elif "qtd_transacoes" not in p_mesclado and "qtd_transacoes" in pef:
+                            p_mesclado["qtd_transacoes"] = int(pef.get("qtd_transacoes", 0) or 0)
+                        potes_finais.append(p_mesclado)
+                    r_potes_ui["potes"] = potes_finais
+            except Exception as ex_pot:
+                print(f"[DashboardView] Aviso ao mesclar potes: {ex_pot}")
 
-                if pot_calc:
-
-                    r_potes_ui["potes"] = pot_calc
-
-            except Exception:
-
-                pass
+            # Runtime invariant check: Integridade dos 6 Potes
+            tot_desp_efetiva = float(r_potes_ui.get("total_gasto", 0) or desp or 0)
+            soma_gastos_potes = sum(float(p.get("gasto", 0) or 0) for p in r_potes_ui.get("potes", []))
+            if tot_desp_efetiva > 0.005 and soma_gastos_potes < 0.005:
+                print(f"[ALERTA_INTEGRIDADE_POTES] ATENCAO: Despesa total do periodo e R$ {tot_desp_efetiva:.2f}, mas soma dos potes e R$ {soma_gastos_potes:.2f}!")
 
 
 
@@ -956,36 +978,23 @@ def criar_view_dashboard(
 
 
 
-        if inicial:
-
+        loop_check = getattr(page, "loop", None)
+        eh_loop_ativo = isinstance(loop_check, asyncio.AbstractEventLoop) and loop_check.is_running() and hasattr(page, "run_task")
+        if inicial and not eh_loop_ativo:
             try:
-
                 p_periodo = db.obter_dashboard_periodo(di, df)
-
-                d_5030 = db.obter_resumo_5030(di, df)
-
+                r_caix = db.obter_resumo_caixinhas(forcar_atualizacao=not inicial, data_inicio=di, data_fim=df)
                 b_6m = db.obter_balanco_6_meses()
-
                 r_cart = db.obter_resumo_cartoes(m, a)
-
                 piso_f = storage.obter_piso_custos_fixos(page, 1150.0)
-
-                r_potes = db.obter_resumo_potes(di, df, piso_custos_fixos=piso_f)
-
+                r_potes = db.obter_resumo_potes(di, df, forcar_atualizacao=True, piso_custos_fixos=piso_f)
                 r_cal = db.obter_calendario_financeiro_mes(m, a, di, df)
-
-                _aplicar_dados(p_periodo, d_5030, b_6m, r_cart, r_potes, r_cal)
-
+                _aplicar_dados(p_periodo, r_caix, b_6m, r_cart, r_potes, r_cal)
             except Exception:
-
                 pass
-
             finally:
-
                 spinner.visible = False
-
         else:
-
             spinner.visible = True
 
             try:
@@ -1006,13 +1015,13 @@ def criar_view_dashboard(
 
                         db.executar_async(db.obter_dashboard_periodo, di, df),
 
-                        db.executar_async(db.obter_resumo_5030, di, df),
+                        db.executar_async(db.obter_resumo_caixinhas, True, di, df),
 
                         db.executar_async(db.obter_balanco_6_meses),
 
                         db.executar_async(db.obter_resumo_cartoes, m, a),
 
-                        db.executar_async(db.obter_resumo_potes, di, df, False, storage.obter_piso_custos_fixos(page, 1150.0)),
+                        db.executar_async(db.obter_resumo_potes, di, df, True, storage.obter_piso_custos_fixos(page, 1150.0)),
 
                         db.executar_async(db.obter_calendario_financeiro_mes, m, a, di, df),
 
@@ -1022,7 +1031,7 @@ def criar_view_dashboard(
 
                     p_periodo = res[0] if not isinstance(res[0], Exception) else {}
 
-                    d_5030 = res[1] if not isinstance(res[1], Exception) else {}
+                    r_caix = res[1] if not isinstance(res[1], Exception) else {}
 
                     b_6m = res[2] if not isinstance(res[2], Exception) else []
 
@@ -1034,7 +1043,7 @@ def criar_view_dashboard(
 
 
 
-                    _aplicar_dados(p_periodo, d_5030, b_6m, r_cart, r_potes, r_cal)
+                    _aplicar_dados(p_periodo, r_caix, b_6m, r_cart, r_potes, r_cal)
 
                 except Exception as ex:
 
@@ -1062,6 +1071,14 @@ def criar_view_dashboard(
 
                     try:
 
+                        grid_graficos.update()
+
+                    except Exception:
+
+                        pass
+
+                    try:
+
                         page.update()
 
                     except Exception:
@@ -1082,7 +1099,7 @@ def criar_view_dashboard(
 
                     p_periodo = db.obter_dashboard_periodo(di, df)
 
-                    d_5030 = db.obter_resumo_5030(di, df)
+                    r_caix = db.obter_resumo_caixinhas(forcar_atualizacao=not inicial, data_inicio=di, data_fim=df)
 
                     b_6m = db.obter_balanco_6_meses()
 
@@ -1090,11 +1107,11 @@ def criar_view_dashboard(
 
                     piso_f = storage.obter_piso_custos_fixos(page, 1150.0)
 
-                    r_potes = db.obter_resumo_potes(di, df, piso_custos_fixos=piso_f)
+                    r_potes = db.obter_resumo_potes(di, df, forcar_atualizacao=True, piso_custos_fixos=piso_f)
 
                     r_cal = db.obter_calendario_financeiro_mes(m, a, di, df)
 
-                    _aplicar_dados(p_periodo, d_5030, b_6m, r_cart, r_potes, r_cal)
+                    _aplicar_dados(p_periodo, r_caix, b_6m, r_cart, r_potes, r_cal)
 
                     spinner.visible = False
 

@@ -1666,38 +1666,80 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         )
 
     # ── Funções de Carregamento e Lista Linear (Extrato) ─────────────────────
+    def _buscar_pacote_calendario_sync(m_s, a_s, d_ini, d_fim, m_saldo, aba_at):
+        pac = db.obter_calendario_financeiro_mes(
+            m_s,
+            a_s,
+            data_inicio=d_ini,
+            data_fim=d_fim,
+        )
+        db.recalcular_modo_calendario(
+            pac,
+            m_saldo,
+            saldo_contas=pac.get("saldo_contas_consolidado"),
+        )
+        if aba_at == 1:
+            lancs = db.listar_lancamentos(data_inicio=d_ini, data_fim=d_fim)
+        else:
+            lancs = []
+            for d_item in (pac.get("dias") or []):
+                if d_item.get("no_periodo_filtro", d_item.get("no_mes_atual")):
+                    lancs.extend(d_item.get("lancamentos") or [])
+        return pac, lancs
+
     def carregar_dados():
+        nonlocal pacote_calendario, todos_lancamentos
+        loop_check = getattr(page, "loop", None)
+        eh_loop_ativo = isinstance(loop_check, asyncio.AbstractEventLoop) and loop_check.is_running() and hasattr(page, "run_task")
+
+        if eh_loop_ativo:
+            spinner.visible = True
+            try:
+                page.update()
+            except Exception:
+                pass
+
+            async def _carregar_cal_async():
+                nonlocal pacote_calendario, todos_lancamentos
+                try:
+                    pac, lancs = await asyncio.to_thread(
+                        _buscar_pacote_calendario_sync,
+                        mes_sel[0],
+                        ano_sel[0],
+                        filtro_data_inicio[0],
+                        filtro_data_fim[0],
+                        modo_saldo[0],
+                        aba_ativa[0],
+                    )
+                    pacote_calendario = pac
+                    todos_lancamentos = lancs
+                    atualizar_visao()
+                except Exception as ex:
+                    mostrar_feedback(page, f"Erro ao carregar dados: {ex}", "erro")
+                finally:
+                    spinner.visible = False
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+
+            page.run_task(_carregar_cal_async)
+            return
+
         spinner.visible = True
         try:
             page.update()
         except Exception:
             pass
-
         try:
-            nonlocal pacote_calendario, todos_lancamentos
-            pacote_calendario = db.obter_calendario_financeiro_mes(
+            pacote_calendario, todos_lancamentos = _buscar_pacote_calendario_sync(
                 mes_sel[0],
                 ano_sel[0],
-                data_inicio=filtro_data_inicio[0],
-                data_fim=filtro_data_fim[0],
-            )
-            db.recalcular_modo_calendario(
-                pacote_calendario,
+                filtro_data_inicio[0],
+                filtro_data_fim[0],
                 modo_saldo[0],
-                saldo_contas=pacote_calendario.get("saldo_contas_consolidado")
+                aba_ativa[0],
             )
-            if aba_ativa[0] == 1:
-                todos_lancamentos = db.listar_lancamentos(
-                    data_inicio=filtro_data_inicio[0],
-                    data_fim=filtro_data_fim[0],
-                )
-            else:
-                # Reaproveita os lançamentos do período filtrado vindos no pacote do calendário
-                lancs_mes = []
-                for d_item in (pacote_calendario.get("dias") or []):
-                    if d_item.get("no_periodo_filtro", d_item.get("no_mes_atual")):
-                        lancs_mes.extend(d_item.get("lancamentos") or [])
-                todos_lancamentos = lancs_mes
             atualizar_visao()
         except Exception as ex:
             mostrar_feedback(page, f"Erro ao carregar dados: {ex}", "erro")

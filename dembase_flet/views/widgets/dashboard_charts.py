@@ -20,18 +20,21 @@ from core.nav import (
     ir_cartoes,
     ir_relatorio_lancamentos,
     ir_relatorio_categoria,
-    ir_relatorio_regra,
     ir_relatorio_fluxo,
 )
+from core.router import navegar, ROTA_CAIXINHAS
+from core.theme import mostrar_feedback, abrir_dialogo, fechar_dialogo
+from datetime import datetime
+import services.supabase_client as db
 
 
 # Catálogo oficial de gráficos disponíveis para o Dashboard
 DASHBOARD_CHARTS_CATALOG: list[dict] = [
     {
-        "id": "regra_5030",
-        "titulo": "Regra 50 / 30 / 20",
-        "subtitulo": "Equilíbrio entre Essencial, Estilo de Vida e Investimentos",
-        "icone": ft.Icons.PIE_CHART_ROUNDED,
+        "id": "minhas_caixinhas",
+        "titulo": "Minhas Caixinhas",
+        "subtitulo": "Saldo disponível vs. provisão, consumo e vínculo aos 6 Potes",
+        "icone": ft.Icons.INVENTORY_2_ROUNDED,
         "cor": "#10B981",
         "col": {"xs": 12, "sm": 12, "md": 6, "lg": 6},
     },
@@ -223,83 +226,544 @@ def _chip_acao_header(label: str, cor: str, on_click) -> ft.Container:
 
 
 # =============================================================================
-# 1. GRÁFICO: REGRA 50 / 30 / 20
+# 1. CARD INTERATIVO: MINHAS CAIXINHAS (ADMINISTRAÇÃO & ACOMPANHAMENTO)
 # =============================================================================
-def _render_regra_5030(page: ft.Page, pacote: dict, meta: dict) -> ft.Container:
-    dados = pacote.get("regra_5030") or {}
-    receita_total = float(dados.get("receita_total", 0) or 0)
+_MAPA_ICONES_CAIXINHAS = {
+    "inventory_2": ft.Icons.INVENTORY_2_ROUNDED,
+    "two_wheeler": ft.Icons.TWO_WHEELER_ROUNDED,
+    "local_gas_station": ft.Icons.LOCAL_GAS_STATION_ROUNDED,
+    "shopping_cart": ft.Icons.SHOPPING_CART_ROUNDED,
+    "restaurant": ft.Icons.RESTAURANT_ROUNDED,
+    "local_pharmacy": ft.Icons.LOCAL_PHARMACY_ROUNDED,
+    "celebration": ft.Icons.CELEBRATION_ROUNDED,
+    "savings": ft.Icons.SAVINGS_ROUNDED,
+}
 
-    pilares = [
-        ("essencial", "Essencial", "Meta 50%", 50.0, T.PRIMARY, ft.Icons.HOME_ROUNDED),
-        ("estilo_vida", "Estilo de Vida", "Meta 30%", 30.0, T.WARNING, ft.Icons.NIGHTLIFE_ROUNDED),
-        ("investimento", "Investimento", "Meta 20%", 20.0, T.SALDO, ft.Icons.SAVINGS_ROUNDED),
+
+def _notificar_refresh_dashboard(page: ft.Page, pacote: dict):
+    fn_ref = pacote.get("on_refresh")
+    if callable(fn_ref):
+        try:
+            fn_ref()
+            return
+        except Exception:
+            pass
+    try:
+        if getattr(page, "views", None):
+            v_top = page.views[-1]
+            fn_v = getattr(v_top, "_dembase_refresh", None)
+            if callable(fn_v):
+                fn_v()
+                return
+    except Exception:
+        pass
+    try:
+        page.update()
+    except Exception:
+        pass
+
+
+def _abrir_modal_abastecer_rapido(page: ft.Page, caixinha: dict, pacote: dict):
+    cid = str(caixinha.get("id"))
+    nome = caixinha.get("nome", "Caixinha")
+    meta_v = float(caixinha.get("valor_meta", 0) or 0)
+    saldo_v = float(caixinha.get("saldo_atual", 0) or 0)
+    eh_pendente = saldo_v <= 0
+    valor_sugerido = meta_v if eh_pendente else max(0.0, meta_v - saldo_v) or meta_v
+
+    try:
+        contas = db.listar_contas() or []
+    except Exception:
+        contas = []
+    opcoes_contas = [ft.dropdown.Option(key=str(cta["id"]), text=cta.get("nome", "Conta")) for cta in contas]
+    conta_id_padrao = str(caixinha.get("conta_id") or "")
+    conta_sel_val = conta_id_padrao if any(opt.key == conta_id_padrao for opt in opcoes_contas) else (opcoes_contas[0].key if opcoes_contas else "")
+
+    dd_conta = ft.Dropdown(
+        label="Conta Bancária de Origem *",
+        options=opcoes_contas,
+        value=conta_sel_val,
+        **T.dropdown_estilo(),
+    )
+
+    try:
+        potes = db.listar_potes() or []
+    except Exception:
+        potes = []
+    opcoes_potes = [
+        ft.dropdown.Option(key=str(p["id"]), text=f"{p.get('nome', 'Pote')} ({p.get('percentual', 0)}%)")
+        for p in potes
     ]
+    pote_id_padrao = str(caixinha.get("pote_id") or "")
+    pote_sel_val = pote_id_padrao if any(opt.key == pote_id_padrao for opt in opcoes_potes) else (opcoes_potes[0].key if opcoes_potes else "")
 
-    linhas = []
+    dd_pote = ft.Dropdown(
+        label="Pote Financeiro (6 Potes) *",
+        options=opcoes_potes,
+        value=pote_sel_val,
+        **T.dropdown_estilo(),
+    )
+
+    txt_valor_pag = ft.TextField(
+        label="Valor a Abastecer (R$) *",
+        keyboard_type=ft.KeyboardType.NUMBER,
+        prefix="R$ ",
+        value=f"{valor_sugerido:.2f}".replace(".", ","),
+        autofocus=True,
+        **T.campo_estilo(),
+    )
+
+    modal_ab = None
+
+    def _confirmar(_):
+        val_str = (txt_valor_pag.value or "").replace(",", ".").replace("R$", "").strip()
+        try:
+            val_num = float(val_str or 0)
+            if val_num <= 0:
+                raise ValueError
+        except ValueError:
+            mostrar_feedback(page, "Informe um valor válido maior que zero.", "alerta")
+            return
+
+        conta_escolhida = (dd_conta.value or "").strip()
+        if not conta_escolhida:
+            mostrar_feedback(page, "Selecione a Conta Bancária de origem.", "alerta")
+            return
+
+        pote_escolhido = (dd_pote.value or "").strip()
+        if not pote_escolhido:
+            mostrar_feedback(page, "Selecione a qual dos 6 Potes este abastecimento pertence.", "alerta")
+            return
+
+        fechar_dialogo(page, modal_ab)
+        try:
+            if eh_pendente:
+                db.pagar_provisao_caixinha(
+                    caixinha_id=cid,
+                    conta_id=conta_escolhida,
+                    pote_id=pote_escolhido,
+                    valor=val_num,
+                    data_pagamento=date.today().isoformat(),
+                )
+            else:
+                db.injetar_saldo_caixinha(
+                    caixinha_id=cid,
+                    valor=val_num,
+                    descricao=f"Provisão Caixinha · {nome}",
+                    conta_id=conta_escolhida,
+                    pote_id=pote_escolhido,
+                    data_aporte=date.today().isoformat(),
+                    gerar_despesa=True,
+                )
+            mostrar_feedback(page, f"Caixinha '{nome}' abastecida com {formatar_moeda(val_num)}!", "sucesso")
+            _notificar_refresh_dashboard(page, pacote)
+        except Exception as ex:
+            mostrar_feedback(page, f"Erro ao abastecer caixinha: {ex}", "erro")
+
+    modal_ab = ft.AlertDialog(
+        modal=True,
+        title=ft.Row([
+            ft.Icon(ft.Icons.SAVINGS_ROUNDED, color=T.PRIMARY, size=22),
+            ft.Text(f"{'Encher Caixinha' if eh_pendente else 'Abastecer Caixinha'} · {nome}", size=16, weight=ft.FontWeight.BOLD),
+        ], spacing=8),
+        content=ft.Container(
+            width=400,
+            content=ft.Column(
+                spacing=12,
+                tight=True,
+                controls=[
+                    txt_valor_pag,
+                    dd_conta,
+                    dd_pote,
+                    ft.Container(
+                        padding=pad(h=10, v=8),
+                        bgcolor=f"{T.PRIMARY}12",
+                        border_radius=8,
+                        border=borda(1, f"{T.PRIMARY}30"),
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=T.PRIMARY, size=16),
+                            ft.Text(
+                                "O valor diminui o saldo da Conta Bancária de origem, aumenta o saldo disponível da Caixinha e é contabilizado no Pote selecionado.",
+                                size=11,
+                                color=T.TEXT_PRIMARY,
+                                expand=True,
+                            ),
+                        ], spacing=8),
+                    ),
+                ],
+            ),
+        ),
+        actions=[
+            ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(page, modal_ab)),
+            ft.FilledButton(
+                "Confirmar e Abastecer",
+                on_click=_confirmar,
+                style=ft.ButtonStyle(bgcolor=T.PRIMARY, shape=ft.RoundedRectangleBorder(radius=8)),
+            ),
+        ],
+    )
+    abrir_dialogo(page, modal_ab)
+
+
+def _abrir_modal_gastar_rapido(page: ft.Page, caixinha: dict, pacote: dict):
+    cid = str(caixinha.get("id"))
+    nome = caixinha.get("nome", "Caixinha")
+    saldo_atual = float(caixinha.get("saldo_atual", 0) or 0)
+
+    txt_valor = ft.TextField(
+        label="Valor Gasto (R$) *",
+        hint_text="Ex: 50,00",
+        keyboard_type=ft.KeyboardType.NUMBER,
+        prefix="R$ ",
+        autofocus=True,
+        **T.campo_estilo(),
+    )
+    txt_desc = ft.TextField(
+        label="Descrição do Gasto (Opcional)",
+        hint_text="Ex: Abastecimento, compra rápida...",
+        **T.campo_estilo(),
+    )
+
+    modal_g = None
+
+    def _confirmar_deducao(_):
+        val_str = (txt_valor.value or "").replace(",", ".").replace("R$", "").strip()
+        try:
+            val = float(val_str or 0)
+            if val <= 0:
+                raise ValueError
+        except ValueError:
+            mostrar_feedback(page, "Informe um valor válido maior que zero.", "alerta")
+            return
+
+        fechar_dialogo(page, modal_g)
+        try:
+            db.deduzir_saldo_caixinha(cid, val, txt_desc.value.strip())
+            mostrar_feedback(page, f"{formatar_moeda(val)} deduzidos da caixinha '{nome}'!", "sucesso")
+            _notificar_refresh_dashboard(page, pacote)
+        except Exception as ex:
+            mostrar_feedback(page, f"Erro ao deduzir saldo: {ex}", "erro")
+
+    modal_g = ft.AlertDialog(
+        modal=True,
+        title=ft.Row([
+            ft.Icon(ft.Icons.MONEY_OFF_CSRED_ROUNDED, color=T.DESPESA, size=22),
+            ft.Text(f"Registrar Gasto · {nome}", size=16, weight=ft.FontWeight.BOLD),
+        ], spacing=8),
+        content=ft.Container(
+            width=380,
+            content=ft.Column(
+                spacing=12,
+                tight=True,
+                controls=[
+                    ft.Text(f"Saldo atual disponível: {formatar_moeda(saldo_atual)}", color=T.TEXT_MUTED, size=12),
+                    txt_valor,
+                    txt_desc,
+                ],
+            ),
+        ),
+        actions=[
+            ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(page, modal_g)),
+            ft.FilledButton(
+                "Registrar Gasto",
+                on_click=_confirmar_deducao,
+                style=ft.ButtonStyle(bgcolor=T.DESPESA, shape=ft.RoundedRectangleBorder(radius=8)),
+            ),
+        ],
+    )
+    abrir_dialogo(page, modal_g)
+
+
+def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Container:
+    resumo = pacote.get("resumo_caixinhas")
+    if not isinstance(resumo, dict) or not resumo.get("caixinhas"):
+        try:
+            di = pacote.get("data_inicio")
+            df = pacote.get("data_fim")
+            resumo = db.obter_resumo_caixinhas(forcar_atualizacao=True, data_inicio=di, data_fim=df)
+        except Exception:
+            resumo = resumo if isinstance(resumo, dict) else {}
+
+    caixinhas = resumo.get("caixinhas") or []
+    tot_meta = float(resumo.get("total_meta", 0) or 0)
+    tot_saldo = float(resumo.get("total_saldo", 0) or 0)
+    tot_gasto = float(resumo.get("total_gasto", 0) or 0)
+
+    btn_gerenciar_topo = _chip_acao_header(
+        "Gerenciar",
+        T.PRIMARY,
+        lambda _: navegar(page, ROTA_CAIXINHAS),
+    )
+
+    if not caixinhas:
+        corpo_vazio = ft.Column(
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
+            controls=[
+                _estado_vazio(
+                    "Crie caixinhas para provisionar verbas do período (ex: Mercado, Combustível, Lazer) vinculadas aos seus 6 Potes.",
+                    ft.Icons.INVENTORY_2_ROUNDED,
+                ),
+                ft.FilledButton(
+                    content=ft.Row(
+                        spacing=6,
+                        tight=True,
+                        controls=[
+                            ft.Icon(ft.Icons.ADD_ROUNDED, size=16, color=T.ON_PRIMARY),
+                            ft.Text("Criar / Gerenciar Caixinhas", size=12, weight=ft.FontWeight.BOLD, color=T.ON_PRIMARY),
+                        ],
+                    ),
+                    on_click=lambda _: navegar(page, ROTA_CAIXINHAS),
+                    style=ft.ButtonStyle(
+                        bgcolor=T.PRIMARY,
+                        shape=ft.RoundedRectangleBorder(radius=10),
+                        padding=pad(h=16, v=10),
+                    ),
+                ),
+            ],
+        )
+        return _card_base_grafico(
+            meta["titulo"],
+            meta["subtitulo"],
+            meta["icone"],
+            meta["cor"],
+            corpo_vazio,
+            meta["col"],
+            acao_extra=btn_gerenciar_topo,
+        )
+
     fatias_topo = []
+    itens_ui = []
 
-    for chave, nome, label_meta, meta_pct, cor_padrao, icone in pilares:
-        bloco = dados.get(chave) or dados.get("estilo_de_vida" if chave == "estilo_vida" else chave) or {}
-        gasto = float(bloco.get("gasto", 0) or 0)
-        orcamento = float(bloco.get("orcamento", 0) or (receita_total * (meta_pct / 100.0)))
-        pct_real = float(bloco.get("percentual_usado", 0) or 0)
+    for c in caixinhas[:5]:
+        nome = c.get("nome", "Caixinha")
+        cor_c = c.get("cor") or T.PRIMARY
+        meta_c = float(c.get("valor_meta", 0) or 0)
+        saldo_c = float(c.get("saldo_atual", 0) or 0)
+        gasto_c = float(c.get("total_gasto", 0) or 0)
+        provisionado_c = float(c.get("valor_provisionado_periodo") or max(meta_c, saldo_c + gasto_c))
+        pct_disp = min(1.0, max(0.0, saldo_c / provisionado_c)) if provisionado_c > 0 else 0.0
+        pct_consumo = min(1.0, max(0.0, gasto_c / provisionado_c)) if provisionado_c > 0 else 0.0
 
-        ratio_orcamento = (gasto / orcamento) if orcamento > 0 else (1.0 if gasto > 0 else 0.0)
-        estourou = gasto > orcamento and orcamento > 0
-        cor_barra = T.DESPESA if estourou else cor_padrao
+        # Resolucao canonica do Pote Vinculado (NUNCA exibe rotulo generico "6 Potes")
+        _MAPA_POTES_PADRAO = {
+            1: ("Custos Fixos", "#007AFF"),
+            2: ("Custos Semi Fixos", "#FF69B4"),
+            3: ("Metas", "#800080"),
+            4: ("Prazeres", "#FF7A00"),
+            5: ("Conhecimento", "#FFD60A"),
+            6: ("Liberdade Financeira", "#6C5CE7"),
+        }
+        pote_nome = ""
+        pote_cor = cor_c
+        pote_info = c.get("potes")
+        if isinstance(pote_info, dict) and pote_info.get("nome") and str(pote_info.get("nome")).strip() not in ("6 Potes", "Pote Vinculado", ""):
+            pote_nome = str(pote_info.get("nome")).strip()
+            pote_cor = pote_info.get("cor") or cor_c
+        if not pote_nome and c.get("pote_id"):
+            pid_str = str(c.get("pote_id"))
+            try:
+                mapa_p = {str(p["id"]): p for p in (db.listar_potes() or []) if p.get("id")}
+                p_item = mapa_p.get(pid_str)
+                if p_item and p_item.get("nome") and str(p_item.get("nome")).strip() not in ("6 Potes", "Pote Vinculado", ""):
+                    pote_nome = str(p_item.get("nome")).strip()
+                    pote_cor = (p_item.get("cor") if p_item else None) or cor_c
+                elif p_item and p_item.get("posicao") in _MAPA_POTES_PADRAO:
+                    pote_nome, pote_cor = _MAPA_POTES_PADRAO[p_item["posicao"]]
+            except Exception:
+                pass
+        if not pote_nome:
+            n_lower = nome.lower()
+            if any(k in n_lower for k in ("aluguel", "condom", "luz", "energia", "agua", "água", "internet", "seguro")):
+                pote_nome, pote_cor = _MAPA_POTES_PADRAO[1]
+            elif any(k in n_lower for k in ("moto", "carro", "combust", "mercado", "aliment", "feira", "ipva", "manuten")):
+                pote_nome, pote_cor = _MAPA_POTES_PADRAO[2]
+            elif any(k in n_lower for k in ("reserva", "emerg", "invest", "futuro")):
+                pote_nome, pote_cor = _MAPA_POTES_PADRAO[6]
+            elif any(k in n_lower for k in ("curso", "livro", "faculdade", "estudo")):
+                pote_nome, pote_cor = _MAPA_POTES_PADRAO[5]
+            elif any(k in n_lower for k in ("viagem", "reforma", "meta")):
+                pote_nome, pote_cor = _MAPA_POTES_PADRAO[3]
+            else:
+                pote_nome, pote_cor = _MAPA_POTES_PADRAO[4]
 
-        fatias_topo.append((max(0.0, pct_real), cor_padrao, f"{nome}: {formatar_moeda(gasto)} ({pct_real:.1f}%)"))
+        ic_nome = c.get("icone", "inventory_2")
+        icone_c = _MAPA_ICONES_CAIXINHAS.get(ic_nome, ft.Icons.INVENTORY_2_ROUNDED)
 
-        status_txt = "Acima do teto" if estourou else ("Dentro da meta" if gasto > 0 else "Sem gastos")
-        cor_status = T.DESPESA if estourou else (T.RECEITA if gasto > 0 else T.TEXT_MUTED)
+        peso_fatia = (provisionado_c / tot_meta * 100.0) if tot_meta > 0 else (100.0 / max(1, len(caixinhas)))
+        fatias_topo.append(
+            (
+                max(5.0, peso_fatia),
+                cor_c,
+                f"{nome} ({pote_nome}): Disponível {formatar_moeda(saldo_c)} de {formatar_moeda(provisionado_c)}",
+            )
+        )
 
-        linhas.append(
+        eh_pendente = (saldo_c <= 0 and gasto_c <= 0)
+        if eh_pendente:
+            cor_barra = f"{T.WARNING}80"
+            status_lbl = "Aguardando provisão"
+            cor_status = T.WARNING
+        elif pct_disp <= 0.20:
+            cor_barra = T.DESPESA
+            status_lbl = f"{pct_consumo * 100:.0f}% consumido"
+            cor_status = T.DESPESA
+        elif pct_disp <= 0.50:
+            cor_barra = T.WARNING
+            status_lbl = f"{pct_consumo * 100:.0f}% consumido"
+            cor_status = T.WARNING
+        else:
+            cor_barra = cor_c
+            status_lbl = f"{pct_disp * 100:.0f}% disponível"
+            cor_status = T.RECEITA
+
+        # Botões de ação rápida inline (Abastecer/Encher e Gastar)
+        acoes_rapidas_item = [
             ft.Container(
-                padding=pad(h=12, v=10),
+                padding=pad(h=8, v=4),
+                bgcolor=f"{T.PRIMARY}18",
+                border_radius=8,
+                border=borda(1, f"{T.PRIMARY}40"),
+                ink=True,
+                tooltip="Abastecer / Pagar Provisão desta Caixinha",
+                on_click=lambda _, cx=c: _abrir_modal_abastecer_rapido(page, cx, pacote),
+                content=ft.Row(
+                    spacing=3,
+                    tight=True,
+                    controls=[
+                        ft.Icon(ft.Icons.ADD_ROUNDED, color=T.PRIMARY, size=13),
+                        ft.Text("Encher" if eh_pendente else "Abastecer", color=T.PRIMARY, size=10.5, weight=ft.FontWeight.BOLD),
+                    ],
+                ),
+            )
+        ]
+        if saldo_c > 0:
+            acoes_rapidas_item.append(
+                ft.Container(
+                    padding=pad(h=8, v=4),
+                    bgcolor=f"{T.DESPESA}15",
+                    border_radius=8,
+                    border=borda(1, f"{T.DESPESA}35"),
+                    ink=True,
+                    tooltip="Registrar gasto rápido nesta Caixinha",
+                    on_click=lambda _, cx=c: _abrir_modal_gastar_rapido(page, cx, pacote),
+                    content=ft.Row(
+                        spacing=3,
+                        tight=True,
+                        controls=[
+                            ft.Icon(ft.Icons.REMOVE_ROUNDED, color=T.DESPESA, size=13),
+                            ft.Text("Gastar", color=T.DESPESA, size=10.5, weight=ft.FontWeight.BOLD),
+                        ],
+                    ),
+                )
+            )
+
+        itens_ui.append(
+            ft.Container(
+                padding=pad(h=10, v=9),
                 bgcolor=T.SURFACE_ALT,
-                border_radius=12,
-                on_click=lambda _, r=nome: ir_relatorio_regra(page, r),
+                border_radius=11,
+                border=borda(1, f"{cor_c}30" if saldo_c > 0 else T.BORDER),
+                on_click=lambda _: navegar(page, ROTA_CAIXINHAS),
                 ink=True,
                 content=ft.Column(
                     spacing=6,
                     controls=[
                         ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
                                 ft.Row(
                                     spacing=8,
+                                    expand=True,
                                     controls=[
-                                        ft.Icon(icone, color=cor_padrao, size=16),
-                                        ft.Text(nome, color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_600),
                                         ft.Container(
-                                            padding=pad(h=6, v=2),
-                                            bgcolor=f"{cor_padrao}20",
-                                            border_radius=6,
-                                            content=ft.Text(label_meta, color=cor_padrao, size=10, weight=ft.FontWeight.BOLD),
+                                            padding=pad(all_=6),
+                                            bgcolor=f"{cor_c}1F",
+                                            border_radius=8,
+                                            content=ft.Icon(icone_c, color=cor_c, size=15),
+                                        ),
+                                        ft.Column(
+                                            spacing=2,
+                                            expand=True,
+                                            controls=[
+                                                ft.Row(
+                                                    spacing=6,
+                                                    wrap=True,
+                                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                                    controls=[
+                                                        ft.Text(
+                                                            nome,
+                                                            color=T.TEXT_PRIMARY,
+                                                            size=12.5,
+                                                            weight=ft.FontWeight.BOLD,
+                                                            max_lines=1,
+                                                            overflow=ft.TextOverflow.ELLIPSIS,
+                                                        ),
+                                                        ft.Container(
+                                                            padding=pad(h=6, v=1.5),
+                                                            bgcolor=f"{pote_cor}18",
+                                                            border_radius=6,
+                                                            border=borda(1, f"{pote_cor}35"),
+                                                            content=ft.Row(
+                                                                spacing=3,
+                                                                tight=True,
+                                                                controls=[
+                                                                    ft.Icon(ft.Icons.PIE_CHART_OUTLINE_ROUNDED, size=10, color=pote_cor),
+                                                                    ft.Text(pote_nome, color=pote_cor, size=9.5, weight=ft.FontWeight.W_600),
+                                                                ],
+                                                            ),
+                                                        ),
+                                                    ],
+                                                ),
+                                            ],
                                         ),
                                     ],
                                 ),
                                 ft.Row(
-                                    spacing=4,
+                                    spacing=6,
+                                    tight=True,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                     controls=[
-                                        ft.Text(formatar_moeda(gasto), color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.BOLD),
-                                        ft.Icon(ft.Icons.CHEVRON_RIGHT_ROUNDED, color=T.TEXT_MUTED, size=16),
+                                        ft.Column(
+                                            spacing=0,
+                                            horizontal_alignment=ft.CrossAxisAlignment.END,
+                                            controls=[
+                                                ft.Text(
+                                                    formatar_moeda(saldo_c),
+                                                    color=T.PRIMARY if saldo_c > 0 else T.TEXT_MUTED,
+                                                    size=13,
+                                                    weight=ft.FontWeight.BOLD,
+                                                ),
+                                                ft.Text(
+                                                    f"de {formatar_moeda(provisionado_c)}",
+                                                    color=T.TEXT_MUTED,
+                                                    size=10,
+                                                ),
+                                            ],
+                                        ),
                                     ],
                                 ),
                             ],
                         ),
                         ft.ProgressBar(
-                            value=min(1.0, max(0.0, ratio_orcamento)),
+                            value=pct_disp if not eh_pendente else 0.0,
                             color=cor_barra,
                             bgcolor=f"{T.BORDER}55",
-                            height=6,
-                            border_radius=4,
+                            height=5,
+                            border_radius=3,
                         ),
                         ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
-                                ft.Text(f"Teto ideal: {formatar_moeda(orcamento)}", color=T.TEXT_MUTED, size=11),
-                                ft.Text(f"{pct_real:.1f}% da receita · {status_txt}", color=cor_status, size=11, weight=ft.FontWeight.W_500),
+                                ft.Text(
+                                    f"Consumido: {formatar_moeda(gasto_c)} · {status_lbl}",
+                                    color=cor_status,
+                                    size=10.5,
+                                    weight=ft.FontWeight.W_500,
+                                ),
+                                ft.Row(spacing=5, tight=True, controls=acoes_rapidas_item),
                             ],
                         ),
                     ],
@@ -307,11 +771,48 @@ def _render_regra_5030(page: ft.Page, pacote: dict, meta: dict) -> ft.Container:
             )
         )
 
+    resumo_strip = ft.Container(
+        padding=pad(h=10, v=8),
+        bgcolor=T.SURFACE_ALT,
+        border_radius=10,
+        on_click=lambda _: navegar(page, ROTA_CAIXINHAS),
+        ink=True,
+        content=ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            controls=[
+                ft.Column(
+                    spacing=1,
+                    controls=[
+                        ft.Text("Disponível nas Caixinhas", color=T.TEXT_MUTED, size=10),
+                        ft.Text(formatar_moeda(tot_saldo), color=T.PRIMARY, size=13, weight=ft.FontWeight.BOLD),
+                    ],
+                ),
+                ft.Column(
+                    spacing=1,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Text("Consumido", color=T.TEXT_MUTED, size=10),
+                        ft.Text(formatar_moeda(tot_gasto), color=T.WARNING, size=12.5, weight=ft.FontWeight.BOLD),
+                    ],
+                ),
+                ft.Column(
+                    spacing=1,
+                    horizontal_alignment=ft.CrossAxisAlignment.END,
+                    controls=[
+                        ft.Text("Total Provisionado", color=T.TEXT_MUTED, size=10),
+                        ft.Text(formatar_moeda(tot_meta), color=T.TEXT_PRIMARY, size=12.5, weight=ft.FontWeight.BOLD),
+                    ],
+                ),
+            ],
+        ),
+    )
+
     corpo = ft.Column(
-        spacing=10,
+        spacing=8,
         controls=[
             _barra_empilhada_proporcional(fatias_topo),
-            *linhas,
+            resumo_strip,
+            *itens_ui,
         ],
     )
     return _card_base_grafico(
@@ -321,7 +822,7 @@ def _render_regra_5030(page: ft.Page, pacote: dict, meta: dict) -> ft.Container:
         meta["cor"],
         corpo,
         meta["col"],
-        acao_extra=_chip_acao_header("Analisar", T.PRIMARY, lambda _: ir_relatorio_regra(page, "Essencial")),
+        acao_extra=btn_gerenciar_topo,
     )
 
 
@@ -979,7 +1480,8 @@ def _render_formas_e_cartoes(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
 
 
 _RENDERERS = {
-    "regra_5030": _render_regra_5030,
+    "minhas_caixinhas": _render_minhas_caixinhas,
+    "regra_5030": _render_minhas_caixinhas,
     "despesas_categoria": _render_despesas_categoria,
     "fluxo_diario": _render_fluxo_diario,
     "balanco_semestral": _render_balanco_semestral,

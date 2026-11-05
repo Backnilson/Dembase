@@ -82,22 +82,13 @@ ROTA_INVESTIMENTOS = "/investimentos"
 
 _NAV_ITEMS = [
 
-    {"rota": ROTA_DASHBOARD,   "icone": ft.Icons.DASHBOARD_ROUNDED,          "label": "Dashboard"},
-    {"rota": ROTA_INVESTIMENTOS, "icone": ft.Icons.SAVINGS_ROUNDED, "label": "Meu Cofre"},
-
-    {"rota": ROTA_CONTAS,      "icone": ft.Icons.ACCOUNT_BALANCE_ROUNDED,     "label": "Contas"},
-
-    {"rota": ROTA_CARTOES,     "icone": ft.Icons.CREDIT_CARD_ROUNDED,         "label": "Cartões"},
-
-
-
-
-
-
-
-    {"rota": ROTA_CALENDARIO,  "icone": ft.Icons.CALENDAR_MONTH_ROUNDED,      "label": "Calendário"},
-
-    {"rota": ROTA_RELATORIOS,  "icone": ft.Icons.BAR_CHART_ROUNDED,           "label": "Relatórios"},
+    {"rota": ROTA_DASHBOARD,     "icone": ft.Icons.DASHBOARD_ROUNDED,          "label": "Dashboard"},
+    {"rota": ROTA_INVESTIMENTOS, "icone": ft.Icons.SAVINGS_ROUNDED,            "label": "Investimentos"},
+    {"rota": ROTA_CAIXINHAS,     "icone": ft.Icons.INVENTORY_2_ROUNDED,        "label": "Caixinhas"},
+    {"rota": ROTA_CONTAS,        "icone": ft.Icons.ACCOUNT_BALANCE_ROUNDED,    "label": "Contas"},
+    {"rota": ROTA_CARTOES,       "icone": ft.Icons.CREDIT_CARD_ROUNDED,        "label": "Cartões"},
+    {"rota": ROTA_CALENDARIO,    "icone": ft.Icons.CALENDAR_MONTH_ROUNDED,     "label": "Calendário"},
+    {"rota": ROTA_RELATORIOS,    "icone": ft.Icons.BAR_CHART_ROUNDED,          "label": "Relatórios"},
 
 ]
 
@@ -588,11 +579,11 @@ def criar_shell(
 
 
 
-    def _abrir_novo_lancamento(_=None):
+    async def _abrir_novo_lancamento(_=None):
 
-        from views.widgets.lancamento_sheet import abrir_lancamento
+        from views.widgets.lancamento_sheet import abrir_lancamento_async
 
-        abrir_lancamento(page, on_saved=_ao_salvar_lancamento)
+        await abrir_lancamento_async(page, on_saved=_ao_salvar_lancamento)
 
 
 
@@ -684,6 +675,7 @@ def criar_shell(
         rotas_drawer = [
             ROTA_DASHBOARD,
             ROTA_INVESTIMENTOS,
+            ROTA_CAIXINHAS,
             "/configuracoes?aba=categorias",
             ROTA_CONFIG,
             ROTA_AUTH,
@@ -710,10 +702,12 @@ def criar_shell(
             drawer_selected_idx = 0
         elif rota_ativa in (ROTA_INVESTIMENTOS, "/investimentos", "/cofre"):
             drawer_selected_idx = 1
-        elif rota_ativa in (ROTA_CATEGORIAS, "/categorias", "/configuracoes?aba=categorias"):
+        elif rota_ativa in (ROTA_CAIXINHAS, "/caixinhas"):
             drawer_selected_idx = 2
-        elif rota_ativa == ROTA_CONFIG or "/configuracoes" in rota_ativa:
+        elif rota_ativa in (ROTA_CATEGORIAS, "/categorias", "/configuracoes?aba=categorias"):
             drawer_selected_idx = 3
+        elif rota_ativa == ROTA_CONFIG or "/configuracoes" in rota_ativa:
+            drawer_selected_idx = 4
 
         drawer = ft.NavigationDrawer(
             bgcolor=T.SURFACE,
@@ -739,7 +733,11 @@ def criar_shell(
                 ),
                 ft.NavigationDrawerDestination(
                     icon=ft.Icons.SAVINGS_ROUNDED,
-                    label="Meu Cofre",
+                    label="Investimentos",
+                ),
+                ft.NavigationDrawerDestination(
+                    icon=ft.Icons.INVENTORY_2_ROUNDED,
+                    label="Caixinhas",
                 ),
                 ft.NavigationDrawerDestination(
                     icon=ft.Icons.CATEGORY_ROUNDED,
@@ -931,7 +929,7 @@ def criar_shell(
 
                 if rota == ROTA_LANCAMENTO:
 
-                    _abrir_novo_lancamento()
+                    await _abrir_novo_lancamento()
 
                     return
 
@@ -1001,19 +999,13 @@ def criar_shell(
 
 
 
-        txt_logo = ft.Text("DemBase", color=T.TEXT_PRIMARY, size=20, weight=ft.FontWeight.BOLD, visible=_sidebar_expandida)
-
-        textos_colapsaveis.append(txt_logo)
-
-
-
         sidebar = ft.Container(
 
             width=W_EXPANDED if _sidebar_expandida else W_COLLAPSED,
 
             bgcolor=T.SURFACE,
 
-            padding=pad(all_=14),
+            padding=pad(h=14, v=14),
 
             animate=ft.Animation(200, "decelerate"),
 
@@ -1025,35 +1017,7 @@ def criar_shell(
 
                 controls=[
 
-                    ft.Column(spacing=24, controls=[
-
-                        ft.Row(
-
-                            spacing=12,
-
-                            controls=[
-
-                                ft.Container(
-
-                                    content=ft.Icon(ft.Icons.AUTO_GRAPH_ROUNDED, color=ft.Colors.WHITE, size=24),
-
-                                    bgcolor=T.PRIMARY,
-
-                                    border_radius=8,
-
-                                    padding=pad(all_=8),
-
-                                ),
-
-                                txt_logo,
-
-                            ],
-
-                        ),
-
-                        lista_nav,
-
-                    ]),
+                    lista_nav,
 
                     ft.Column(spacing=4, controls=[
 
@@ -1099,7 +1063,7 @@ def criar_shell(
 
             btn_toggle.icon_color = T.PRIMARY if _sidebar_expandida else T.TEXT_MUTED
 
-            btn_toggle.tooltip = "Recolher menu" if _sidebar_expandida else "Expandir menu"
+            btn_toggle.tooltip = "Recolher menu lateral" if _sidebar_expandida else "Expandir menu lateral"
 
 
 
@@ -1115,7 +1079,7 @@ def criar_shell(
 
             icon_size=20,
 
-            tooltip="Recolher menu" if _sidebar_expandida else "Expandir menu",
+            tooltip="Recolher menu lateral" if _sidebar_expandida else "Expandir menu lateral",
 
             on_click=_toggle_sidebar,
 
@@ -1123,13 +1087,69 @@ def criar_shell(
 
 
 
-        titulo_header = titulo or next((i["label"] for i in _NAV_ITEMS if i["rota"] == rota_ativa), "DemBase")
+        brand_topo = ft.Container(
+
+            padding=pad(h=6, v=4),
+
+            border_radius=10,
+
+            ink=True,
+
+            tooltip="Ir para a Tela Inicial (Dashboard)",
+
+            on_click=lambda _: navegar(page, ROTA_DASHBOARD) if rota_ativa != ROTA_DASHBOARD else None,
+
+            content=ft.Row(
+
+                spacing=10,
+
+                tight=True,
+
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+
+                controls=[
+
+                    ft.Container(
+
+                        content=ft.Icon(ft.Icons.AUTO_GRAPH_ROUNDED, color=ft.Colors.WHITE, size=20),
+
+                        bgcolor=T.PRIMARY,
+
+                        border_radius=8,
+
+                        padding=pad(all_=6),
+
+                    ),
+
+                    ft.Text(
+
+                        "DemBase",
+
+                        color=T.TEXT_PRIMARY,
+
+                        size=18,
+
+                        weight=ft.FontWeight.BOLD,
+
+                    ),
+
+                ],
+
+            ),
+
+        )
+
+
+
+        titulo_header = titulo or next((i["label"] for i in _NAV_ITEMS if i["rota"] == rota_ativa), "Dashboard")
 
         controles_esq_header: list[ft.Control] = [
 
+            brand_topo,
+
             btn_toggle,
 
-            ft.VerticalDivider(width=1, color=T.BORDER),
+            ft.Container(width=1, height=22, bgcolor=T.BORDER),
 
         ]
 
@@ -1161,9 +1181,9 @@ def criar_shell(
 
                 color=T.TEXT_PRIMARY,
 
-                size=16,
+                size=15.5,
 
-                weight=ft.FontWeight.BOLD,
+                weight=ft.FontWeight.W_600,
 
             )
 

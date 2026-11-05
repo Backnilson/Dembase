@@ -16,6 +16,7 @@ Módulo de Caixinhas de Teto (Provisionamento e Ritmo de Gastos).
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timedelta
 from calendar import monthrange
 import flet as ft
@@ -108,32 +109,56 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             pass
 
     # ── Carregar Dados ────────────────────────────────────────────────────────
+    def _aplicar_resumo_caixinhas(resumo: dict):
+        nonlocal caixinhas_lista
+        caixinhas_lista = resumo.get("caixinhas") or []
+        banner_aviso_migracao.visible = False
+
+        tot_meta   = float(resumo.get("total_meta", 0) or 0)
+        tot_saldo  = float(resumo.get("total_saldo", 0) or 0)
+        tot_gasto  = float(resumo.get("total_gasto", 0) or 0)
+        ritmo_tot  = float(resumo.get("ritmo_diario_total", 0) or 0)
+
+        txt_total_meta.value   = formatar_moeda(tot_meta)
+        txt_total_saldo.value  = formatar_moeda(tot_saldo)
+        txt_total_gasto.value  = formatar_moeda(tot_gasto)
+        txt_ritmo_diario.value = f"{formatar_moeda(ritmo_tot)} / dia"
+
+        renderizar_cards()
+
     def carregar_dados(inicial: bool = False, forcar: bool = False):
+        loop_check = getattr(page, "loop", None)
+        eh_loop_ativo = isinstance(loop_check, asyncio.AbstractEventLoop) and loop_check.is_running() and hasattr(page, "run_task")
+
+        if eh_loop_ativo:
+            spinner.visible = True
+            if not inicial:
+                _safe_update()
+
+            async def _carregar_caixinhas_async():
+                try:
+                    resumo = await asyncio.to_thread(db.obter_resumo_caixinhas, forcar)
+                    _aplicar_resumo_caixinhas(resumo or {})
+                except Exception as ex:
+                    err_str = str(ex)
+                    if "caixinhas_teto" in err_str or "PGRST205" in err_str or "schema cache" in err_str:
+                        banner_aviso_migracao.visible = True
+                    if not inicial:
+                        mostrar_feedback(page, f"Erro ao listar caixinhas: {ex}", "erro")
+                finally:
+                    spinner.visible = False
+                    _safe_update()
+
+            page.run_task(_carregar_caixinhas_async)
+            return
+
         if not inicial:
             spinner.visible = True
             _safe_update()
-
-        nonlocal caixinhas_lista
         try:
-            resumo = db.obter_resumo_caixinhas(forcar_atualizacao=forcar or not inicial)
-            caixinhas_lista = resumo.get("caixinhas") or []
-            banner_aviso_migracao.visible = False
-
-            tot_meta   = float(resumo.get("total_meta", 0) or 0)
-            tot_saldo  = float(resumo.get("total_saldo", 0) or 0)
-            tot_gasto  = float(resumo.get("total_gasto", 0) or 0)
-            ritmo_tot  = float(resumo.get("ritmo_diario_total", 0) or 0)
-
-            txt_total_meta.value   = formatar_moeda(tot_meta)
-            txt_total_saldo.value  = formatar_moeda(tot_saldo)
-            txt_total_gasto.value  = formatar_moeda(tot_gasto)
-            txt_ritmo_diario.value = f"{formatar_moeda(ritmo_tot)} / dia"
-
-            renderizar_cards()
+            resumo = db.obter_resumo_caixinhas(forcar_atualizacao=forcar)
+            _aplicar_resumo_caixinhas(resumo or {})
         except Exception as ex:
-            import traceback
-            print("[CaixinhasView] ERRO EM CARREGAR_DADOS:", ex)
-            traceback.print_exc()
             err_str = str(ex)
             if "caixinhas_teto" in err_str or "PGRST205" in err_str or "schema cache" in err_str:
                 banner_aviso_migracao.visible = True
@@ -143,45 +168,112 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             spinner.visible = False
             _safe_update()
 
-    # ── Ação de Pagar Provisão e Encher o Cofrinho ─────────────────────────────
+    # ── Ação de Pagar Provisão e Encher o Cofrinho (Etapa A) ───────────────────
     def confirmar_pagamento_provisao(caixinha: dict):
         cid = str(caixinha.get("id"))
         nome = caixinha.get("nome", "Caixinha")
         meta = float(caixinha.get("valor_meta", 0) or 0)
-        tipo_prov = caixinha.get("provisao_tipo") or "Despesa"
+
+        try:
+            contas = db.listar_contas() or []
+        except Exception:
+            contas = []
+        opcoes_contas = [ft.dropdown.Option(key=str(cta["id"]), text=cta.get("nome", "Conta")) for cta in contas]
+        conta_id_padrao = str(caixinha.get("conta_id") or "")
+        conta_sel_val = conta_id_padrao if any(opt.key == conta_id_padrao for opt in opcoes_contas) else (opcoes_contas[0].key if opcoes_contas else "")
+
+        dd_conta = ft.Dropdown(
+            label="Conta Bancária de Origem *",
+            options=opcoes_contas,
+            value=conta_sel_val,
+            **T.dropdown_estilo(),
+        )
+
+        try:
+            potes = db.listar_potes() or []
+        except Exception:
+            potes = []
+        opcoes_potes = [
+            ft.dropdown.Option(key=str(p["id"]), text=f"{p.get('nome', 'Pote')} ({p.get('percentual', 0)}%)")
+            for p in potes
+        ]
+        pote_id_padrao = str(caixinha.get("pote_id") or "")
+        pote_sel_val = pote_id_padrao if any(opt.key == pote_id_padrao for opt in opcoes_potes) else (opcoes_potes[0].key if opcoes_potes else "")
+
+        dd_pote = ft.Dropdown(
+            label="Pote Financeiro (6 Potes) *",
+            options=opcoes_potes,
+            value=pote_sel_val,
+            **T.dropdown_estilo(),
+        )
+
+        txt_valor_pag = ft.TextField(
+            label="Valor a Abastecer (R$) *",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            prefix="R$ ",
+            value=f"{meta:.2f}".replace(".", ","),
+            **T.campo_estilo(),
+        )
 
         modal_conf = None
 
         def executar_pagamento(_):
-            fechar_dialogo(page, modal_conf)
+            val_str = (txt_valor_pag.value or "").replace(",", ".").replace("R$", "").strip()
             try:
-                db.pagar_provisao_caixinha(cid)
+                val_num = float(val_str or 0)
+                if val_num <= 0:
+                    raise ValueError
+            except ValueError:
+                mostrar_feedback(page, "Informe um valor válido maior que zero.", "alerta")
+                return
+
+            conta_escolhida = (dd_conta.value or "").strip()
+            if not conta_escolhida:
+                mostrar_feedback(page, "Selecione a Conta Bancária de origem.", "alerta")
+                return
+
+            pote_escolhido = (dd_pote.value or "").strip()
+            if not pote_escolhido:
+                mostrar_feedback(page, "Selecione a qual dos 6 Potes este abastecimento pertence.", "alerta")
+                return
+
+            fechar_dialogo(page, modal_conf)
+            spinner.visible = True
+            _safe_update()
+            try:
+                db.pagar_provisao_caixinha(
+                    caixinha_id=cid,
+                    conta_id=conta_escolhida,
+                    pote_id=pote_escolhido,
+                    valor=val_num,
+                    data_pagamento=date.today().isoformat(),
+                )
                 mostrar_feedback(
                     page,
-                    f"Provisão paga com sucesso! Cofrinho da caixinha '{nome}' cheio com {formatar_moeda(meta)}!",
+                    f"Caixinha '{nome}' abastecida com {formatar_moeda(val_num)}! Valor descontado do banco e contabilizado no Pote.",
                     "sucesso",
                 )
                 carregar_dados(inicial=False, forcar=True)
             except Exception as ex:
-                mostrar_feedback(page, f"Erro ao efetivar provisão: {ex}", "erro")
+                spinner.visible = False
+                _safe_update()
+                mostrar_feedback(page, f"Erro ao efetivar abastecimento: {ex}", "erro")
 
         modal_conf = ft.AlertDialog(
             modal=True,
             title=ft.Row([
                 ft.Icon(ft.Icons.SAVINGS_ROUNDED, color=T.PRIMARY, size=22),
-                ft.Text(f"Pagar Provisão · {nome}", size=16, weight=ft.FontWeight.BOLD),
+                ft.Text(f"Encher Caixinha · {nome}", size=16, weight=ft.FontWeight.BOLD),
             ], spacing=8),
             content=ft.Container(
-                width=400,
+                width=420,
                 content=ft.Column(
                     spacing=12,
                     tight=True,
                     controls=[
-                        ft.Text(
-                            f"Deseja confirmar o pagamento da provisão de {formatar_moeda(meta)}?",
-                            size=13,
-                            color=T.TEXT_PRIMARY,
-                        ),
+                        txt_valor_pag,
+                        dd_conta,
+                        dd_pote,
                         ft.Container(
                             padding=pad(h=10, v=8),
                             bgcolor=f"{T.PRIMARY}12",
@@ -190,7 +282,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                             content=ft.Row([
                                 ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=T.PRIMARY, size=16),
                                 ft.Text(
-                                    f"O valor será efetivado na sua conta bancária como {tipo_prov} Paga e o cofrinho encherá imediatamente com {formatar_moeda(meta)} para os gastos do período!",
+                                    "Etapa A (Provisão): O valor diminui imediatamente o saldo da Conta Bancária escolhida, aumenta o saldo disponível da Caixinha e já é contabilizado como Gasto Real no Pote selecionado.",
                                     size=11,
                                     color=T.TEXT_PRIMARY,
                                     expand=True,
@@ -203,7 +295,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             actions=[
                 ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(page, modal_conf)),
                 ft.FilledButton(
-                    "Pagar Agora (Encher Caixinha)",
+                    "Confirmar e Encher Caixinha",
                     on_click=executar_pagamento,
                     style=ft.ButtonStyle(
                         bgcolor=T.PRIMARY,
@@ -215,21 +307,18 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         )
         abrir_dialogo(page, modal_conf)
 
-    # ── Modal de Aporte Adicional (Provisionar Mais Recursos) ──────────────────
+    # ── Modal de Aporte Adicional (Abastecer Caixinha - Etapa A) ───────────────
     def abrir_modal_provisionar(caixinha: dict):
         cid = str(caixinha.get("id"))
         nome = caixinha.get("nome", "Caixinha")
         meta = float(caixinha.get("valor_meta", 0) or 0)
         saldo_atual = float(caixinha.get("saldo_atual", 0) or 0)
-        cor = caixinha.get("cor") or T.PRIMARY
-        ic_nome = caixinha.get("icone", "inventory_2")
-        icone_ctrl = MAPA_ICONES.get(ic_nome, ft.Icons.INVENTORY_2_ROUNDED)
 
         falta_meta = max(0.0, meta - saldo_atual)
         valor_sugerido = falta_meta if falta_meta > 0 else meta
 
         txt_valor = ft.TextField(
-            label="Valor a Provisionar (R$) *",
+            label="Valor a Abastecer (R$) *",
             hint_text="Ex: 400,00",
             keyboard_type=ft.KeyboardType.NUMBER,
             prefix="R$ ",
@@ -248,8 +337,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         prox_a = ano_ativo + (1 if mes_ativo == 12 else 0)
         dia_5_prox = date(prox_a, prox_m, 5)
 
-        dt_sugerida_prov = dia_5_prox if dia_5_mes < hoje_data else dia_5_mes
-        data_provisao_sel = [hoje_data if float(caixinha.get("saldo_atual", 0) or 0) > 0 else dt_sugerida_prov]
+        data_provisao_sel = [hoje_data]
 
         txt_data_provisao_label = ft.Text(
             formatar_data_amigavel(data_provisao_sel[0]),
@@ -278,7 +366,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                     border_radius=8,
                 ),
                 ft.Column([
-                    ft.Text("Data da Provisão *", size=10.5, color=T.TEXT_MUTED),
+                    ft.Text("Data do Abastecimento *", size=10.5, color=T.TEXT_MUTED),
                     txt_data_provisao_label,
                 ], spacing=1, expand=True),
                 ft.Icon(ft.Icons.ARROW_DROP_DOWN_ROUNDED, color=T.TEXT_MUTED, size=20),
@@ -292,7 +380,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 page=page,
                 data_inicial=data_provisao_sel[0],
                 on_select=_ao_selecionar_data_provisao,
-                titulo="Data da Provisão",
+                titulo="Data do Abastecimento",
             ),
         )
 
@@ -300,10 +388,9 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
 
         def _atualizar_chips_atalhos_provisao():
             row_chips_atalhos_provisao.controls.clear()
-            opcoes_atalhos = []
-            if dia_5_mes >= hoje_data:
+            opcoes_atalhos = [("Hoje", hoje_data)]
+            if dia_5_mes != hoje_data:
                 opcoes_atalhos.append((f"Dia 5 deste Mês ({mes_ativo:02d})", dia_5_mes))
-            opcoes_atalhos.append(("Hoje", hoje_data))
             opcoes_atalhos.append((f"Próximo dia 5 ({prox_m:02d})", dia_5_prox))
             for lbl, dt_val in opcoes_atalhos:
                 ativo = (data_provisao_sel[0] == dt_val)
@@ -331,7 +418,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         _atualizar_chips_atalhos_provisao()
 
         try:
-            contas = db.listar_contas()
+            contas = db.listar_contas() or []
         except Exception:
             contas = []
 
@@ -346,10 +433,28 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             **T.dropdown_estilo(),
         )
 
+        try:
+            potes = db.listar_potes() or []
+        except Exception:
+            potes = []
+        opcoes_potes = [
+            ft.dropdown.Option(key=str(p["id"]), text=f"{p.get('nome', 'Pote')} ({p.get('percentual', 0)}%)")
+            for p in potes
+        ]
+        pote_id_padrao = str(caixinha.get("pote_id") or "")
+        pote_sel_val = pote_id_padrao if any(opt.key == pote_id_padrao for opt in opcoes_potes) else (opcoes_potes[0].key if opcoes_potes else "")
+
+        dd_pote = ft.Dropdown(
+            label="Pote Financeiro (6 Potes) *",
+            options=opcoes_potes,
+            value=pote_sel_val,
+            **T.dropdown_estilo(),
+        )
+
         txt_desc = ft.TextField(
             label="Descrição / Observação (Opcional)",
             hint_text=f"Ex: Aporte adicional {nome}...",
-            value=f"Aporte Caixinha · {nome}",
+            value=f"Provisão Caixinha · {nome}",
             **T.campo_estilo(),
         )
 
@@ -367,7 +472,12 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
 
             conta_escolhida = (dd_conta.value or "").strip()
             if not conta_escolhida:
-                mostrar_feedback(page, "Selecione a conta bancária de onde sairá o dinheiro.", "alerta")
+                mostrar_feedback(page, "Selecione a Conta Bancária de onde sairá o dinheiro.", "alerta")
+                return
+
+            pote_escolhido = (dd_pote.value or "").strip()
+            if not pote_escolhido:
+                mostrar_feedback(page, "Selecione a qual dos 6 Potes este abastecimento pertence.", "alerta")
                 return
 
             nome_conta = "Conta"
@@ -376,30 +486,35 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                     nome_conta = cta.get("nome", "Conta")
                     break
 
+            fechar_dialogo(page, modal)
+            spinner.visible = True
+            _safe_update()
             try:
-                resp = db.injetar_saldo_caixinha(
+                db.injetar_saldo_caixinha(
                     caixinha_id=cid,
                     valor=val,
-                    descricao=txt_desc.value.strip() or f"Provisionamento · {nome}",
+                    descricao=txt_desc.value.strip() or f"Provisão Caixinha · {nome}",
                     conta_id=conta_escolhida,
+                    pote_id=pote_escolhido,
                     data_aporte=data_provisao_sel[0].isoformat(),
                     gerar_despesa=True,
                 )
-                fechar_dialogo(page, modal)
                 mostrar_feedback(
                     page,
-                    f"R$ {val:.2f} provisionados na caixinha '{nome}' como despesa pendente na conta '{nome_conta}'!",
+                    f"R$ {val:.2f} abastecidos na caixinha '{nome}', descontados da conta '{nome_conta}' e contabilizados no Pote!",
                     "sucesso",
                 )
                 carregar_dados(inicial=False, forcar=True)
             except Exception as ex:
-                mostrar_feedback(page, f"Erro ao provisionar caixinha: {ex}", "erro")
+                spinner.visible = False
+                _safe_update()
+                mostrar_feedback(page, f"Erro ao abastecer caixinha: {ex}", "erro")
 
         modal = ft.AlertDialog(
             modal=True,
             title=ft.Row([
                 ft.Icon(ft.Icons.SAVINGS_ROUNDED, color=T.PRIMARY, size=22),
-                ft.Text(f"Aporte na Caixinha · {nome}", size=16, weight=ft.FontWeight.BOLD),
+                ft.Text(f"Abastecer Caixinha · {nome}", size=16, weight=ft.FontWeight.BOLD),
             ], spacing=8),
             content=ft.Container(
                 width=420,
@@ -410,6 +525,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                         txt_valor,
                         ft.Column([card_seletor_provisao, row_chips_atalhos_provisao], spacing=4),
                         dd_conta,
+                        dd_pote,
                         txt_desc,
                         ft.Container(
                             padding=pad(h=10, v=8),
@@ -417,9 +533,9 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                             border_radius=8,
                             border=borda(1, f"{T.PRIMARY}30"),
                             content=ft.Row([
-                                ft.Icon(ft.Icons.SCHEDULE_ROUNDED, color=T.PRIMARY, size=16),
+                                ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=T.PRIMARY, size=16),
                                 ft.Text(
-                                    "O valor entrará como Despesa Pendente na conta bancária (reserva de capital) sem abater o saldo real imediatamente, e ficará disponível na caixinha para os gastos do período.",
+                                    "Etapa A (Abastecimento Imediato): O valor diminui o saldo da Conta Bancária de origem, aumenta o saldo disponível da Caixinha e já é contabilizado como Gasto Real no Pote selecionado.",
                                     size=11,
                                     color=T.TEXT_PRIMARY,
                                     expand=True,
@@ -432,7 +548,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             actions=[
                 ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(page, modal)),
                 ft.FilledButton(
-                    "Confirmar Aporte",
+                    "Confirmar Abastecimento",
                     on_click=confirmar_provisao,
                     style=ft.ButtonStyle(
                         bgcolor=T.PRIMARY,
@@ -1586,7 +1702,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 controls=[
                     ft.Row([
                         ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, color=T.PRIMARY, size=24),
-                        ft.Text("Meu Cofre · Caixinhas", size=20 if mobile else 24, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                        ft.Text("Minhas Caixinhas", size=20 if mobile else 24, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
                     ], spacing=8),
                     ft.Text(
                         "Metas de gastos, provisionamento e cálculo de ritmo até o próximo mês" if not mobile else "Provisionamento e ritmo de gastos",
@@ -1624,6 +1740,6 @@ def criar_view_caixinhas(page: ft.Page, match=None) -> ft.View:
         rota_ativa=ROTA_CAIXINHAS,
         conteudo=conteudo,
         rota_view="/caixinhas",
-        titulo="Meu Cofre · Caixinhas",
+        titulo="Caixinhas",
         mostrar_voltar=False,
     )

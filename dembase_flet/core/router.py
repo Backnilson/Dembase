@@ -899,6 +899,15 @@ def configurar_rotas(page: ft.Page):
 
 
     def on_route_change(e: ft.RouteChangeEvent | None = None, forcar_rebuild: bool = False):
+        # Sinaliza ao click_guard o fim da navegação (sucesso ou erro) para a
+        # "rodinha" só sumir depois do rebuild das views.
+        try:
+            _on_route_change_impl(e, forcar_rebuild)
+        finally:
+            from core import click_guard
+            click_guard.nav_concluida(page)
+
+    def _on_route_change_impl(e: ft.RouteChangeEvent | None = None, forcar_rebuild: bool = False):
 
         logado = _logado()
 

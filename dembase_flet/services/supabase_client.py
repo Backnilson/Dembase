@@ -2684,7 +2684,7 @@ async def obter_resumo_potes_async(data_inicio: str, data_fim: str, piso_custos_
 
 
 
-            potes_lista = await asyncio.to_thread(obter_potes, False, m_ref, a_ref)
+            potes_lista = await asyncio.to_thread(listar_potes, False, m_ref, a_ref)
 
 
 
@@ -2716,7 +2716,8 @@ async def obter_resumo_potes_async(data_inicio: str, data_fim: str, piso_custos_
 
 
 
-    salvar_cache("potes_resumo", dados, subchave=chave_p, ttl=TTL_RESUMO_POTES)
+    if isinstance(dados, dict) and dados.get("potes"):
+        salvar_cache("potes_resumo", dados, subchave=chave_p, ttl=TTL_RESUMO_POTES)
 
 
 
@@ -25677,7 +25678,7 @@ def obter_resumo_potes(data_inicio: str, data_fim: str, forcar_atualizacao: bool
 
 
 
-            potes_lista = obter_potes(forcar_atualizacao=forcar_atualizacao, mes=m_ref, ano=a_ref)
+            potes_lista = listar_potes(forcar_atualizacao=forcar_atualizacao, mes=m_ref, ano=a_ref)
 
 
 
@@ -25709,7 +25710,8 @@ def obter_resumo_potes(data_inicio: str, data_fim: str, forcar_atualizacao: bool
 
 
 
-    salvar_cache("potes_resumo", dados, subchave=chave_p, ttl=TTL_RESUMO_POTES)
+    if isinstance(dados, dict) and dados.get("potes"):
+        salvar_cache("potes_resumo", dados, subchave=chave_p, ttl=TTL_RESUMO_POTES)
 
 
 
@@ -26129,7 +26131,7 @@ def recalcular_saldo_caixinha(caixinha_id: str) -> dict:
 
 
 
-def listar_caixinhas(forcar_atualizacao: bool = False) -> list[dict]:
+def listar_caixinhas(forcar_atualizacao: bool = False, data_inicio: str | None = None, data_fim: str | None = None) -> list[dict]:
 
 
 
@@ -26137,11 +26139,13 @@ def listar_caixinhas(forcar_atualizacao: bool = False) -> list[dict]:
 
 
 
+
+
+
+
+    subchave = f"{data_inicio}_{data_fim}" if (data_inicio or data_fim) else "padrao"
     if not forcar_atualizacao:
-
-
-
-        cached = obter_cache("caixinhas")
+        cached = obter_cache("caixinhas", subchave=subchave)
 
 
 
@@ -26257,6 +26261,47 @@ def listar_caixinhas(forcar_atualizacao: bool = False) -> list[dict]:
 
 
 
+    # Enriquecimento de Contas e Potes vinculados
+    try:
+        potes_todos = listar_potes() or []
+        mapa_potes = {str(p.get("id")): p for p in potes_todos if p.get("id")}
+    except Exception:
+        mapa_potes = {}
+
+    _NOMES_CANONICOS = {
+        1: ("Custos Fixos", "#007AFF"),
+        2: ("Custos Semi Fixos", "#FF69B4"),
+        3: ("Metas", "#800080"),
+        4: ("Prazeres", "#FF7A00"),
+        5: ("Conhecimento", "#FFD60A"),
+        6: ("Liberdade Financeira", "#6C5CE7"),
+    }
+
+    for c in dados:
+        if not c.get("potes") and c.get("pote_id"):
+            c["potes"] = mapa_potes.get(str(c.get("pote_id")))
+
+        p_obj = c.get("potes")
+        if not p_obj or not isinstance(p_obj, dict) or not p_obj.get("nome") or p_obj.get("nome") in ("6 Potes", "Pote Vinculado"):
+            n_c = str(c.get("nome") or "").lower()
+            if any(k in n_c for k in ("aluguel", "condom", "luz", "energia", "agua", "água", "internet")):
+                p_nome, p_cor = _NOMES_CANONICOS[1]
+            elif any(k in n_c for k in ("moto", "carro", "combust", "mercado", "aliment", "feira", "ipva", "manuten", "seguro")):
+                p_nome, p_cor = _NOMES_CANONICOS[2]
+            elif any(k in n_c for k in ("reserva", "emerg", "invest", "futuro")):
+                p_nome, p_cor = _NOMES_CANONICOS[6]
+            elif any(k in n_c for k in ("curso", "livro", "faculdade", "estudo")):
+                p_nome, p_cor = _NOMES_CANONICOS[5]
+            elif any(k in n_c for k in ("viagem", "reforma", "meta")):
+                p_nome, p_cor = _NOMES_CANONICOS[3]
+            else:
+                p_nome, p_cor = _NOMES_CANONICOS[2]
+            c["potes"] = {
+                "id": str(c.get("pote_id") or "pote-auto"),
+                "nome": p_nome,
+                "cor": p_cor,
+            }
+
     # Recalcula e sincroniza despesas vinculadas em tempo real para cada caixinha
 
 
@@ -26277,31 +26322,17 @@ def listar_caixinhas(forcar_atualizacao: bool = False) -> list[dict]:
 
 
 
-                l_resp = (
-
-
-
+                l_query = (
                     supabase.table("lancamentos")
-
-
-
                     .select("caixinha_id, valor, subtipo")
-
-
-
                     .in_("caixinha_id", cids)
-
-
-
                     .eq("tipo", "Despesa")
-
-
-
-                    .execute()
-
-
-
                 )
+                if data_inicio:
+                    l_query = l_query.gte("data", str(data_inicio)[:10])
+                if data_fim:
+                    l_query = l_query.lte("data", str(data_fim)[:10])
+                l_resp = l_query.execute()
 
 
 
@@ -26337,35 +26368,18 @@ def listar_caixinhas(forcar_atualizacao: bool = False) -> list[dict]:
 
 
 
-                prov_resp = (
-
-
-
+                prov_query = (
                     supabase.table("lancamentos")
-
-
-
                     .select("id, caixinha_id, valor, subtipo, status, data, tipo, conta_id, destino_id")
-
-
-
                     .in_("caixinha_id", cids)
-
-
-
                     .eq("subtipo", "Provisionamento")
-
-
-
                     .order("criado_em", desc=True)
-
-
-
-                    .execute()
-
-
-
                 )
+                if data_inicio:
+                    prov_query = prov_query.gte("data", str(data_inicio)[:10])
+                if data_fim:
+                    prov_query = prov_query.lte("data", str(data_fim)[:10])
+                prov_resp = prov_query.execute()
 
 
 
@@ -26469,10 +26483,17 @@ def listar_caixinhas(forcar_atualizacao: bool = False) -> list[dict]:
 
 
 
-                    c["saldo_atual"] = saldo_banco
-
-
-
+                    if data_inicio and data_fim:
+                        provisoes_c = [p for p in itens_prov if str(p.get("caixinha_id")) == cid_c]
+                        p_pago = sum(float(p.get("valor", 0) or 0) for p in provisoes_c if p.get("status") == "Pago")
+                        p_pendente = sum(float(p.get("valor", 0) or 0) for p in provisoes_c if p.get("status") == "Pendente")
+                        prov_tot = (p_pago + p_pendente) if (p_pago + p_pendente) > 0 else meta_val
+                        saldo_calc = max(0.0, p_pago - gasto_vinculado) if p_pago > 0 else 0.0
+                        c["saldo_atual"] = saldo_calc
+                        c["valor_provisionado_periodo"] = prov_tot
+                    else:
+                        c["saldo_atual"] = saldo_banco
+                        c["valor_provisionado_periodo"] = meta_val
                     c["total_gasto"] = gasto_vinculado
 
 
@@ -26569,7 +26590,8 @@ def listar_caixinhas(forcar_atualizacao: bool = False) -> list[dict]:
 
 
 
-    salvar_cache("caixinhas", dados, ttl=TTL_CADASTROS_BASE)
+    subchave = f"{data_inicio}_{data_fim}" if (data_inicio or data_fim) else "padrao"
+    salvar_cache("caixinhas", dados, subchave=subchave, ttl=TTL_CADASTROS_BASE)
 
 
 
@@ -28255,172 +28277,53 @@ def listar_caixinhas_opcoes() -> list[dict]:
 
 
 
-def obter_resumo_caixinhas(forcar_atualizacao: bool = False) -> dict:
+def obter_resumo_caixinhas(
+    forcar_atualizacao: bool = False,
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+) -> dict:
+    """Calcula os KPIs consolidados de todas as caixinhas ativas com dados em tempo real para o periodo."""
+    subchave = f"{data_inicio}_{data_fim}" if (data_inicio or data_fim) else "padrao"
+    if not forcar_atualizacao:
+        cached = obter_cache("resumo_caixinhas", subchave=subchave)
+        if cached is not None:
+            return dict(cached)
 
-
-
-    """
-
-
-
-    Calcula os KPIs consolidados de todas as caixinhas ativas com dados em tempo real:
-
-
-
-    - total_meta: soma dos tetos alocados
-
-
-
-    - total_saldo: soma do saldo restante disponível (Provisionado - Despesas Vinculadas)
-
-
-
-    - total_gasto: total consumido por despesas vinculadas
-
-
-
-    - percentual_restante: % do valor inicial ainda disponível
-
-
-
-    - ritmo_diario_total: média de gastos diários seguros até a data alvo
-
-
-
-    """
-
-
-
-    itens = listar_caixinhas(forcar_atualizacao=forcar_atualizacao)
-
-
-
+    itens = listar_caixinhas(forcar_atualizacao=forcar_atualizacao, data_inicio=data_inicio, data_fim=data_fim)
     from datetime import date
-
-
-
     hoje = date.today()
 
-
-
-    tot_meta = sum(float(c.get("valor_meta", 0) or 0) for c in itens)
-
-
-
+    tot_meta = sum(float(c.get("valor_provisionado_periodo", c.get("valor_meta", 0)) or 0) for c in itens)
     tot_saldo = sum(float(c.get("saldo_atual", 0) or 0) for c in itens)
-
-
-
     tot_gasto = sum(float(c.get("total_gasto", 0) or 0) for c in itens)
-
-
-
     pct_rest = (tot_saldo / tot_meta * 100) if tot_meta > 0 else 0.0
 
-
-
-
-
-
-
     ritmo_total = 0.0
-
-
-
     for c in itens:
-
-
-
         s = float(c.get("saldo_atual", 0) or 0)
-
-
-
         dt_str = c.get("data_alvo")
-
-
-
         if dt_str and s > 0:
-
-
-
             try:
-
-
-
                 from datetime import datetime
-
-
-
                 d_alvo = datetime.strptime(str(dt_str)[:10], "%Y-%m-%d").date()
-
-
-
                 dias = max(1, (d_alvo - hoje).days + 1)
-
-
-
                 ritmo_total += (s / dias)
-
-
-
             except Exception:
-
-
-
                 pass
 
-
-
-
-
-
-
-    return {
-
-
-
+    res = {
         "total_meta": tot_meta,
-
-
-
         "total_saldo": tot_saldo,
-
-
-
         "total_gasto": tot_gasto,
-
-
-
         "percentual_restante": pct_rest,
-
-
-
         "qtd_caixinhas": len(itens),
-
-
-
         "ritmo_diario_total": ritmo_total,
-
-
-
         "caixinhas": itens,
-
-
-
+        "data_inicio": data_inicio,
+        "data_fim": data_fim,
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
+    salvar_cache("resumo_caixinhas", res, subchave=subchave, ttl=TTL_CADASTROS_BASE)
+    return res
 
 
 # =============================================================================
