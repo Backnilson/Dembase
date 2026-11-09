@@ -89,15 +89,25 @@ def rodar_testes():
     assert porquinho is not None, "Cofre 'Porquinho' deve existir"
     assert cdi is not None, "Cofre '102% CDI' deve existir"
 
-    # 3. Teste de Aporte
-    print("\n3. Testando Aporte no Porquinho...")
+    # 3. Teste de Aporte (incluindo pote_id e integração com conta/extrato)
+    print("\n3. Testando Aporte no Porquinho (com pote_id e extrato)...")
+    contas_disp = db.listar_contas() or []
+    potes_disp = db.listar_potes() or []
+    conta_id_teste = str(contas_disp[0]['id']) if contas_disp else None
+    pote_id_teste = str(potes_disp[0]['id']) if potes_disp else None
+
     saldo_ant = porquinho['saldo_atual']
     mov_ap = db.registrar_aporte_cofre(
         cofre_id=porquinho['id'],
         valor=300.00,
         descricao="Aporte Automatizado Teste (+300)",
+        conta_origem_id=conta_id_teste,
+        lancar_no_extrato=bool(conta_id_teste),
+        pote_id=pote_id_teste,
     )
-    print(f"  Aporte registrado! Mov ID: {mov_ap['id']}")
+    print(f"  Aporte registrado! Mov ID: {mov_ap['id']} | Lancamento ID: {mov_ap.get('lancamento_id')}")
+    if conta_id_teste:
+        assert mov_ap.get('lancamento_id') is not None, "Deve vincular lancamento_id quando lancar_no_extrato=True"
     pq_pos = db.obter_cofre_por_id(porquinho['id'])
     assert pq_pos['saldo_atual'] == round(saldo_ant + 300.00, 2), "Saldo deve incrementar 300.00"
 

@@ -897,7 +897,7 @@ def criar_view_config(page: ft.Page, match=None) -> ft.View:
     definicao_abas = [
         (0, "Meu Perfil",        ft.Icons.PERSON_OUTLINED),
         (1, "Metas (Potes)",     ft.Icons.DONUT_LARGE_ROUNDED),
-        (2, "Caixinhas",         ft.Icons.INVENTORY_2_ROUNDED),
+        (2, "DemBoxes",         ft.Icons.INVENTORY_2_ROUNDED),
         (3, "Categorias",        ft.Icons.CATEGORY_OUTLINED),
         (4, "Aparência & Tema",  ft.Icons.PALETTE_OUTLINED),
         (5, "Gráficos",          ft.Icons.DASHBOARD_CUSTOMIZE_ROUNDED),

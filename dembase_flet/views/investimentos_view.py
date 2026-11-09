@@ -988,9 +988,10 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
             on_click=lambda _: abrir_seletor_data_modal(page, dt_sel_ref[0], lambda nova_dt: _atualizar_data(nova_dt)),
         )
 
-        def _atualizar_data(d_str):
-            dt_sel_ref[0] = d_str
-            btn_data.content = ft.Text(formatar_data_br(d_str))
+        def _atualizar_data(nova_dt):
+            dt_iso = nova_dt.isoformat() if hasattr(nova_dt, "isoformat") else str(nova_dt)
+            dt_sel_ref[0] = dt_iso
+            btn_data.content = ft.Text(formatar_data_br(dt_iso))
             btn_data.update()
 
         txt_desc = ft.TextField(
@@ -1208,9 +1209,10 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
             on_click=lambda _: abrir_seletor_data_modal(page, dt_sel_rend_ref[0], lambda nova_dt: _atualizar_dt_rend(nova_dt)),
         )
 
-        def _atualizar_dt_rend(d_str):
-            dt_sel_rend_ref[0] = d_str
-            btn_data_rend.content = ft.Text(formatar_data_br(d_str))
+        def _atualizar_dt_rend(nova_dt):
+            dt_iso = nova_dt.isoformat() if hasattr(nova_dt, "isoformat") else str(nova_dt)
+            dt_sel_rend_ref[0] = dt_iso
+            btn_data_rend.content = ft.Text(formatar_data_br(dt_iso))
             btn_data_rend.update()
 
         txt_desc_rend = ft.TextField(
@@ -1411,16 +1413,17 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
             on_click=lambda _: abrir_seletor_data_modal(page, dt_sel_resg_ref[0], lambda nova_dt: _atualizar_dt_resg(nova_dt)),
         )
 
-        def _atualizar_dt_resg(d_str):
-            dt_sel_resg_ref[0] = d_str
-            btn_dt_resg.content = ft.Text(formatar_data_br(d_str))
+        def _atualizar_dt_resg(nova_dt):
+            dt_iso = nova_dt.isoformat() if hasattr(nova_dt, "isoformat") else str(nova_dt)
+            dt_sel_resg_ref[0] = dt_iso
+            btn_dt_resg.content = ft.Text(formatar_data_br(dt_iso))
             btn_dt_resg.update()
 
         sw_creditar_conta = ft.Switch(value=False, active_color=T.PRIMARY)
         dropdown_conta_resg = ft.Dropdown(
             label="Conta Bancária de Destino",
-            options=[ft.dropdown.Option(c["id"], c["nome"]) for c in contas],
-            value=contas[0]["id"] if contas else None,
+            options=[ft.dropdown.Option(str(c["id"]), c["nome"]) for c in contas],
+            value=str(contas[0]["id"]) if contas else None,
             visible=False,
             **T.dropdown_estilo(),
         )
@@ -1655,7 +1658,7 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
                                     on_click=lambda _: carregar_dados(forcar=True),
                                 ),
                                 T.botao_primario(
-                                    "+ Novo Aporte",
+                                    "Novo Aporte",
                                     on_click=lambda _: _abrir_modal_aporte(),
                                     icone=ft.Icons.ADD_ROUNDED,
                                 ),
@@ -1861,6 +1864,8 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
         titulo="Investimentos",
         conteudo=conteudo_principal,
         mostrar_voltar=False,
+        on_periodo_change=lambda *_: carregar_dados(forcar=True),
+        on_lancamento_saved=lambda: carregar_dados(forcar=True),
         on_perfil_change=lambda _: carregar_dados(forcar=True),
     )
     return view
@@ -2013,17 +2018,42 @@ def abrir_modal_aporte_sobra_dashboard(
     except Exception:
         pass
 
+    potes_disp = []
+    try:
+        potes_disp = db.listar_potes() or []
+    except Exception:
+        potes_disp = []
+    pote_padrao_id = None
+    if potes_disp:
+        p_inv = next(
+            (p for p in potes_disp if any(k in str(p.get("nome", "")).lower() for k in ("liberdade", "invest", "meta"))),
+            potes_disp[0],
+        )
+        pote_padrao_id = str(p_inv["id"])
+
     sw_debitar = ft.Switch(value=False, active_color=T.PRIMARY)
     dropdown_c = ft.Dropdown(
         label="Debitar da Conta Bancária",
-        options=[ft.dropdown.Option(c["id"], c["nome"]) for c in contas],
-        value=contas[0]["id"] if contas else None,
+        options=[ft.dropdown.Option(str(c["id"]), c["nome"]) for c in contas],
+        value=str(contas[0]["id"]) if contas else None,
+        visible=False,
+        **T.dropdown_estilo(),
+    )
+    dropdown_pote_sobra = ft.Dropdown(
+        label="Pote Financeiro (6 Potes)",
+        options=[
+            ft.dropdown.Option(str(p["id"]), f"{p.get('nome', 'Pote')} ({p.get('percentual', 0)}%)")
+            for p in potes_disp
+        ],
+        value=pote_padrao_id,
         visible=False,
         **T.dropdown_estilo(),
     )
     def _toggle_deb(_):
         dropdown_c.visible = sw_debitar.value
+        dropdown_pote_sobra.visible = sw_debitar.value
         dropdown_c.update()
+        dropdown_pote_sobra.update()
     sw_debitar.on_change = _toggle_deb
 
     def _salvar(_):
@@ -2037,6 +2067,7 @@ def abrir_modal_aporte_sobra_dashboard(
         try:
             dt_hoje = date.today().isoformat()
             conta_id = dropdown_c.value if sw_debitar.value else None
+            pote_id_sel = dropdown_pote_sobra.value if sw_debitar.value else None
             deb = sw_debitar.value
 
             msgs = []
@@ -2048,6 +2079,7 @@ def abrir_modal_aporte_sobra_dashboard(
                     descricao="Aporte Sobra: Porquinho",
                     conta_origem_id=conta_id,
                     lancar_no_extrato=deb,
+                    pote_id=pote_id_sel,
                 )
                 msgs.append(f"{formatar_moeda(vp)} no Porquinho")
 
@@ -2059,6 +2091,7 @@ def abrir_modal_aporte_sobra_dashboard(
                     descricao="Aporte Sobra: 102% CDI",
                     conta_origem_id=conta_id,
                     lancar_no_extrato=deb,
+                    pote_id=pote_id_sel,
                 )
                 msgs.append(f"{formatar_moeda(vc)} no 102% CDI")
 
@@ -2108,6 +2141,7 @@ def abrir_modal_aporte_sobra_dashboard(
                         ],
                     ),
                     dropdown_c,
+                    dropdown_pote_sobra,
                 ],
             ),
         ),

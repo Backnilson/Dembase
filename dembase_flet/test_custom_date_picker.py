@@ -20,6 +20,7 @@ from views.widgets.custom_date_picker import (
     abrir_seletor_data_modal,
     abrir_modal_periodo_mobills,
     CampoSeletorData,
+    converter_para_date,
     formatar_data_amigavel,
     formatar_data_curta_amigavel,
     MESES_PT,
@@ -72,6 +73,15 @@ def test_formatadores():
     assert formatar_data_curta_amigavel(hoje) == "Hoje"
     assert formatar_data_curta_amigavel(ontem) == "Ontem"
     assert formatar_data_curta_amigavel(amanha) == "Amanhã"
+
+    # Testes com strings (ISO, BR, None)
+    assert formatar_data_amigavel(hoje.isoformat()) == formatar_data_amigavel(hoje)
+    assert formatar_data_curta_amigavel(hoje.isoformat()) == "Hoje"
+    assert "20 de Outubro" in formatar_data_amigavel("2026-10-20")
+    assert "20 de Outubro" in formatar_data_amigavel("20/10/2026")
+    assert formatar_data_amigavel(None) == ""
+    assert converter_para_date("2026-10-20") == date(2026, 10, 20)
+    assert converter_para_date("20/10/2026") == date(2026, 10, 20)
     print("[OK] Formatadores testados com sucesso.")
 
 
@@ -141,11 +151,19 @@ def test_modais():
     print("--- Testando Modais de Data e Período ---")
     page = mock_page()
 
-    # 1. Modal de data única
+    # 1. Modal de data única (com date e com str ISO)
     data_escolhida = [None]
     abrir_seletor_data_modal(
         page=page,
         data_inicial=date(2026, 10, 20),
+        on_select=lambda d: data_escolhida.__setitem__(0, d),
+    )
+    assert page.show_dialog.called
+
+    # Teste abrindo com string ISO (como ocorre na tela de investimentos)
+    abrir_seletor_data_modal(
+        page=page,
+        data_inicial="2026-10-20",
         on_select=lambda d: data_escolhida.__setitem__(0, d),
     )
     assert page.show_dialog.called
@@ -167,7 +185,7 @@ def test_modais():
         estado_periodo=estado_p,
         on_confirm=lambda res: periodo_escolhido.__setitem__(0, res),
     )
-    assert page.show_dialog.call_count == 2
+    assert page.show_dialog.call_count == 3
     print("[OK] Modais instanciados com sucesso.")
 
 

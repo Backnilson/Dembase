@@ -108,7 +108,8 @@ def kpi_clicavel(
     icone_direita = [
         ft.Container(
             content=ft.Icon(icone, color=cor, size=14 if is_mob else 18),
-            bgcolor=f"{cor}1F",
+            bgcolor=T.SURFACE_ALT,
+            border=borda(1, cor),
             border_radius=7 if is_mob else 8,
             padding=pad(all_=4 if is_mob else 6),
         )
@@ -170,7 +171,7 @@ def kpi_clicavel(
         border_radius=12 if is_mob else 14,
         cor_destaque=cor,
         tooltip=tooltip or (f"Clique para abrir detalhes de {titulo}" if on_click else None),
-        bgcolor=f"{cor}10" if ativo else T.SURFACE,
+        bgcolor=T.SURFACE_ALT if ativo else T.SURFACE,
     )
     if ativo:
         card.border = borda(1.5, cor)

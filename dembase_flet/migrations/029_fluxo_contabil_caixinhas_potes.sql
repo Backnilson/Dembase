@@ -49,47 +49,54 @@ SECURITY DEFINER
 SET search_path TO 'public'
 AS $$
 DECLARE
-    v_uid UUID;
-    v_m   UUID;
-    v_cx  RECORD;
+    v_uid           UUID;
+    v_m             UUID;
+    v_cx_id         UUID;
+    v_cx_pote_id    UUID;
+    v_cx_conta_id   UUID;
+    v_cx_cat_id     UUID;
+    v_cx_subcat_id  UUID;
+    v_cx_membro_id  UUID;
 BEGIN
-    IF TG_TABLE_NAME = 'lancamentos' AND NEW.caixinha_id IS NOT NULL THEN
-        SELECT id, pote_id, conta_id, categoria_id, subcategoria_id, membro_id
-        INTO v_cx
-        FROM public.caixinhas_teto
-        WHERE id = NEW.caixinha_id;
+    IF TG_TABLE_NAME = 'lancamentos' THEN
+        IF NEW.caixinha_id IS NOT NULL THEN
+            SELECT id, pote_id, conta_id, categoria_id, subcategoria_id, membro_id
+            INTO v_cx_id, v_cx_pote_id, v_cx_conta_id, v_cx_cat_id, v_cx_subcat_id, v_cx_membro_id
+            FROM public.caixinhas_teto
+            WHERE id = NEW.caixinha_id;
 
-        IF LOWER(COALESCE(TRIM(NEW.subtipo), '')) = 'provisionamento' THEN
-            -- Etapa A: Aporte / Provisionamento na Caixinha
-            NEW.subtipo := 'Provisionamento';
-            IF NEW.pote_id IS NULL AND v_cx.id IS NOT NULL THEN
-                NEW.pote_id := v_cx.pote_id;
-            END IF;
-            IF NEW.conta_id IS NULL AND v_cx.id IS NOT NULL THEN
-                NEW.conta_id := v_cx.conta_id;
-            END IF;
-            IF NEW.categoria_id IS NULL AND v_cx.id IS NOT NULL THEN
-                NEW.categoria_id := v_cx.categoria_id;
-            END IF;
-            IF NEW.subcategoria_id IS NULL AND v_cx.id IS NOT NULL THEN
-                NEW.subcategoria_id := v_cx.subcategoria_id;
-            END IF;
-        ELSE
-            -- Etapa B: Consumo usando saldo da Caixinha (Neutro no Banco e no Pote)
-            NEW.conta_id := NULL;
-            NEW.cartao_id := NULL;
-            NEW.fatura_id := NULL;
-            NEW.subtipo := 'Consumo Caixinha';
-            NEW.forma_movimentacao := 'Caixinha';
-            NEW.status := 'Pago';
-            IF NEW.pote_id IS NULL AND v_cx.id IS NOT NULL THEN
-                NEW.pote_id := v_cx.pote_id;
-            END IF;
-            IF NEW.categoria_id IS NULL AND v_cx.id IS NOT NULL THEN
-                NEW.categoria_id := v_cx.categoria_id;
-            END IF;
-            IF NEW.subcategoria_id IS NULL AND v_cx.id IS NOT NULL THEN
-                NEW.subcategoria_id := v_cx.subcategoria_id;
+            IF LOWER(COALESCE(TRIM(NEW.subtipo), '')) = 'provisionamento' THEN
+                -- Etapa A: Aporte / Provisionamento na Caixinha
+                NEW.subtipo := 'Provisionamento';
+                IF NEW.pote_id IS NULL AND v_cx_id IS NOT NULL THEN
+                    NEW.pote_id := v_cx_pote_id;
+                END IF;
+                IF NEW.conta_id IS NULL AND v_cx_id IS NOT NULL THEN
+                    NEW.conta_id := v_cx_conta_id;
+                END IF;
+                IF NEW.categoria_id IS NULL AND v_cx_id IS NOT NULL THEN
+                    NEW.categoria_id := v_cx_cat_id;
+                END IF;
+                IF NEW.subcategoria_id IS NULL AND v_cx_id IS NOT NULL THEN
+                    NEW.subcategoria_id := v_cx_subcat_id;
+                END IF;
+            ELSE
+                -- Etapa B: Consumo usando saldo da Caixinha (Neutro no Banco e no Pote)
+                NEW.conta_id := NULL;
+                NEW.cartao_id := NULL;
+                NEW.fatura_id := NULL;
+                NEW.subtipo := 'Consumo Caixinha';
+                NEW.forma_movimentacao := 'Caixinha';
+                NEW.status := 'Pago';
+                IF NEW.pote_id IS NULL AND v_cx_id IS NOT NULL THEN
+                    NEW.pote_id := v_cx_pote_id;
+                END IF;
+                IF NEW.categoria_id IS NULL AND v_cx_id IS NOT NULL THEN
+                    NEW.categoria_id := v_cx_cat_id;
+                END IF;
+                IF NEW.subcategoria_id IS NULL AND v_cx_id IS NOT NULL THEN
+                    NEW.subcategoria_id := v_cx_subcat_id;
+                END IF;
             END IF;
         END IF;
     END IF;
@@ -99,13 +106,17 @@ BEGIN
     END IF;
     v_uid := COALESCE(NEW.user_id, auth.uid());
     IF TG_TABLE_NAME = 'lancamentos' THEN
-        IF NEW.caixinha_id IS NOT NULL AND v_cx.id IS NOT NULL THEN
-            v_m := v_cx.membro_id;
+        IF NEW.caixinha_id IS NOT NULL AND v_cx_id IS NOT NULL THEN
+            v_m := v_cx_membro_id;
         END IF;
         IF v_m IS NULL AND NEW.cartao_id IS NOT NULL THEN
             SELECT membro_id INTO v_m FROM public.cartoes WHERE id = NEW.cartao_id;
         END IF;
         IF v_m IS NULL AND NEW.conta_id IS NOT NULL THEN
+            SELECT membro_id INTO v_m FROM public.contas WHERE id = NEW.conta_id;
+        END IF;
+    ELSIF TG_TABLE_NAME = 'caixinhas_teto' THEN
+        IF NEW.conta_id IS NOT NULL THEN
             SELECT membro_id INTO v_m FROM public.contas WHERE id = NEW.conta_id;
         END IF;
     END IF;

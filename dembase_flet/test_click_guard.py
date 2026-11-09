@@ -36,7 +36,7 @@ class FakeBtn:
 
 def _preparar(orig):
     cg._orig_trigger = orig
-    cg._pagina_de = lambda c: c.page
+    cg._pagina_de = lambda c: getattr(c, "page", None)
     # overlay fake (não depende de árvore Flet)
     class Ovl:
         ignore_interactions = True
@@ -152,12 +152,71 @@ async def cenario_navegacao():
     print(f"OK  overlay aguarda fim da navegação ({dt:.2f}s) e depois some")
 
 
+async def cenario_controle_desanexado():
+    chamadas = []
+
+    async def orig(self, nome, dados, e=None):
+        chamadas.append(nome)
+
+    Ovl = _preparar(orig)
+    btn_sem_page = FakeBtn(None, lambda e: None)
+    res_click = await cg._trigger_event_guardado(btn_sem_page, "click", None)
+    res_hover = await cg._trigger_event_guardado(btn_sem_page, "hover", None)
+    assert res_click is None
+    assert res_hover is None
+    assert len(chamadas) == 0, "Controle desanexado nunca deve chamar handler original"
+    print("OK  controle desanexado descarta eventos silenciosamente sem chamar orig")
+
+
+async def cenario_desanexado_durante_flush():
+    chamadas = []
+
+    async def orig(self, nome, dados, e=None):
+        chamadas.append(nome)
+
+    Ovl = _preparar(orig)
+    page = FakePage()
+    btn = FakeBtn(page, lambda e: None)
+
+    # Simula desanexamento durante o sleep do flush
+    async def desanexar():
+        await asyncio.sleep(0.01)
+        btn.page = None
+
+    asyncio.create_task(desanexar())
+    res = await cg._trigger_event_guardado(btn, "click", None)
+    assert res is None
+    assert len(chamadas) == 0
+    print("OK  controle desanexado durante o flush descarta com sucesso")
+
+
+async def cenario_flet_real_container_desanexado(orig_pagina, orig_garantir, orig_trig):
+    # Restaura as funções reais do click_guard para testar com Flet nativo
+    cg._pagina_de = orig_pagina
+    cg._garantir_overlay = orig_garantir
+    cg._orig_trigger = orig_trig
+    orig_flet_trigger = ft.BaseControl._trigger_event
+    cg.instalar()
+    try:
+        container = ft.Container(on_click=lambda e: None)
+        # No Flet 1.0.1, invocar _trigger_event em controle desanexado falhava com RuntimeError
+        res1 = await container._trigger_event("click", {})
+        res2 = await container._trigger_event("hover", {})
+        assert res1 is None
+        assert res2 is None
+        print("OK  ft.Container real desanexado protegido contra RuntimeError do Flet 1.0.1")
+    finally:
+        ft.BaseControl._trigger_event = orig_flet_trigger
+
+
 async def main():
     orig_pagina, orig_garantir, orig_trig = cg._pagina_de, cg._garantir_overlay, cg._orig_trigger
     for cen in (cenario_sync_bloqueante, cenario_erro, cenario_async_lento,
-                cenario_async_rapido, cenario_navegacao):
+                cenario_async_rapido, cenario_navegacao,
+                cenario_controle_desanexado, cenario_desanexado_durante_flush):
         await cen()
         await asyncio.sleep(cg._JANELA_DESCARTE_S + 0.05)
+    await cenario_flet_real_container_desanexado(orig_pagina, orig_garantir, orig_trig)
     cg._pagina_de, cg._garantir_overlay, cg._orig_trigger = orig_pagina, orig_garantir, orig_trig
     print("TODOS OS TESTES DO CLICK_GUARD PASSARAM")
 

@@ -32,8 +32,8 @@ import services.supabase_client as db
 DASHBOARD_CHARTS_CATALOG: list[dict] = [
     {
         "id": "minhas_caixinhas",
-        "titulo": "Minhas Caixinhas",
-        "subtitulo": "Saldo disponível vs. provisão, consumo e vínculo aos 6 Potes",
+        "titulo": "Meus DemBoxes",
+        "subtitulo": "Provisões do mês, quitação de dívidas e vínculo aos 6 Potes",
         "icone": ft.Icons.INVENTORY_2_ROUNDED,
         "cor": "#10B981",
         "col": {"xs": 12, "sm": 12, "md": 6, "lg": 6},
@@ -231,12 +231,22 @@ def _chip_acao_header(label: str, cor: str, on_click) -> ft.Container:
 _MAPA_ICONES_CAIXINHAS = {
     "inventory_2": ft.Icons.INVENTORY_2_ROUNDED,
     "two_wheeler": ft.Icons.TWO_WHEELER_ROUNDED,
+    "home": ft.Icons.HOME_ROUNDED,
+    "person": ft.Icons.PERSON_ROUNDED,
+    "handshake": ft.Icons.HANDSHAKE_ROUNDED,
+    "warning": ft.Icons.WARNING_AMBER_ROUNDED,
+    "directions_car": ft.Icons.DIRECTIONS_CAR_ROUNDED,
+    "credit_card": ft.Icons.CREDIT_CARD_ROUNDED,
+    "account_balance": ft.Icons.ACCOUNT_BALANCE_ROUNDED,
+    "flag": ft.Icons.FLAG_ROUNDED,
     "local_gas_station": ft.Icons.LOCAL_GAS_STATION_ROUNDED,
     "shopping_cart": ft.Icons.SHOPPING_CART_ROUNDED,
     "restaurant": ft.Icons.RESTAURANT_ROUNDED,
     "local_pharmacy": ft.Icons.LOCAL_PHARMACY_ROUNDED,
     "celebration": ft.Icons.CELEBRATION_ROUNDED,
     "savings": ft.Icons.SAVINGS_ROUNDED,
+    "bolt": ft.Icons.BOLT_ROUNDED,
+    "school": ft.Icons.SCHOOL_ROUNDED,
 }
 
 
@@ -501,7 +511,7 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
             spacing=10,
             controls=[
                 _estado_vazio(
-                    "Crie caixinhas para provisionar verbas do período (ex: Mercado, Combustível, Lazer) vinculadas aos seus 6 Potes.",
+                    "Crie DemBoxes para provisionar despesas do mês (ex: Moto, Aluguel) ou juntar dinheiro para quitar dívidas.",
                     ft.Icons.INVENTORY_2_ROUNDED,
                 ),
                 ft.FilledButton(
@@ -510,7 +520,7 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
                         tight=True,
                         controls=[
                             ft.Icon(ft.Icons.ADD_ROUNDED, size=16, color=T.ON_PRIMARY),
-                            ft.Text("Criar / Gerenciar Caixinhas", size=12, weight=ft.FontWeight.BOLD, color=T.ON_PRIMARY),
+                            ft.Text("Criar / Gerenciar DemBoxes", size=12, weight=ft.FontWeight.BOLD, color=T.ON_PRIMARY),
                         ],
                     ),
                     on_click=lambda _: navegar(page, ROTA_CAIXINHAS),
@@ -599,40 +609,58 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
             )
         )
 
-        eh_pendente = (saldo_c <= 0 and gasto_c <= 0)
-        if eh_pendente:
-            cor_barra = f"{T.WARNING}80"
-            status_lbl = "Aguardando provisão"
-            cor_status = T.WARNING
-        elif pct_disp <= 0.20:
-            cor_barra = T.DESPESA
-            status_lbl = f"{pct_consumo * 100:.0f}% consumido"
-            cor_status = T.DESPESA
-        elif pct_disp <= 0.50:
-            cor_barra = T.WARNING
-            status_lbl = f"{pct_consumo * 100:.0f}% consumido"
-            cor_status = T.WARNING
-        else:
-            cor_barra = cor_c
-            status_lbl = f"{pct_disp * 100:.0f}% disponível"
-            cor_status = T.RECEITA
+        eh_divida = str(c.get("modalidade") or "provisao_mensal").strip().lower() in ("divida", "quitacao")
+        guardado_c = float(c.get("total_guardado", saldo_c + gasto_c) or 0)
+        falta_c = max(0.0, meta_c - guardado_c)
+        pct_conq = min(1.0, max(0.0, guardado_c / meta_c)) if meta_c > 0 else 0.0
 
-        # Botões de ação rápida inline (Abastecer/Encher e Gastar)
+        eh_pendente = (saldo_c <= 0 and gasto_c <= 0 and not eh_divida)
+        if eh_divida:
+            cor_barra = T.PRIMARY if pct_conq >= 1.0 else cor_c
+            if falta_c <= 0:
+                status_lbl = "100% Conquistado!"
+                cor_status = T.PRIMARY
+            else:
+                status_lbl = f"Falta {formatar_moeda(falta_c)} ({pct_conq * 100:.0f}%)"
+                cor_status = T.INFO if guardado_c > 0 else T.TEXT_MUTED
+            val_barra = pct_conq
+            txt_rodape_esq = f"Guardado: {formatar_moeda(guardado_c)} · {status_lbl}"
+        else:
+            if eh_pendente:
+                cor_barra = T.WARNING
+                status_lbl = "Aguardando provisão"
+                cor_status = T.WARNING
+            elif pct_disp <= 0.20:
+                cor_barra = T.DESPESA
+                status_lbl = f"{pct_consumo * 100:.0f}% consumido"
+                cor_status = T.DESPESA
+            elif pct_disp <= 0.50:
+                cor_barra = T.WARNING
+                status_lbl = f"{pct_consumo * 100:.0f}% consumido"
+                cor_status = T.WARNING
+            else:
+                cor_barra = cor_c
+                status_lbl = f"{pct_disp * 100:.0f}% disponível"
+                cor_status = T.RECEITA
+            val_barra = pct_disp if not eh_pendente else 0.0
+            txt_rodape_esq = f"Consumido: {formatar_moeda(gasto_c)} · {status_lbl}"
+
+        # Botões de ação rápida inline
         acoes_rapidas_item = [
             ft.Container(
                 padding=pad(h=8, v=4),
-                bgcolor=f"{T.PRIMARY}18",
+                bgcolor=T.SURFACE,
                 border_radius=8,
-                border=borda(1, f"{T.PRIMARY}40"),
+                border=borda(1, T.PRIMARY),
                 ink=True,
-                tooltip="Abastecer / Pagar Provisão desta Caixinha",
+                tooltip="Guardar dinheiro neste DemBox" if eh_divida else "Abastecer / Pagar Provisão deste DemBox",
                 on_click=lambda _, cx=c: _abrir_modal_abastecer_rapido(page, cx, pacote),
                 content=ft.Row(
                     spacing=3,
                     tight=True,
                     controls=[
                         ft.Icon(ft.Icons.ADD_ROUNDED, color=T.PRIMARY, size=13),
-                        ft.Text("Encher" if eh_pendente else "Abastecer", color=T.PRIMARY, size=10.5, weight=ft.FontWeight.BOLD),
+                        ft.Text("Guardar" if eh_divida else ("Encher" if eh_pendente else "Abastecer"), color=T.PRIMARY, size=10.5, weight=ft.FontWeight.BOLD),
                     ],
                 ),
             )
@@ -641,18 +669,18 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
             acoes_rapidas_item.append(
                 ft.Container(
                     padding=pad(h=8, v=4),
-                    bgcolor=f"{T.DESPESA}15",
+                    bgcolor=T.SURFACE,
                     border_radius=8,
-                    border=borda(1, f"{T.DESPESA}35"),
+                    border=borda(1, T.INFO if eh_divida else T.DESPESA),
                     ink=True,
-                    tooltip="Registrar gasto rápido nesta Caixinha",
+                    tooltip="Abater / Pagar ao credor" if eh_divida else "Registrar gasto rápido neste DemBox",
                     on_click=lambda _, cx=c: _abrir_modal_gastar_rapido(page, cx, pacote),
                     content=ft.Row(
                         spacing=3,
                         tight=True,
                         controls=[
-                            ft.Icon(ft.Icons.REMOVE_ROUNDED, color=T.DESPESA, size=13),
-                            ft.Text("Gastar", color=T.DESPESA, size=10.5, weight=ft.FontWeight.BOLD),
+                            ft.Icon(ft.Icons.CHECK_ROUNDED if eh_divida else ft.Icons.REMOVE_ROUNDED, color=T.INFO if eh_divida else T.DESPESA, size=13),
+                            ft.Text("Abater" if eh_divida else "Gastar", color=T.INFO if eh_divida else T.DESPESA, size=10.5, weight=ft.FontWeight.BOLD),
                         ],
                     ),
                 )
@@ -747,9 +775,9 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
                             ],
                         ),
                         ft.ProgressBar(
-                            value=pct_disp if not eh_pendente else 0.0,
+                            value=val_barra,
                             color=cor_barra,
-                            bgcolor=f"{T.BORDER}55",
+                            bgcolor=T.SURFACE,
                             height=5,
                             border_radius=3,
                         ),
@@ -758,7 +786,7 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
                             controls=[
                                 ft.Text(
-                                    f"Consumido: {formatar_moeda(gasto_c)} · {status_lbl}",
+                                    txt_rodape_esq,
                                     color=cor_status,
                                     size=10.5,
                                     weight=ft.FontWeight.W_500,
@@ -783,7 +811,7 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
                 ft.Column(
                     spacing=1,
                     controls=[
-                        ft.Text("Disponível nas Caixinhas", color=T.TEXT_MUTED, size=10),
+                        ft.Text("Disponível nos DemBoxes", color=T.TEXT_MUTED, size=10),
                         ft.Text(formatar_moeda(tot_saldo), color=T.PRIMARY, size=13, weight=ft.FontWeight.BOLD),
                     ],
                 ),

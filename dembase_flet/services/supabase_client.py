@@ -1797,46 +1797,27 @@ def invalidar_cache(tipo: str | None = None) -> None:
 
 
     elif tipo == "perfil":
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         _CACHE_RAM["caixinhas"] = {"dados": None, "expira_em": 0.0}
-
-
-
-
-
-
-
         _CACHE_RAM["perfil"] = {"dados": None, "expira_em": 0.0}
 
+    elif tipo in ("dashboard", "potes_resumo"):
+        _CACHE_RAM["potes_resumo"].clear()
 
+    elif tipo and tipo in _CACHE_RAM:
+        val_c = _CACHE_RAM.get(tipo)
+        if isinstance(val_c, dict) and "expira_em" in val_c:
+            _CACHE_RAM[tipo] = {"dados": None, "expira_em": 0.0}
+        elif isinstance(val_c, dict):
+            val_c.clear()
+        else:
+            _CACHE_RAM.pop(tipo, None)
 
-
-
-
-
-
-
-
-
-
-
-
+    elif tipo and str(tipo).startswith("cofres_investimento"):
+        _CACHE_RAM.pop(str(tipo), None)
 
     else:
+        for k_dyn in [k for k in list(_CACHE_RAM.keys()) if str(k).startswith("cofres_investimento") or k in ("membros", "caixa_livre_config")]:
+            _CACHE_RAM.pop(k_dyn, None)
 
 
 
@@ -26451,50 +26432,70 @@ def listar_caixinhas(forcar_atualizacao: bool = False, data_inicio: str | None =
 
 
 
+                # Busca movimentações acumuladas históricas (essencial para o modo Dívida / Quitação e Raio-X)
+                injecoes_acum: dict[str, float] = {}
+                deducoes_acum: dict[str, float] = {}
+                try:
+                    mov_all = (
+                        supabase.table("caixinhas_teto_movimentacoes")
+                        .select("caixinha_id, tipo, valor")
+                        .in_("caixinha_id", cids)
+                        .execute()
+                    )
+                    for m_it in (mov_all.data or []):
+                        m_cid = str(m_it.get("caixinha_id"))
+                        m_val = float(m_it.get("valor", 0) or 0)
+                        m_tp = str(m_it.get("tipo") or "").lower()
+                        if m_tp == "injecao":
+                            injecoes_acum[m_cid] = injecoes_acum.get(m_cid, 0.0) + m_val
+                        elif m_tp == "deducao":
+                            deducoes_acum[m_cid] = deducoes_acum.get(m_cid, 0.0) + m_val
+                except Exception:
+                    pass
+
                 for c in dados:
-
-
-
                     cid_c = str(c.get("id"))
-
-
-
                     meta_val = float(c.get("valor_meta", 0) or 0)
-
-
-
-                    saldo_banco = float(c.get("saldo_atual", 0) if c.get("saldo_atual") is not None else meta_val)
-
-
-
+                    saldo_banco = float(c.get("saldo_atual", 0) if c.get("saldo_atual") is not None else 0.0)
                     gasto_vinculado = despesas_por_caixinha.get(cid_c, 0.0)
-
-
-
                     c["total_despesas_vinculadas"] = gasto_vinculado
 
+                    mod_raw = str(c.get("modalidade") or "provisao_mensal").strip().lower()
+                    eh_divida = mod_raw in ("divida", "quitacao")
+                    c["modalidade"] = "divida" if eh_divida else "provisao_mensal"
 
+                    inj_tot = injecoes_acum.get(cid_c, 0.0)
+                    ded_tot = max(float(c.get("valor_abatido", 0) or 0), deducoes_acum.get(cid_c, 0.0))
 
-
-
-
-
-                    # O saldo atual é mantido e auditado em tempo real pelos triggers no banco
-
-
-
-                    if data_inicio and data_fim:
-                        provisoes_c = [p for p in itens_prov if str(p.get("caixinha_id")) == cid_c]
-                        p_pago = sum(float(p.get("valor", 0) or 0) for p in provisoes_c if p.get("status") == "Pago")
-                        p_pendente = sum(float(p.get("valor", 0) or 0) for p in provisoes_c if p.get("status") == "Pendente")
-                        prov_tot = (p_pago + p_pendente) if (p_pago + p_pendente) > 0 else meta_val
-                        saldo_calc = max(0.0, p_pago - gasto_vinculado) if p_pago > 0 else 0.0
-                        c["saldo_atual"] = saldo_calc
-                        c["valor_provisionado_periodo"] = prov_tot
-                    else:
+                    if eh_divida:
+                        # Modo Dívida / Acumulação: saldo cumulativo contínuo (NÃO zera na virada do mês)
+                        abatido_acum = max(ded_tot, gasto_vinculado)
+                        guardado_acum = max(inj_tot, saldo_banco + abatido_acum)
                         c["saldo_atual"] = saldo_banco
                         c["valor_provisionado_periodo"] = meta_val
-                    c["total_gasto"] = gasto_vinculado
+                        c["total_guardado"] = guardado_acum
+                        c["total_abatido"] = abatido_acum
+                        c["total_gasto"] = abatido_acum
+                        c["falta_guardar"] = max(0.0, meta_val - guardado_acum)
+                        c["pct_conquista"] = min(1.0, max(0.0, guardado_acum / meta_val)) if meta_val > 0 else 0.0
+                    else:
+                        # Modo Provisão Mensal (Moto, Aluguel, etc.)
+                        if data_inicio and data_fim:
+                            provisoes_c = [p for p in itens_prov if str(p.get("caixinha_id")) == cid_c]
+                            p_pago = sum(float(p.get("valor", 0) or 0) for p in provisoes_c if p.get("status") == "Pago")
+                            p_pendente = sum(float(p.get("valor", 0) or 0) for p in provisoes_c if p.get("status") == "Pendente")
+                            prov_tot = (p_pago + p_pendente) if (p_pago + p_pendente) > 0 else meta_val
+                            saldo_calc = max(0.0, p_pago - gasto_vinculado) if p_pago > 0 else 0.0
+                            c["saldo_atual"] = saldo_calc
+                            c["valor_provisionado_periodo"] = prov_tot
+                        else:
+                            c["saldo_atual"] = saldo_banco
+                            c["valor_provisionado_periodo"] = meta_val
+                        c["total_gasto"] = gasto_vinculado
+                        c["total_guardado"] = max(inj_tot, float(c["saldo_atual"]) + gasto_vinculado)
+                        c["total_abatido"] = gasto_vinculado
+                        c["falta_guardar"] = max(0.0, meta_val - float(c["saldo_atual"]))
+                        c["pct_conquista"] = min(1.0, max(0.0, float(c["saldo_atual"]) / meta_val)) if meta_val > 0 else 0.0
 
 
 
@@ -26791,79 +26792,66 @@ def criar_caixinha(dados: dict) -> dict:
 
 
 
-    # A caixinha nasce com saldo_atual = 0.00 (esperando pagamento da provisão)
+    aporte_inicial = float(payload.pop("aporte_inicial", 0) or 0)
+    modalidade = str(payload.get("modalidade") or "provisao_mensal").strip().lower()
+    eh_divida = modalidade in ("divida", "quitacao")
+    payload["modalidade"] = "divida" if eh_divida else "provisao_mensal"
+    if eh_divida:
+        payload["recorrente"] = False
 
-
-
+    # O DemBox nasce com saldo_atual = 0.00
     payload["saldo_atual"] = 0.00
 
-
-
     if "conta_id" in payload and not payload["conta_id"]:
-
-
-
         payload["conta_id"] = None
 
-
-
     if "conta_destino_id" in payload and not payload["conta_destino_id"]:
-
-
-
         payload["conta_destino_id"] = None
 
-
-
-
-
-
+    if "membro_id" in payload and not payload["membro_id"]:
+        payload["membro_id"] = None
 
     try:
-
-
-
         resp = supabase.table("caixinhas_teto").insert(payload).execute()
-
-
-
     except Exception as ex_ins:
-
-
-
         msg_erro = _tratar_erro_caixinha(ex_ins)
-
-
-
         raise RuntimeError(msg_erro) from ex_ins
 
-
-
-
-
-
-
     nova_caixinha = resp.data[0] if resp and resp.data else {}
-
-
-
     cid = nova_caixinha.get("id")
 
-
-
-
-
-
-
-    # Gera automaticamente a provisão PENDENTE para a data definida pelo usuário (ex: dia 5)
-
-
-
-    if cid and payload.get("conta_id"):
-
-
-
-        _sincronizar_lancamento_provisao(cid, payload)
+    if cid:
+        if eh_divida:
+            # No modo Dívida / Acumulação, não agenda despesa pendente do valor total;
+            # se o usuário informou um aporte inicial para guardar agora, injeta imediatamente!
+            if aporte_inicial > 0:
+                injetar_saldo_caixinha(
+                    caixinha_id=str(cid),
+                    valor=aporte_inicial,
+                    descricao=f"Guardado p/ Dívida · {payload.get('nome', 'Dívida')}",
+                    conta_id=payload.get("conta_id"),
+                    pote_id=payload.get("pote_id"),
+                    data_aporte=str(payload.get("data_provisao") or date.today().isoformat()),
+                    gerar_despesa=True,
+                    status_despesa="Pago",
+                )
+                nova_caixinha = obter_caixinha(str(cid)) or nova_caixinha
+        else:
+            # No modo Provisão do Mês: se houver aporte imediato pago ou agendamento pendente
+            if aporte_inicial > 0:
+                injetar_saldo_caixinha(
+                    caixinha_id=str(cid),
+                    valor=aporte_inicial,
+                    descricao=f"Provisão DemBox · {payload.get('nome', 'DemBox')}",
+                    conta_id=payload.get("conta_id"),
+                    pote_id=payload.get("pote_id"),
+                    data_aporte=str(payload.get("data_provisao") or date.today().isoformat()),
+                    gerar_despesa=True,
+                    status_despesa="Pago",
+                )
+                nova_caixinha = obter_caixinha(str(cid)) or nova_caixinha
+            elif payload.get("conta_id"):
+                _sincronizar_lancamento_provisao(cid, payload)
 
 
 
@@ -27220,10 +27208,10 @@ def atualizar_caixinha(caixinha_id: str, dados: dict) -> dict:
 
 
     payload.pop("id", None)
-
-
-
     payload.pop("user_id", None)
+    payload.pop("aporte_inicial", None)
+    if "membro_id" in payload and not payload["membro_id"]:
+        payload["membro_id"] = None
 
 
 
@@ -27355,11 +27343,9 @@ def atualizar_caixinha(caixinha_id: str, dados: dict) -> dict:
 
 
 
-    # Sincroniza o lançamento de provisionamento pendente (data, valor, conta, etc.)
-
-
-
-    _sincronizar_lancamento_provisao(caixinha_id, payload)
+    # Sincroniza o lançamento de provisionamento pendente apenas se for Provisão Mensal
+    if str(payload.get("modalidade") or "provisao_mensal").strip().lower() not in ("divida", "quitacao"):
+        _sincronizar_lancamento_provisao(caixinha_id, payload)
 
 
 
@@ -27387,806 +27373,292 @@ def atualizar_caixinha(caixinha_id: str, dados: dict) -> dict:
 
 
 
-def pagar_provisao_caixinha(caixinha_id: str) -> dict:
-
-
-
+def pagar_provisao_caixinha(
+    caixinha_id: str,
+    conta_id: str | None = None,
+    pote_id: str | None = None,
+    valor: float | None = None,
+    data_pagamento: str | None = None,
+) -> dict:
     """
-
-
-
-    Efetiva o pagamento da provisão da caixinha:
-
-
-
-    Atualiza o lançamento de provisionamento pendente para 'Pago'.
-
-
-
-    O trigger no banco de dados automaticamente injeta o saldo e enche o cofrinho!
-
-
-
+    Efetiva o pagamento da provisão da caixinha (Etapa A):
+    - Atualiza o lançamento de provisionamento pendente mais próximo para 'Pago',
+      aplicando conta_id, pote_id, valor e data_pagamento escolhidos no modal.
+    - O trigger no banco de dados automaticamente injeta o saldo na caixinha,
+      debita a Conta Bancária e contabiliza no Pote selecionado!
+    - Caso não exista provisão pendente agendada, realiza o abastecimento imediato
+      via injetar_saldo_caixinha com status 'Pago'.
     """
-
-
-
+    from datetime import date
     cid = str(caixinha_id)
-
-
+    dt_pag = str(data_pagamento or date.today().isoformat())[:10]
 
     try:
+        # Atualiza vínculos padrão da caixinha se informados pelo usuário
+        upd_cx = {}
+        if conta_id:
+            upd_cx["conta_id"] = str(conta_id)
+        if pote_id:
+            upd_cx["pote_id"] = str(pote_id)
+        if upd_cx:
+            try:
+                supabase.table("caixinhas_teto").update(upd_cx).eq("id", cid).execute()
+            except Exception:
+                pass
 
-
-
-        # Busca o lançamento de provisionamento pendente
-
-
-
+        # Busca o lançamento de provisionamento pendente do ciclo atual / mais próximo
         l_resp = (
-
-
-
             supabase.table("lancamentos")
-
-
-
-            .select("id, valor, data, conta_id, tipo, destino_id")
-
-
-
+            .select("id, valor, data, conta_id, pote_id, tipo, destino_id")
             .eq("caixinha_id", cid)
-
-
-
             .eq("subtipo", "Provisionamento")
-
-
-
             .eq("status", "Pendente")
-
-
-
-            .order("criado_em", desc=True)
-
-
-
+            .order("data", desc=False)
             .limit(1)
-
-
-
             .execute()
-
-
-
         )
-
-
-
         lanc = l_resp.data[0] if l_resp and l_resp.data else None
 
-
-
         if lanc:
-
-
-
             lid = lanc["id"]
+            val_final = float(valor) if (valor is not None and float(valor) > 0) else float(lanc.get("valor", 0) or 0)
+            payload_upd = {
+                "status": "Pago",
+                "valor": val_final,
+                "data": dt_pag,
+            }
+            if conta_id:
+                payload_upd["conta_id"] = str(conta_id)
+            if pote_id:
+                payload_upd["pote_id"] = str(pote_id)
 
-
-
-            supabase.table("lancamentos").update({"status": "Pago"}).eq("id", lid).execute()
-
-
-
+            supabase.table("lancamentos").update(payload_upd).eq("id", lid).execute()
             recalcular_saldo_caixinha(cid)
-
-
-
             invalidar_cache("caixinhas")
-
-
-
+            invalidar_cache("resumo_caixinhas")
             invalidar_cache("lancamentos")
-
-
-
             invalidar_cache("contas")
-
-
-
-            return {"sucesso": True, "lancamento_id": lid, "valor": lanc.get("valor")}
-
-
-
+            invalidar_cache("potes")
+            invalidar_cache("potes_resumo")
+            invalidar_cache("dashboard")
+            invalidar_cache("calendario")
+            return {"sucesso": True, "lancamento_id": lid, "valor": val_final}
         else:
-
-
-
-            # Fallback: se não houver lançamento pendente, injeta o valor teto diretamente
-
-
-
+            # Fallback: se não houver lançamento pendente, injeta diretamente como Pago
             c = obter_caixinha(cid)
-
-
-
             if c:
-
-
-
-                val = float(c.get("valor_meta", 0) or 0)
-
-
-
-                cta = c.get("conta_id")
-
-
-
+                val_final = float(valor) if (valor is not None and float(valor) > 0) else float(c.get("valor_meta", 0) or 0)
+                cta = conta_id or c.get("conta_id")
+                pot = pote_id or c.get("pote_id")
                 return injetar_saldo_caixinha(
-
-
-
                     caixinha_id=cid,
-
-
-
-                    valor=val,
-
-
-
-                    descricao=f"Provisão Caixinha · {c.get('nome')}",
-
-
-
+                    valor=val_final,
+                    descricao=f"Provisão Caixinha · {c.get('nome', 'Caixinha')}",
                     conta_id=cta,
-
-
-
+                    pote_id=pot,
+                    data_aporte=dt_pag,
                     gerar_despesa=True,
-
-
-
+                    status_despesa="Pago",
                 )
-
-
-
             return {"erro": "Caixinha não encontrada"}
-
-
-
     except Exception as ex:
-
-
-
         msg_erro = _tratar_erro_caixinha(ex)
-
-
-
         raise RuntimeError(msg_erro) from ex
 
 
-
-
-
-
-
-
-
-
-
 def deletar_caixinha(caixinha_id: str) -> bool:
-
-
-
     """Inativa uma caixinha (soft delete) e remove provisões pendentes não pagas."""
-
-
-
     try:
-
-
-
         resp = supabase.table("caixinhas_teto").update({"ativo": False}).eq("id", str(caixinha_id)).execute()
-
-
-
         try:
-
-
-
             (
-
                 supabase.table("lancamentos")
-
                 .delete()
-
                 .eq("caixinha_id", str(caixinha_id))
-
                 .eq("status", "Pendente")
-
                 .ilike("subtipo", "%provisionamento%")
-
                 .execute()
-
             )
-
-
-
             invalidar_cache("lancamentos")
-
-
-
         except Exception:
-
-
-
             pass
-
-
-
     except Exception as ex_del:
-
-
-
         msg_erro = _tratar_erro_caixinha(ex_del)
-
-
-
         raise RuntimeError(msg_erro) from ex_del
 
-
-
-
-
-
-
     invalidar_cache("caixinhas")
-
-
-
+    invalidar_cache("resumo_caixinhas")
     invalidar_cache("dashboard")
-
-
-
     return bool(resp and resp.data)
 
 
-
-
-
-
-
-
-
-
-
 def injetar_saldo_caixinha(
-
-
-
     caixinha_id: str,
-
-
-
     valor: float,
-
-
-
     descricao: str = "",
-
-
-
     conta_id: str | None = None,
-
-
-
+    pote_id: str | None = None,
     data_aporte: str | None = None,
-
-
-
-    gerar_despesa: bool = True
-
-
-
+    gerar_despesa: bool = True,
+    status_despesa: str = "Pago",
 ) -> dict:
-
-
-
     """
-
-
-
-    Aumenta o saldo provisionado da caixinha (aporte).
-
-
-
-    Se conta_id for fornecido e gerar_despesa=True, registra o provisionamento
-
-
-
-    como Despesa com status 'Pendente' (reserva de capital / previsão de gastos)
-
-
-
-    vinculada ao Pote correspondente da caixinha, sem debitar o saldo real da conta imediatamente.
-
-
-
+    Aumenta o saldo disponível da caixinha (Etapa A - Abastecimento / Aporte).
+    - Se gerar_despesa=True e status_despesa='Pago' (padrão do modal Abastecer),
+      insere o lançamento de Provisionamento com status='Pago', debitando a Conta Bancária,
+      contabilizando no Pote selecionado e enchendo a Caixinha automaticamente via trigger SQL
+      (sem duplicar movimentações em caixinhas_teto_movimentacoes).
     """
-
-
-
     v = float(valor)
-
-
-
     if v <= 0:
-
-
-
         return {"erro": "Valor deve ser maior que zero"}
 
-
-
-
-
-
-
     from datetime import date
-
-
-
-    dt_final = str(data_aporte or date.today().isoformat())
-
-
-
-
-
-
+    dt_final = str(data_aporte or date.today().isoformat())[:10]
 
     c = obter_caixinha(caixinha_id)
+    if not c:
+        return {"erro": "Caixinha não encontrada"}
 
+    cid = str(caixinha_id)
+    pote_id_alvo = pote_id or c.get("pote_id")
+    conta_id_alvo = conta_id or c.get("conta_id")
+    cat_id_alvo = c.get("categoria_id")
+    subcat_id_alvo = c.get("subcategoria_id")
+    nome_caixinha = c.get("nome", "Caixinha")
+    ant_saldo = float(c.get("saldo_atual", 0) or 0)
 
-
-    pote_id_alvo = c.get("pote_id") if c else None
-
-
-
-    conta_id_alvo = conta_id or (c.get("conta_id") if c else None)
-
-
-
-    cat_id_alvo = c.get("categoria_id") if c else None
-
-
-
-    subcat_id_alvo = c.get("subcategoria_id") if c else None
-
-
-
-    nome_caixinha = c.get("nome", "Caixinha") if c else "Caixinha"
-
-
-
-
-
-
+    # Atualiza vínculos padrão da caixinha se informados
+    upd_cx = {}
+    if conta_id and str(conta_id) != str(c.get("conta_id") or ""):
+        upd_cx["conta_id"] = str(conta_id)
+    if pote_id and str(pote_id) != str(c.get("pote_id") or ""):
+        upd_cx["pote_id"] = str(pote_id)
+    if upd_cx:
+        try:
+            supabase.table("caixinhas_teto").update(upd_cx).eq("id", cid).execute()
+        except Exception:
+            pass
 
     resultado = {}
-
-
-
-    try:
-
-
-
-        resp = supabase.rpc("injetar_saldo_caixinha", {
-
-
-
-            "p_caixinha_id": str(caixinha_id),
-
-
-
-            "p_valor": v,
-
-
-
-            "p_descricao": str(descricao or "Aporte de saldo"),
-
-
-
-        }).execute()
-
-
-
-        resultado = resp.data or {}
-
-
-
-    except Exception:
-
-
-
-        # Fallback se a RPC ainda não estiver instalada no Supabase
-
-
-
-        if c:
-
-
-
-            ant = float(c.get("saldo_atual", 0) or 0)
-
-
-
-            novo = ant + v
-
-
-
-            atualizar_caixinha(caixinha_id, {"saldo_atual": novo})
-
-
-
-            try:
-
-
-
-                user = usuario_atual()
-
-
-
-                supabase.table("caixinhas_teto_movimentacoes").insert({
-
-
-
-                    "caixinha_id": str(caixinha_id),
-
-
-
-                    "user_id": user.id if user else None,
-
-
-
-                    "tipo": "injecao",
-
-
-
-                    "valor": v,
-
-
-
-                    "saldo_anterior": ant,
-
-
-
-                    "saldo_posterior": novo,
-
-
-
-                    "descricao": descricao or "Aporte de saldo",
-
-
-
-                    "data": dt_final,
-
-
-
-                }).execute()
-
-
-
-            except Exception:
-
-
-
-                pass
-
-
-
-            resultado = {"sucesso": True, "saldo_anterior": ant, "saldo_atual": novo, "valor_injetado": v}
-
-
-
-        else:
-
-
-
-            return {"erro": "Caixinha não encontrada"}
-
-
-
-
-
-
-
-    # Registra despesa pendente de provisionamento (reserva de capital / previsão sem abater saldo real)
-
-
+    lancamento_criado_pago = False
 
     if gerar_despesa and v > 0:
-
-
-
         try:
-
-
-
             user = usuario_atual()
-
-
-
+            status_lanc = status_despesa if status_despesa in ("Pago", "Pendente") else "Pago"
             dados_despesa = {
-
-
-
                 "tipo": "Despesa",
-
-
-
                 "subtipo": "Provisionamento",
-
-
-
                 "forma_movimentacao": "Débito",
-
-
-
                 "valor": v,
-
-
-
                 "data": dt_final,
-
-
-
-                "status": "Pendente",
-
-
-
-                "descricao": f"Provisão Caixinha · {nome_caixinha}",
-
-
-
-                "caixinha_id": str(caixinha_id),
-
-
-
-                "conta_id": conta_id_alvo or None,
-
-
-
-                "pote_id": pote_id_alvo or None,
-
-
-
+                "status": status_lanc,
+                "descricao": str(descricao or f"Provisão Caixinha · {nome_caixinha}"),
+                "caixinha_id": cid,
+                "conta_id": str(conta_id_alvo) if conta_id_alvo else None,
+                "pote_id": str(pote_id_alvo) if pote_id_alvo else None,
                 "categoria_id": cat_id_alvo or None,
-
-
-
                 "subcategoria_id": subcat_id_alvo or None,
-
-
-
             }
-
-
-
             if user:
-
-
-
                 dados_despesa["user_id"] = user.id
-
-
-
                 dados_despesa["perfil_id"] = user.id
 
-
-
-            supabase.table("lancamentos").insert(dados_despesa).execute()
-
-
-
-            invalidar_cache("lancamentos")
-
-
-
-            invalidar_cache("contas")
-
-
-
-            invalidar_cache("potes_resumo")
-
-
-
+            l_ins = supabase.table("lancamentos").insert(dados_despesa).execute()
+            lid = l_ins.data[0].get("id") if (l_ins and l_ins.data) else None
+            if status_lanc == "Pago" and lid:
+                # O trigger trg_provisionamento_sincronizar_caixinha já inseriu a injeção e recalculou o saldo!
+                lancamento_criado_pago = True
+                resultado = {
+                    "sucesso": True,
+                    "caixinha_id": cid,
+                    "lancamento_id": lid,
+                    "saldo_anterior": ant_saldo,
+                    "saldo_atual": ant_saldo + v,
+                    "valor_injetado": v,
+                }
         except Exception as ex_lanc:
+            print(f"[SupabaseClient] Erro ao registrar despesa do aporte na caixinha: {ex_lanc}")
 
+    if not lancamento_criado_pago:
+        try:
+            resp = supabase.rpc("injetar_saldo_caixinha", {
+                "p_caixinha_id": cid,
+                "p_valor": v,
+                "p_descricao": str(descricao or "Aporte de saldo"),
+            }).execute()
+            resultado = resp.data or {}
+        except Exception:
+            novo = ant_saldo + v
+            atualizar_caixinha(cid, {"saldo_atual": novo})
+            try:
+                user = usuario_atual()
+                supabase.table("caixinhas_teto_movimentacoes").insert({
+                    "caixinha_id": cid,
+                    "user_id": user.id if user else None,
+                    "tipo": "injecao",
+                    "valor": v,
+                    "saldo_anterior": ant_saldo,
+                    "saldo_posterior": novo,
+                    "descricao": descricao or "Aporte de saldo",
+                    "data": dt_final,
+                }).execute()
+            except Exception:
+                pass
+            resultado = {"sucesso": True, "saldo_anterior": ant_saldo, "saldo_atual": novo, "valor_injetado": v}
 
-
-            print(f"[SupabaseClient] Erro ao registrar despesa do aporte: {ex_lanc}")
-
-
-
-
-
-
-
-    recalcular_saldo_caixinha(caixinha_id)
-
-
-
+    recalcular_saldo_caixinha(cid)
     invalidar_cache("caixinhas")
-
-
-
+    invalidar_cache("resumo_caixinhas")
+    invalidar_cache("lancamentos")
+    invalidar_cache("contas")
+    invalidar_cache("potes")
+    invalidar_cache("potes_resumo")
     invalidar_cache("dashboard")
-
-
-
+    invalidar_cache("calendario")
     return resultado
 
 
-
-
-
-
-
-
-
-
-
 def deduzir_saldo_caixinha(caixinha_id: str, valor: float, descricao: str = "") -> dict:
-
-
-
     """Subtrai valor do saldo da caixinha (gasto/dedução). Não debita o banco novamente."""
-
-
-
     try:
-
-
-
         resp = supabase.rpc("deduzir_saldo_caixinha", {
-
-
-
             "p_caixinha_id": str(caixinha_id),
-
-
-
             "p_valor": float(valor),
-
-
-
             "p_descricao": str(descricao or "Gasto registrado"),
-
-
-
         }).execute()
-
-
-
         recalcular_saldo_caixinha(caixinha_id)
-
-
-
         invalidar_cache("caixinhas")
-
-
-
+        invalidar_cache("resumo_caixinhas")
+        invalidar_cache("dashboard")
         return resp.data or {}
-
-
-
     except Exception:
-
-
-
-        # Fallback se a RPC ainda não estiver instalada no Supabase
-
-
-
         c = obter_caixinha(caixinha_id)
-
-
-
         if c:
-
-
-
             from datetime import date
-
-
-
             ant = float(c.get("saldo_atual", 0) or 0)
-
-
-
             novo = max(0.0, ant - float(valor))
-
-
-
             atualizar_caixinha(caixinha_id, {"saldo_atual": novo})
-
-
-
             try:
-
-
-
                 user = usuario_atual()
-
-
-
                 supabase.table("caixinhas_teto_movimentacoes").insert({
-
-
-
                     "caixinha_id": str(caixinha_id),
-
-
-
                     "user_id": user.id if user else None,
-
-
-
                     "tipo": "deducao",
-
-
-
                     "valor": float(valor),
-
-
-
                     "saldo_anterior": ant,
-
-
-
                     "saldo_posterior": novo,
-
-
-
                     "descricao": descricao or "Gasto registrado",
-
-
-
                     "data": str(date.today()),
-
-
-
                 }).execute()
-
-
-
             except Exception:
-
-
-
                 pass
-
-
-
             invalidar_cache("caixinhas")
-
-
-
+            invalidar_cache("resumo_caixinhas")
+            invalidar_cache("dashboard")
             return {"sucesso": True, "saldo_anterior": ant, "saldo_atual": novo, "valor_deduzido": valor}
-
-
-
         return {"erro": "Caixinha não encontrada"}
-
-
-
-
-
-
-
-
-
 
 
 def listar_caixinhas_opcoes() -> list[dict]:
@@ -28282,7 +27754,7 @@ def obter_resumo_caixinhas(
     data_inicio: str | None = None,
     data_fim: str | None = None,
 ) -> dict:
-    """Calcula os KPIs consolidados de todas as caixinhas ativas com dados em tempo real para o periodo."""
+    """Calcula os KPIs consolidados de todos os DemBoxes ativos (Provisões Mensais + Quitação de Dívidas)."""
     subchave = f"{data_inicio}_{data_fim}" if (data_inicio or data_fim) else "padrao"
     if not forcar_atualizacao:
         cached = obter_cache("resumo_caixinhas", subchave=subchave)
@@ -28293,13 +27765,16 @@ def obter_resumo_caixinhas(
     from datetime import date
     hoje = date.today()
 
+    provisoes = [c for c in itens if c.get("modalidade") != "divida"]
+    dividas = [c for c in itens if c.get("modalidade") == "divida"]
+
     tot_meta = sum(float(c.get("valor_provisionado_periodo", c.get("valor_meta", 0)) or 0) for c in itens)
     tot_saldo = sum(float(c.get("saldo_atual", 0) or 0) for c in itens)
     tot_gasto = sum(float(c.get("total_gasto", 0) or 0) for c in itens)
     pct_rest = (tot_saldo / tot_meta * 100) if tot_meta > 0 else 0.0
 
     ritmo_total = 0.0
-    for c in itens:
+    for c in provisoes:
         s = float(c.get("saldo_atual", 0) or 0)
         dt_str = c.get("data_alvo")
         if dt_str and s > 0:
@@ -28311,12 +27786,21 @@ def obter_resumo_caixinhas(
             except Exception:
                 pass
 
+    tot_dividas_meta = sum(float(c.get("valor_meta", 0) or 0) for c in dividas)
+    tot_dividas_guardado = sum(float(c.get("total_guardado", c.get("saldo_atual", 0)) or 0) for c in dividas)
+    tot_dividas_falta = sum(float(c.get("falta_guardar", 0) or 0) for c in dividas)
+
     res = {
         "total_meta": tot_meta,
         "total_saldo": tot_saldo,
         "total_gasto": tot_gasto,
         "percentual_restante": pct_rest,
         "qtd_caixinhas": len(itens),
+        "qtd_provisoes": len(provisoes),
+        "qtd_dividas": len(dividas),
+        "total_dividas_meta": tot_dividas_meta,
+        "total_dividas_guardado": tot_dividas_guardado,
+        "total_dividas_falta": tot_dividas_falta,
         "ritmo_diario_total": ritmo_total,
         "caixinhas": itens,
         "data_inicio": data_inicio,
@@ -28324,6 +27808,160 @@ def obter_resumo_caixinhas(
     }
     salvar_cache("resumo_caixinhas", res, subchave=subchave, ttl=TTL_CADASTROS_BASE)
     return res
+
+
+def obter_extrato_caixinha(caixinha_id: str) -> dict:
+    """
+    Retorna o Raio-X completo de um DemBox (Provisão Mensal ou Dívida/Quitação):
+    - Recalcula o saldo em tempo real.
+    - Lista todo o histórico cronológico de depósitos (+ Guardar / Provisão) e saídas (Abatimentos / Gastos).
+    - Calcula métricas exatas: total_guardado, total_abatido, saldo_atual, falta_guardar e pct_conquista.
+    """
+    if not caixinha_id:
+        return {}
+    cid = str(caixinha_id)
+    try:
+        recalcular_saldo_caixinha(cid)
+    except Exception:
+        pass
+
+    c = obter_caixinha(cid)
+    if not c:
+        return {}
+
+    try:
+        contas_todas = listar_contas() or []
+        mapa_contas = {str(cta.get("id")): cta.get("nome", "Conta") for cta in contas_todas if cta.get("id")}
+    except Exception:
+        mapa_contas = {}
+
+    movs = []
+    try:
+        m_resp = (
+            supabase.table("caixinhas_teto_movimentacoes")
+            .select("*")
+            .eq("caixinha_id", cid)
+            .order("data", desc=True)
+            .order("criado_em", desc=True)
+            .execute()
+        )
+        movs = m_resp.data or []
+    except Exception:
+        movs = []
+
+    lancs = []
+    try:
+        l_resp = (
+            supabase.table("lancamentos")
+            .select("id, valor, data, descricao, subtipo, status, tipo, conta_id, criado_em")
+            .eq("caixinha_id", cid)
+            .order("data", desc=True)
+            .order("criado_em", desc=True)
+            .execute()
+        )
+        lancs = l_resp.data or []
+    except Exception:
+        lancs = []
+
+    mapa_lancs = {str(l.get("id")): l for l in lancs if l.get("id")}
+    lanc_ids_vistos = set()
+    historico = []
+
+    total_guardado = 0.0
+    total_abatido = 0.0
+
+    for m in movs:
+        lid = str(m.get("lancamento_id")) if m.get("lancamento_id") else None
+        if lid:
+            lanc_ids_vistos.add(lid)
+        l_ref = mapa_lancs.get(lid) if lid else None
+        tp_mov = str(m.get("tipo") or "").lower()
+        val_m = float(m.get("valor", 0) or 0)
+        dt_m = str((l_ref.get("data") if l_ref else None) or m.get("data") or "")[:10]
+        desc_m = (l_ref.get("descricao") if l_ref else None) or m.get("descricao") or ("Aporte / Guardado" if tp_mov == "injecao" else "Abatimento / Gasto")
+        cta_id = (l_ref.get("conta_id") if l_ref else None) or c.get("conta_id")
+        cta_nome = mapa_contas.get(str(cta_id)) if cta_id else None
+
+        if tp_mov == "injecao":
+            natureza = "entrada"
+            total_guardado += val_m
+        else:
+            natureza = "saida"
+            total_abatido += val_m
+
+        historico.append({
+            "id": str(m.get("id")),
+            "lancamento_id": lid,
+            "data": dt_m,
+            "descricao": desc_m,
+            "valor": val_m,
+            "natureza": natureza,
+            "status": "Pago",
+            "conta_nome": cta_nome,
+            "criado_em": str(m.get("criado_em") or ""),
+        })
+
+    for l in lancs:
+        lid = str(l.get("id"))
+        if lid in lanc_ids_vistos:
+            continue
+        val_l = float(l.get("valor", 0) or 0)
+        subt_l = str(l.get("subtipo") or "").strip().lower()
+        st_l = str(l.get("status") or "Pago")
+        dt_l = str(l.get("data") or "")[:10]
+        desc_l = l.get("descricao") or ("Provisão" if subt_l == "provisionamento" else "Consumo / Abatimento")
+        cta_id = l.get("conta_id") or c.get("conta_id")
+        cta_nome = mapa_contas.get(str(cta_id)) if cta_id else None
+
+        if subt_l == "provisionamento":
+            if st_l == "Pago":
+                natureza = "entrada"
+                total_guardado += val_l
+            else:
+                natureza = "pendente"
+        else:
+            natureza = "saida"
+            total_abatido += val_l
+
+        historico.append({
+            "id": lid,
+            "lancamento_id": lid,
+            "data": dt_l,
+            "descricao": desc_l,
+            "valor": val_l,
+            "natureza": natureza,
+            "status": st_l,
+            "conta_nome": cta_nome,
+            "criado_em": str(l.get("criado_em") or ""),
+        })
+
+    historico.sort(key=lambda x: (str(x.get("data") or ""), str(x.get("criado_em") or "")), reverse=True)
+
+    meta_val = float(c.get("valor_meta", 0) or 0)
+    saldo_atual = max(0.0, total_guardado - total_abatido)
+    mod_raw = str(c.get("modalidade") or "provisao_mensal").strip().lower()
+    eh_divida = mod_raw in ("divida", "quitacao")
+    falta_guardar = max(0.0, meta_val - (total_guardado if eh_divida else saldo_atual))
+    base_pct = total_guardado if eh_divida else saldo_atual
+    pct_conquista = min(1.0, max(0.0, base_pct / meta_val)) if meta_val > 0 else 0.0
+
+    c["modalidade"] = "divida" if eh_divida else "provisao_mensal"
+    c["saldo_atual"] = saldo_atual
+    c["total_guardado"] = total_guardado
+    c["total_abatido"] = total_abatido
+    c["falta_guardar"] = falta_guardar
+    c["pct_conquista"] = pct_conquista
+
+    return {
+        "caixinha": c,
+        "historico": historico,
+        "valor_meta": meta_val,
+        "total_guardado": total_guardado,
+        "total_abatido": total_abatido,
+        "saldo_atual": saldo_atual,
+        "falta_guardar": falta_guardar,
+        "pct_conquista": pct_conquista,
+    }
 
 
 # =============================================================================
@@ -32737,567 +32375,201 @@ def excluir_cofre_investimento(cofre_id: str) -> bool:
 
 
 def registrar_aporte_cofre(
-
-
-
     cofre_id: str,
-
-
-
     valor: float,
-
-
-
     data: str = None,
-
-
-
     descricao: str = "",
-
-
-
     conta_origem_id: str = None,
-
-
-
     lancar_no_extrato: bool = False,
-
-
-
+    pote_id: str = None,
 ) -> dict:
-
-
-
-    """Registra um aporte (saiu do bolso) no cofre."""
-
-
-
+    """Registra um aporte (saiu do bolso) no cofre, opcionalmente debitando a conta e consumindo um Pote Financeiro."""
     from datetime import date
 
-
-
     val = round(float(valor or 0.0), 2)
-
-
-
     if val <= 0:
-
-
-
         raise ValueError("O valor do aporte deve ser maior que zero.")
 
-
-
-
-
-
-
     cofre = obter_cofre_por_id(cofre_id)
-
-
-
     if not cofre:
-
-
-
         raise ValueError("Cofre não encontrado.")
 
-
-
-
-
-
-
     u = usuario_atual()
-
-
-
     if not u:
-
-
-
         raise ValueError("Usuário não autenticado.")
-
-
-
     uid = str(u.id)
 
-
-
-
-
-
-
     saldo_ant = cofre["saldo_atual"]
-
-
-
     saldo_pos = round(saldo_ant + val, 2)
-
-
-
     tot_aport = round(cofre["total_aportado"] + val, 2)
-
-
-
-    dt = data or date.today().isoformat()
-
-
-
-
-
-
+    dt = (data.isoformat() if hasattr(data, "isoformat") else str(data)[:10]) if data else date.today().isoformat()
 
     lanc_id = None
-
-
-
     if lancar_no_extrato and conta_origem_id:
-
-
-
         try:
+            # Resolve pote_id (se não informado, busca o pote padrão de Liberdade Financeira / Investimento / Metas)
+            pote_id_efetivo = str(pote_id) if pote_id else None
+            if not pote_id_efetivo:
+                try:
+                    potes_disp = listar_potes() or []
+                    if potes_disp:
+                        p_inv = next(
+                            (p for p in potes_disp if any(k in str(p.get("nome", "")).lower() for k in ("liberdade", "invest", "meta"))),
+                            potes_disp[0],
+                        )
+                        pote_id_efetivo = str(p_inv["id"])
+                except Exception:
+                    pass
 
+            # Busca categoria "Investimento" para manter o lançamento 100% classificado
+            cat_inv_id = None
+            try:
+                cats = listar_categorias() or []
+                cat_inv = next((c for c in cats if "invest" in str(c.get("nome", "")).lower()), None)
+                if cat_inv:
+                    cat_inv_id = str(cat_inv["id"])
+            except Exception:
+                pass
 
-
-            lanc = criar_lancamento({
-
-
-
+            dados_lanc = {
                 "tipo": "Despesa",
-
-
-
                 "subtipo": "Investimento",
-
-
-
                 "forma_movimentacao": "Débito",
-
-
-
                 "valor": val,
-
-
-
                 "data": dt,
-
-
-
-                "conta_id": conta_origem_id,
-
-
-
+                "conta_id": str(conta_origem_id),
                 "descricao": descricao or f"Aporte: {cofre['nome']}",
-
-
-
                 "regra": "Investimento",
-
-
-
                 "status": "Pago",
+            }
+            if pote_id_efetivo:
+                dados_lanc["pote_id"] = pote_id_efetivo
+            if cat_inv_id:
+                dados_lanc["categoria_id"] = cat_inv_id
 
-
-
-            })
-
-
-
-            if lanc and isinstance(lanc, dict):
-
-
-
+            lanc = criar_lancamento(dados_lanc)
+            if lanc and hasattr(lanc, "data") and lanc.data:
+                lanc_id = lanc.data[0].get("id")
+            elif isinstance(lanc, dict):
                 lanc_id = lanc.get("id")
-
-
-
         except Exception as ex:
-
-
-
             print(f"[AVISO] Falha ao criar lançamento de débito do aporte: {ex}")
 
-
-
-
-
-
-
     mov_resp = supabase.table("cofres_movimentacoes").insert({
-
-
-
         "cofre_id": str(cofre_id),
-
-
-
         "user_id": uid,
-
-
-
         "tipo": "aporte",
-
-
-
         "valor": val,
-
-
-
         "saldo_anterior": saldo_ant,
-
-
-
         "saldo_posterior": saldo_pos,
-
-
-
         "descricao": descricao or "Aporte",
-
-
-
         "data": dt,
-
-
-
-        "conta_origem_id": conta_origem_id,
-
-
-
+        "conta_origem_id": str(conta_origem_id) if conta_origem_id else None,
         "lancamento_id": lanc_id,
-
-
-
     }).execute()
 
-
-
-
-
-
-
     supabase.table("cofres_investimento").update({
-
-
-
         "saldo_atual": saldo_pos,
-
-
-
         "total_aportado": tot_aport,
-
-
-
     }).eq("id", str(cofre_id)).execute()
 
-
-
-
-
-
-
     invalidar_cache(f"cofres_investimento_{uid}")
-
-
-
+    invalidar_cache("lancamentos")
+    invalidar_cache("contas")
+    invalidar_cache("potes")
+    invalidar_cache("dashboard")
     return mov_resp.data[0] if mov_resp.data else {}
-
-
-
-
-
-
-
-
-
 
 
 def registrar_resgate_cofre(
-
-
-
     cofre_id: str,
-
-
-
     valor: float,
-
-
-
     data: str = None,
-
-
-
     descricao: str = "",
-
-
-
     conta_destino_id: str = None,
-
-
-
     lancar_no_extrato: bool = False,
-
-
-
 ) -> dict:
-
-
-
     """Registra um resgate (voltou pro caixa) do cofre."""
-
-
-
     from datetime import date
-
-
-
     from core.constants import formatar_moeda
 
-
-
     val = round(float(valor or 0.0), 2)
-
-
-
     if val <= 0:
-
-
-
         raise ValueError("O valor do resgate deve ser maior que zero.")
 
-
-
-
-
-
-
     cofre = obter_cofre_por_id(cofre_id)
-
-
-
     if not cofre:
-
-
-
         raise ValueError("Cofre não encontrado.")
 
-
-
-
-
-
-
     saldo_ant = cofre["saldo_atual"]
-
-
-
     if val > (saldo_ant + 0.005):
-
-
-
         raise ValueError(f"Saldo insuficiente no cofre ({formatar_moeda(saldo_ant)}) para resgate de {formatar_moeda(val)}.")
 
-
-
-
-
-
-
     u = usuario_atual()
-
-
-
     if not u:
-
-
-
         raise ValueError("Usuário não autenticado.")
-
-
-
     uid = str(u.id)
 
-
-
-
-
-
-
     saldo_pos = round(max(0.0, saldo_ant - val), 2)
-
-
-
     tot_resg = round(cofre["total_resgatado"] + val, 2)
-
-
-
-    dt = data or date.today().isoformat()
-
-
-
-
-
-
+    dt = (data.isoformat() if hasattr(data, "isoformat") else str(data)[:10]) if data else date.today().isoformat()
 
     lanc_id = None
-
-
-
     if lancar_no_extrato and conta_destino_id:
-
-
-
         try:
+            cat_inv_id = None
+            try:
+                cats = listar_categorias() or []
+                cat_inv = next((c for c in cats if "invest" in str(c.get("nome", "")).lower()), None)
+                if cat_inv:
+                    cat_inv_id = str(cat_inv["id"])
+            except Exception:
+                pass
 
-
-
-            lanc = criar_lancamento({
-
-
-
+            dados_lanc = {
                 "tipo": "Receita",
-
-
-
                 "subtipo": "Entrada",
-
-
-
                 "forma_movimentacao": "Pix",
-
-
-
                 "valor": val,
-
-
-
                 "data": dt,
-
-
-
-                "conta_id": conta_destino_id,
-
-
-
+                "conta_id": str(conta_destino_id),
                 "descricao": descricao or f"Resgate: {cofre['nome']}",
-
-
-
                 "status": "Pago",
+            }
+            if cat_inv_id:
+                dados_lanc["categoria_id"] = cat_inv_id
 
-
-
-            })
-
-
-
-            if lanc and isinstance(lanc, dict):
-
-
-
+            lanc = criar_lancamento(dados_lanc)
+            if lanc and hasattr(lanc, "data") and lanc.data:
+                lanc_id = lanc.data[0].get("id")
+            elif isinstance(lanc, dict):
                 lanc_id = lanc.get("id")
-
-
-
         except Exception as ex:
-
-
-
             print(f"[AVISO] Falha ao criar lançamento de receita do resgate: {ex}")
 
-
-
-
-
-
-
     mov_resp = supabase.table("cofres_movimentacoes").insert({
-
-
-
         "cofre_id": str(cofre_id),
-
-
-
         "user_id": uid,
-
-
-
         "tipo": "resgate",
-
-
-
         "valor": val,
-
-
-
         "saldo_anterior": saldo_ant,
-
-
-
         "saldo_posterior": saldo_pos,
-
-
-
         "descricao": descricao or "Resgate",
-
-
-
         "data": dt,
-
-
-
-        "conta_origem_id": conta_destino_id,
-
-
-
+        "conta_origem_id": str(conta_destino_id) if conta_destino_id else None,
         "lancamento_id": lanc_id,
-
-
-
     }).execute()
 
-
-
-
-
-
-
     supabase.table("cofres_investimento").update({
-
-
-
         "saldo_atual": saldo_pos,
-
-
-
         "total_resgatado": tot_resg,
-
-
-
     }).eq("id", str(cofre_id)).execute()
 
-
-
-
-
-
-
     invalidar_cache(f"cofres_investimento_{uid}")
-
-
-
+    invalidar_cache("lancamentos")
+    invalidar_cache("contas")
+    invalidar_cache("dashboard")
     return mov_resp.data[0] if mov_resp.data else {}
-
-
-
-
-
-
-
-
-
 
 
 def registrar_rendimento_direto(
@@ -33977,179 +33249,59 @@ def obter_movimentacoes_cofres(cofre_id: str = None, limite: int = 50) -> list[d
 
 
 def excluir_movimentacao_cofre(movimentacao_id: str) -> bool:
-
-
-
-    """Exclui uma movimentação e recalcula atomicamente os saldos do cofre."""
-
-
-
+    """Exclui uma movimentação, estorna o lançamento bancário vinculado (se houver) e recalcula atomicamente os saldos do cofre."""
     try:
-
-
-
         resp = supabase.table("cofres_movimentacoes").select("*").eq("id", str(movimentacao_id)).maybe_single().execute()
-
-
-
         if not (resp and resp.data):
-
-
-
             return False
-
-
-
         mov = resp.data
-
-
-
         cid = mov["cofre_id"]
-
-
+        lanc_id = mov.get("lancamento_id")
 
         supabase.table("cofres_movimentacoes").delete().eq("id", str(movimentacao_id)).execute()
 
-
-
-
-
-
+        if lanc_id:
+            try:
+                supabase.table("lancamentos").delete().eq("id", str(lanc_id)).execute()
+                invalidar_cache("lancamentos")
+                invalidar_cache("contas")
+                invalidar_cache("potes")
+                invalidar_cache("dashboard")
+            except Exception as ex_l:
+                print(f"[AVISO] excluir_movimentacao_cofre: falha ao remover lancamento vinculado ({lanc_id}): {ex_l}")
 
         todas = supabase.table("cofres_movimentacoes").select("*").eq("cofre_id", cid).order("data").order("criado_em").execute()
-
-
-
         tot_ap = 0.0
-
-
-
         tot_rend = 0.0
-
-
-
         tot_resg = 0.0
-
-
-
         saldo_corr = 0.0
-
-
-
         for m in (todas.data or []):
-
-
-
             tp = m.get("tipo")
-
-
-
             v = float(m.get("valor", 0.0) or 0.0)
-
-
-
             if tp == "aporte":
-
-
-
                 tot_ap += v
-
-
-
                 saldo_corr += v
-
-
-
             elif tp == "rendimento":
-
-
-
                 tot_rend += v
-
-
-
                 saldo_corr += v
-
-
-
             elif tp == "resgate":
-
-
-
                 tot_resg += v
-
-
-
                 saldo_corr = max(0.0, saldo_corr - v)
 
-
-
-
-
-
-
         supabase.table("cofres_investimento").update({
-
-
-
             "saldo_atual": round(saldo_corr, 2),
-
-
-
             "total_aportado": round(tot_ap, 2),
-
-
-
             "total_rendimentos": round(tot_rend, 2),
-
-
-
             "total_resgatado": round(tot_resg, 2),
-
-
-
         }).eq("id", str(cid)).execute()
 
-
-
-
-
-
-
         u = usuario_atual()
-
-
-
         if u:
-
-
-
             invalidar_cache(f"cofres_investimento_{u.id}")
-
-
-
         return True
-
-
-
     except Exception as ex:
-
-
-
         print(f"[ERRO] excluir_movimentacao_cofre: {ex}")
-
-
-
         return False
-
-
-
-
-
-
-
-
-
 
 
 def obter_config_taxa_cdi() -> float:

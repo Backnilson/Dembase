@@ -84,7 +84,7 @@ _NAV_ITEMS = [
 
     {"rota": ROTA_DASHBOARD,     "icone": ft.Icons.DASHBOARD_ROUNDED,          "label": "Dashboard"},
     {"rota": ROTA_INVESTIMENTOS, "icone": ft.Icons.SAVINGS_ROUNDED,            "label": "Investimentos"},
-    {"rota": ROTA_CAIXINHAS,     "icone": ft.Icons.INVENTORY_2_ROUNDED,        "label": "Caixinhas"},
+    {"rota": ROTA_CAIXINHAS,     "icone": ft.Icons.INVENTORY_2_ROUNDED,        "label": "DemBoxes"},
     {"rota": ROTA_CONTAS,        "icone": ft.Icons.ACCOUNT_BALANCE_ROUNDED,    "label": "Contas"},
     {"rota": ROTA_CARTOES,       "icone": ft.Icons.CREDIT_CARD_ROUNDED,        "label": "Cartões"},
     {"rota": ROTA_CALENDARIO,    "icone": ft.Icons.CALENDAR_MONTH_ROUNDED,     "label": "Calendário"},

@@ -55,7 +55,10 @@ class DateFilterBar(ft.Column):
         self._emitir()
 
     def _abrir_picker(self):
-        page = self.page
+        try:
+            page = self.page
+        except Exception:
+            return
         if not page:
             return
 

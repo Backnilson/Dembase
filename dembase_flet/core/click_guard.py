@@ -275,13 +275,24 @@ def _pagina_de(ctrl: Any) -> ft.Page | None:
 
 
 async def _trigger_event_guardado(self, event_name, event_data, e=None):
+    # Se o controle não está montado em nenhuma página, descarta o evento imediatamente
+    page = _pagina_de(self)
+    if page is None:
+        _log(f"evento {event_name} descartado em {type(self).__name__}: controle desanexado da página")
+        return None
+
     if event_name not in _EVENTOS_GUARDADOS:
-        return await _orig_trigger(self, event_name, event_data, e)
+        try:
+            return await _orig_trigger(self, event_name, event_data, e)
+        except RuntimeError as ex:
+            if "Control must be added to the page first" in str(ex):
+                _log(f"evento {event_name} ignorado em controle desanexado ({type(self).__name__}): {ex}")
+                return None
+            raise
 
     handler = getattr(self, f"on_{event_name}", None)
-    page = _pagina_de(self)
-    if handler is None or page is None:
-        return await _orig_trigger(self, event_name, event_data, e)
+    if handler is None:
+        return None
 
     est = _estado(page)
     chave = getattr(self, "_i", None) or id(self)
@@ -327,9 +338,21 @@ async def _trigger_event_guardado(self, event_name, event_data, e=None):
             _mostrar_overlay(page, est)
             await _flush()
 
+        # Verifica se o controle continuou montado na página após o flush
+        if _pagina_de(self) is None:
+            _log(f"clique descartado em {type(self).__name__}: controle desanexado durante o flush")
+            return None
+
         # 2) Execução original (handler do app).
         t_exec = time.perf_counter()
-        resultado = await _orig_trigger(self, event_name, event_data, e)
+        try:
+            resultado = await _orig_trigger(self, event_name, event_data, e)
+        except RuntimeError as ex:
+            if "Control must be added to the page first" in str(ex):
+                _log(f"clique ignorado em controle desanexado ({type(self).__name__}): {ex}")
+                return None
+            raise
+
         dur_exec = time.perf_counter() - t_exec
         if not eh_async and dur_exec > _LIMITE_BLOQUEIO_S:
             est.descartar_ate = time.monotonic() + _JANELA_DESCARTE_S

@@ -54,32 +54,67 @@ DIAS_SEMANA_COMPLETO = [
 DIAS_SEMANA_CURTO = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 
 
-def formatar_data_amigavel(d: date, incluir_ano: bool = False) -> str:
+def converter_para_date(d: date | datetime | str | None, permitir_none: bool = False) -> date | None:
+    """
+    Converte com segurança qualquer formato de data (date, datetime, str ISO, str BR)
+    para um objeto datetime.date válido.
+    Se d for None ou inválido e permitir_none=True, retorna None. Caso contrário, retorna date.today().
+    """
+    if d is None:
+        return None if permitir_none else date.today()
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    if isinstance(d, str):
+        d_str = d.strip()
+        if not d_str:
+            return None if permitir_none else date.today()
+        # ISO 'YYYY-MM-DD' ou 'YYYY-MM-DDTHH:MM:SS'
+        try:
+            return date.fromisoformat(d_str[:10])
+        except Exception:
+            pass
+        # BR 'DD/MM/YYYY'
+        try:
+            return datetime.strptime(d_str[:10], "%d/%m/%Y").date()
+        except Exception:
+            pass
+    return None if permitir_none else date.today()
+
+
+def formatar_data_amigavel(d: date | datetime | str | None, incluir_ano: bool = False) -> str:
     """Formata uma data de forma amigável (Ex: 'Hoje, 20 de Outubro')."""
+    d_obj = converter_para_date(d, permitir_none=True)
+    if not d_obj:
+        return ""
     hoje = date.today()
-    if d == hoje:
-        return f"Hoje, {d.day} de {MESES_PT[d.month - 1]}"
-    if d == hoje - timedelta(days=1):
-        return f"Ontem, {d.day} de {MESES_PT[d.month - 1]}"
-    if d == hoje + timedelta(days=1):
-        return f"Amanhã, {d.day} de {MESES_PT[d.month - 1]}"
+    if d_obj == hoje:
+        return f"Hoje, {d_obj.day} de {MESES_PT[d_obj.month - 1]}"
+    if d_obj == hoje - timedelta(days=1):
+        return f"Ontem, {d_obj.day} de {MESES_PT[d_obj.month - 1]}"
+    if d_obj == hoje + timedelta(days=1):
+        return f"Amanhã, {d_obj.day} de {MESES_PT[d_obj.month - 1]}"
 
-    nome_dia = DIAS_SEMANA_COMPLETO[d.weekday()]
-    if d.year == hoje.year and not incluir_ano:
-        return f"{nome_dia}, {d.day} de {MESES_PT[d.month - 1]}"
-    return f"{nome_dia}, {d.day} de {MESES_PT[d.month - 1]} de {d.year}"
+    nome_dia = DIAS_SEMANA_COMPLETO[d_obj.weekday()]
+    if d_obj.year == hoje.year and not incluir_ano:
+        return f"{nome_dia}, {d_obj.day} de {MESES_PT[d_obj.month - 1]}"
+    return f"{nome_dia}, {d_obj.day} de {MESES_PT[d_obj.month - 1]} de {d_obj.year}"
 
 
-def formatar_data_curta_amigavel(d: date) -> str:
+def formatar_data_curta_amigavel(d: date | datetime | str | None) -> str:
     """Formata uma data de forma concisa para chips e botões (Ex: 'Hoje', 'Ontem' ou '20/10')."""
+    d_obj = converter_para_date(d, permitir_none=True)
+    if not d_obj:
+        return ""
     hoje = date.today()
-    if d == hoje:
+    if d_obj == hoje:
         return "Hoje"
-    if d == hoje - timedelta(days=1):
+    if d_obj == hoje - timedelta(days=1):
         return "Ontem"
-    if d == hoje + timedelta(days=1):
+    if d_obj == hoje + timedelta(days=1):
         return "Amanhã"
-    return d.strftime("%d/%m")
+    return d_obj.strftime("%d/%m")
 
 
 # =============================================================================
@@ -96,9 +131,9 @@ class CustomCalendarGrid(ft.Container):
         self,
         ano: int | None = None,
         mes: int | None = None,
-        data_selecionada: date | None = None,
-        range_inicio: date | None = None,
-        range_fim: date | None = None,
+        data_selecionada: date | datetime | str | None = None,
+        range_inicio: date | datetime | str | None = None,
+        range_fim: date | datetime | str | None = None,
         modo: str = "single",  # "single" ou "range"
         on_date_click: Callable[[date], None] | None = None,
         on_range_change: Callable[[date | None, date | None], None] | None = None,
@@ -106,12 +141,15 @@ class CustomCalendarGrid(ft.Container):
     ):
         super().__init__()
         hoje = date.today()
-        self.ano = ano or (data_selecionada.year if data_selecionada else hoje.year)
-        self.mes = mes or (data_selecionada.month if data_selecionada else hoje.month)
+        d_sel = converter_para_date(data_selecionada, permitir_none=False)
+        r_ini = converter_para_date(range_inicio, permitir_none=True)
+        r_fim = converter_para_date(range_fim, permitir_none=True)
+        self.ano = ano or (d_sel.year if d_sel else hoje.year)
+        self.mes = mes or (d_sel.month if d_sel else hoje.month)
         self.modo = modo
-        self.data_selecionada = data_selecionada or hoje
-        self.range_inicio = range_inicio
-        self.range_fim = range_fim
+        self.data_selecionada = d_sel
+        self.range_inicio = r_ini
+        self.range_fim = r_fim
         self.fixar_inicio_hoje = False
         self.on_date_click = on_date_click
         self.on_range_change = on_range_change
@@ -383,22 +421,26 @@ class CustomCalendarGrid(ft.Container):
             if callable(self.on_range_change):
                 self.on_range_change(self.range_inicio, self.range_fim)
 
-    def definir_data(self, d: date):
+    def definir_data(self, d: date | datetime | str):
         """Atualiza a data selecionada externamente e redesenha."""
-        self.data_selecionada = d
-        self.mes = d.month
-        self.ano = d.year
+        self.data_selecionada = converter_para_date(d, permitir_none=False)
+        self.mes = self.data_selecionada.month
+        self.ano = self.data_selecionada.year
         self.lbl_mes_ano.value = f"{MESES_PT[self.mes - 1]} {self.ano}"
         self._reconstruir_grade()
         self._safe_update()
 
-    def definir_range(self, d_ini: date | None, d_fim: date | None):
+    def definir_range(self, d_ini: date | datetime | str | None, d_fim: date | datetime | str | None):
         """Atualiza o intervalo selecionado externamente e redesenha."""
-        self.range_inicio = d_ini
-        self.range_fim = d_fim
-        if d_fim:
-            self.mes = d_fim.month
-            self.ano = d_fim.year
+        self.range_inicio = converter_para_date(d_ini, permitir_none=True)
+        self.range_fim = converter_para_date(d_fim, permitir_none=True)
+        if self.range_fim:
+            self.mes = self.range_fim.month
+            self.ano = self.range_fim.year
+            self.lbl_mes_ano.value = f"{MESES_PT[self.mes - 1]} {self.ano}"
+        elif self.range_inicio:
+            self.mes = self.range_inicio.month
+            self.ano = self.range_inicio.year
             self.lbl_mes_ano.value = f"{MESES_PT[self.mes - 1]} {self.ano}"
         self._reconstruir_grade()
         self._safe_update()
@@ -416,11 +458,11 @@ class CustomCalendarGrid(ft.Container):
 # =============================================================================
 def abrir_seletor_data_modal(
     page: ft.Page,
-    data_inicial: date | None = None,
+    data_inicial: date | datetime | str | None = None,
     on_select: Callable[[date], None] | None = None,
     titulo: str = "Selecionar Data",
 ):
-    data_sel = [data_inicial or date.today()]
+    data_sel = [converter_para_date(data_inicial, permitir_none=False)]
 
     lbl_data_extenso = ft.Text(
         formatar_data_amigavel(data_sel[0]),
@@ -1551,13 +1593,13 @@ class CampoSeletorData(ft.Column):
     def __init__(
         self,
         page: ft.Page,
-        data_inicial: date | None = None,
+        data_inicial: date | datetime | str | None = None,
         on_change: Callable[[date], None] | None = None,
         titulo: str = "Data do Lançamento",
     ):
         super().__init__(spacing=6, tight=True)
         self._page = page
-        self._data: date = data_inicial or date.today()
+        self._data: date = converter_para_date(data_inicial, permitir_none=False)
         self._cb = on_change
         self.titulo = titulo
 
@@ -1646,8 +1688,8 @@ class CampoSeletorData(ft.Column):
             titulo=self.titulo,
         )
 
-    def definir_data(self, nova_data: date, emitir: bool = False):
-        self._data = nova_data
+    def definir_data(self, nova_data: date | datetime | str, emitir: bool = False):
+        self._data = converter_para_date(nova_data, permitir_none=False)
         self.txt_data_formatada.value = formatar_data_amigavel(self._data)
         self._reconstruir_atalhos()
         try:
