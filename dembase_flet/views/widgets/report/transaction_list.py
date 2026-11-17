@@ -15,7 +15,7 @@ import flet as ft
 
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
-from core.constants import formatar_moeda, formatar_data_br
+from core.constants import formatar_moeda, formatar_data_br, formatar_rastreio_datas
 from core.responsive import is_mobile
 from views.widgets.lancamento_sheet import abrir_lancamento, abrir_lancamento_async
 from views.widgets.report.empty_state import criar_empty_state
@@ -195,6 +195,13 @@ class TransactionList(ft.Column):
             pass
 
     def _alternar_status(self, item: dict):
+        if item.get("cartao_id") or item.get("fatura_id"):
+            mostrar_feedback(
+                self._page,
+                "Compras no cartão só mudam para Pago quando a fatura for efetivamente paga.",
+                "aviso",
+            )
+            return
         novo_status = "Pendente" if item.get("status") == "Pago" else "Pago"
         try:
             db.atualizar_lancamento(str(item["id"]), {"status": novo_status})
@@ -467,11 +474,14 @@ class TransactionList(ft.Column):
         eh_transf = "trans" in tipo.lower()
         eh_rec = (direcao == "Entrada") if direcao else ("rec" in tipo.lower())
 
+        valor = float(item.get("valor", 0) or 0)
+        eh_desconto_fatura = (not eh_transf and not eh_rec and valor < 0)
+
         if eh_transf and not direcao:
             cor_valor = T.INFO
             icone_tipo = ft.Icons.SWAP_HORIZ_ROUNDED
             sinal = "⇄"
-        elif eh_rec:
+        elif eh_rec or eh_desconto_fatura:
             cor_valor = T.RECEITA
             icone_tipo = ft.Icons.SWAP_HORIZ_ROUNDED if eh_transf else ft.Icons.ARROW_UPWARD_ROUNDED
             sinal = "+"
@@ -480,7 +490,7 @@ class TransactionList(ft.Column):
             icone_tipo = ft.Icons.SWAP_HORIZ_ROUNDED if eh_transf else ft.Icons.ARROW_DOWNWARD_ROUNDED
             sinal = "-"
 
-        valor = float(item.get("valor", 0) or 0)
+        valor_abs = abs(valor)
         status = item.get("status") or "Pago"
         eh_pago = (status == "Pago")
 
@@ -655,8 +665,55 @@ class TransactionList(ft.Column):
                     )
                 )
 
-        pote_nome = item.get("pote_nome")
-        pote_cor = item.get("pote_cor") or T.PRIMARY
+        pote_nome = item.get("pote_nome") or (
+            (item.get("potes") or {}).get("nome") if isinstance(item.get("potes"), dict) else None
+        )
+        pote_cor = item.get("pote_cor") or (
+            (item.get("potes") or {}).get("cor") if isinstance(item.get("potes"), dict) else None
+        ) or T.PRIMARY
+        if not pote_nome and item.get("pote_id"):
+            pid_str = str(item.get("pote_id"))
+            pt_match = next((p for p in POTES_PADRAO if str(p.get("id")) == pid_str), None)
+            if not pt_match:
+                try:
+                    for p_db in (db.listar_potes() or []):
+                        if isinstance(p_db, dict) and str(p_db.get("id")) == pid_str:
+                            pt_match = p_db
+                            break
+                except Exception:
+                    pass
+            if pt_match:
+                pote_nome = pt_match.get("nome")
+                pote_cor = pt_match.get("cor") or T.PRIMARY
+
+        rastreio_datas_txt = formatar_rastreio_datas(item)
+        if rastreio_datas_txt:
+            cor_rast = T.RECEITA if eh_pago else T.INFO
+            badges.append(
+                ft.Container(
+                    padding=pad(h=7, v=2),
+                    bgcolor=f"{cor_rast}18",
+                    border_radius=6,
+                    border=borda(1, f"{cor_rast}40"),
+                    content=ft.Row(
+                        spacing=4,
+                        tight=True,
+                        controls=[
+                            ft.Icon(
+                                ft.Icons.EVENT_AVAILABLE_ROUNDED if eh_pago else ft.Icons.DATE_RANGE_ROUNDED,
+                                size=11,
+                                color=cor_rast,
+                            ),
+                            ft.Text(
+                                rastreio_datas_txt,
+                                size=10.5,
+                                color=cor_rast,
+                                weight=ft.FontWeight.BOLD,
+                            ),
+                        ],
+                    ),
+                )
+            )
         if pote_nome:
             badges.append(
                 ft.Container(
@@ -774,7 +831,7 @@ class TransactionList(ft.Column):
                             ],
                         ),
                         ft.Text(
-                            f"{sinal} {formatar_moeda(valor)}",
+                            f"{sinal} {formatar_moeda(valor_abs)}",
                             color=cor_valor,
                             size=15,
                             weight=ft.FontWeight.BOLD,
@@ -871,7 +928,7 @@ class TransactionList(ft.Column):
                         controls=col_textos_mobile,
                     ),
                     ft.Text(
-                        f"{sinal} {formatar_moeda(valor)}",
+                        f"{sinal} {formatar_moeda(valor_abs)}",
                         color=cor_valor,
                         size=14,
                         weight=ft.FontWeight.BOLD,
@@ -944,6 +1001,18 @@ class TransactionList(ft.Column):
                         content=ft.Text(forma, size=10, color=T.TEXT_MUTED),
                     )
                 )
+
+        if rastreio_datas_txt:
+            cor_rast_m = T.RECEITA if eh_pago else T.INFO
+            badges_mobile.append(
+                ft.Container(
+                    padding=pad(h=6, v=2),
+                    bgcolor=f"{cor_rast_m}18",
+                    border_radius=6,
+                    border=borda(1, f"{cor_rast_m}40"),
+                    content=ft.Text(rastreio_datas_txt, size=10, color=cor_rast_m, weight=ft.FontWeight.BOLD),
+                )
+            )
 
         if pote_nome:
             badges_mobile.append(

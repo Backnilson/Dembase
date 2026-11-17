@@ -25,7 +25,7 @@ import flet.canvas as cv
 
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
-from core.constants import formatar_moeda, formatar_data_br, hoje, inicio_mes_atual
+from core.constants import formatar_moeda, formatar_data_br, formatar_rastreio_datas, hoje, inicio_mes_atual
 
 MESES_NOMES = [
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -394,16 +394,27 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
             ),
         ]
         for vf in vencimentos_dia:
+            v_tot_vf = float(vf.get("valor_total", 0) or 0)
+            st_vf = str(vf.get("status") or "").lower()
+            dt_pg_vf = str(vf.get("data_pagamento") or "")[:10]
+            dt_orig_vf = str(vf.get("data_vencimento_original") or vf.get("data_vencimento") or "")[:10]
+            if st_vf == "paga" and dt_pg_vf and v_tot_vf > 0.01:
+                sufixo_orig = f" (Venc. {formatar_data_br(dt_orig_vf)[:5]})" if (dt_orig_vf and dt_orig_vf != dt_pg_vf) else ""
+                txt_chip_vf = f"💳 Fatura Paga {vf.get('cartao_nome')}: {formatar_moeda(v_tot_vf)}{sufixo_orig}"
+                cor_chip_vf = T.RECEITA
+            else:
+                txt_chip_vf = f"💳 Venc. {vf.get('cartao_nome')}: {formatar_moeda(v_tot_vf)}"
+                cor_chip_vf = T.PRIMARY
             chips.append(
                 ft.Container(
                     padding=pad(h=8, v=3),
                     border_radius=6,
-                    bgcolor=f"{T.PRIMARY}22",
+                    bgcolor=f"{cor_chip_vf}22",
                     content=ft.Text(
-                        f"💳 Venc. {vf.get('cartao_nome')}: {formatar_moeda(float(vf.get('valor_total', 0) or 0))}",
+                        txt_chip_vf,
                         size=11,
                         weight=ft.FontWeight.BOLD,
-                        color=T.PRIMARY,
+                        color=cor_chip_vf,
                     ),
                 )
             )
@@ -783,10 +794,12 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                 if d_item.get("no_mes_atual"):
                     maior_entrada = max(maior_entrada, float(d_item.get("total_receitas", 0) or 0))
 
-        # Mapa rápido de vencimentos de faturas por data (YYYY-MM-DD -> list)
+        # Mapa rápido de faturas por data efetiva no calendário (se paga -> data_pagamento; senão -> data_vencimento)
         mapa_vencimentos: dict[str, list[dict]] = {}
         for fat in faturas_lista:
-            dv_str = str(fat.get("data_vencimento") or "")[:10]
+            st_fat_m = str(fat.get("status") or "").lower()
+            dt_pg_m = str(fat.get("data_pagamento") or "")[:10]
+            dv_str = dt_pg_m if (st_fat_m == "paga" and dt_pg_m) else str(fat.get("data_vencimento") or "")[:10]
             if dv_str:
                 mapa_vencimentos.setdefault(dv_str, []).append(fat)
 
@@ -1296,7 +1309,19 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
             st_f = str(cf.get("status") or "aberta").lower()
             eh_paga = (st_f == "paga" or v_fat <= 0.01)
             cor_st = T.RECEITA if eh_paga else T.WARNING
-            lbl_st = "Fatura zerada" if v_fat <= 0.01 else ("Fatura paga" if eh_paga else f"Vence dia {cf.get('dia_vencimento_efetivo', 10):02d}")
+            dt_pg_cf = str(cf.get("data_pagamento") or "")[:10]
+            dt_orig_cf = str(cf.get("data_vencimento_original") or cf.get("data_vencimento") or "")[:10]
+            if v_fat <= 0.01:
+                lbl_st = "Fatura zerada"
+            elif eh_paga:
+                if dt_pg_cf:
+                    lbl_st = f"Paga em {formatar_data_br(dt_pg_cf)[:5]}" + (
+                        f" · Venc. {formatar_data_br(dt_orig_cf)[:5]}" if (dt_orig_cf and dt_orig_cf != dt_pg_cf) else ""
+                    )
+                else:
+                    lbl_st = "Fatura paga"
+            else:
+                lbl_st = f"Vence dia {int(cf.get('dia_vencimento_efetivo', 10) or 10):02d}"
 
             linhas_cartoes_mes.append(
                 ft.Container(
@@ -1687,17 +1712,18 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                     lancs.extend(d_item.get("lancamentos") or [])
         return pac, lancs
 
-    def carregar_dados():
+    def carregar_dados(inicial: bool = False):
         nonlocal pacote_calendario, todos_lancamentos
         loop_check = getattr(page, "loop", None)
         eh_loop_ativo = isinstance(loop_check, asyncio.AbstractEventLoop) and loop_check.is_running() and hasattr(page, "run_task")
 
         if eh_loop_ativo:
             spinner.visible = True
-            try:
-                page.update()
-            except Exception:
-                pass
+            if not inicial:
+                try:
+                    page.update()
+                except Exception:
+                    pass
 
             async def _carregar_cal_async():
                 nonlocal pacote_calendario, todos_lancamentos
@@ -1727,10 +1753,11 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
             return
 
         spinner.visible = True
-        try:
-            page.update()
-        except Exception:
-            pass
+        if not inicial:
+            try:
+                page.update()
+            except Exception:
+                pass
         try:
             pacote_calendario, todos_lancamentos = _buscar_pacote_calendario_sync(
                 mes_sel[0],
@@ -1751,10 +1778,22 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                 pass
 
     def alternar_status_lancamento(item: dict):
+        if item.get("cartao_id") or item.get("fatura_id"):
+            mostrar_feedback(
+                page,
+                "Compras no cartão só mudam para Pago quando a fatura for efetivamente paga.",
+                "aviso",
+            )
+            return
         novo_status = "Pendente" if item.get("status") == "Pago" else "Pago"
         try:
             db.atualizar_lancamento(item["id"], {"status": novo_status})
             item["status"] = novo_status
+            if novo_status == "Pago":
+                item["data_vencimento"] = item.get("data_vencimento") or item.get("data")
+                item["data_pagamento"] = date.today().isoformat()
+            else:
+                item["data_pagamento"] = None
             mostrar_feedback(page, f"Status alterado para {novo_status}!", "sucesso")
             carregar_dados()
         except Exception as ex:
@@ -1878,7 +1917,20 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
             on_click=lambda _, it=item: alternar_status_lancamento(it),
         )
 
-        data_str = formatar_data_br(item.get("data", ""))
+        rastreio_txt = formatar_rastreio_datas(item)
+        if rastreio_txt:
+            cor_rast = T.RECEITA if eh_pago else T.INFO
+            sub_badges.append(
+                ft.Container(
+                    content=ft.Text(rastreio_txt, size=10, color=cor_rast, weight=ft.FontWeight.BOLD),
+                    bgcolor=f"{cor_rast}18",
+                    padding=pad(h=6, v=2),
+                    border_radius=6,
+                    border=borda(1, f"{cor_rast}40"),
+                )
+            )
+
+        data_str = rastreio_txt or formatar_data_br(item.get("data", ""))
 
         if not mobile:
             return ft.Container(
@@ -2526,7 +2578,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
         ],
     )
 
-    carregar_dados()
+    carregar_dados(inicial=True)
 
     v = criar_shell(
         page,

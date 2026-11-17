@@ -75,6 +75,9 @@ class LancamentoFormState:
     serie_id: Optional[str] = None
     recorrente_id: Optional[str] = None
     lancamento_id: Optional[str] = None
+    data_vencimento: Optional[date] = None
+    data_pagamento: Optional[date] = None
+    fatura_status: Optional[str] = None
     mais_detalhes_aberto: bool = True
 
     def definir_valor_total(self, total: float):
@@ -111,8 +114,11 @@ class LancamentoFormState:
                 "Transferência" if self.eh_transferencia else self.tipo
             )
 
+        # Trava de Crédito: compras em fatura não paga permanecem Pendentes
+        if self.eh_credito and str(self.fatura_status or "").lower() != "paga":
+            self.status_pago = False
         # Se for inicializado com data futura e status_manual=False, ajusta status para Pendente
-        if not self.status_manual and self.data_selecionada > date.today():
+        elif not self.status_manual and self.data_selecionada > date.today():
             self.status_pago = False
 
     @property
@@ -165,13 +171,21 @@ class LancamentoFormState:
 
     def atualizar_data(self, nova_data: date):
         self.data_selecionada = nova_data
+        if self.eh_credito:
+            self.status_pago = (str(self.fatura_status or "").lower() == "paga")
+            return
         # Regra 6: Apenas se o usuário NÃO tiver tocado manualmente no Switch
         if not self.status_manual:
             self.status_pago = (nova_data <= date.today())
 
     def tocar_switch_status(self, novo_status: bool):
+        if self.eh_credito and str(self.fatura_status or "").lower() != "paga":
+            self.status_pago = False
+            self.data_pagamento = None
+            return
         self.status_pago = novo_status
         self.status_manual = True
+        self.data_pagamento = date.today() if novo_status else None
 
     def mudar_tipo(self, novo_tipo: str):
         if is_transferencia_str(novo_tipo):
@@ -209,6 +223,9 @@ class LancamentoFormState:
             # Repetições avulsas com término não se aplicam a cartão.
             self.is_repetir = False
             self.caixinha_id = None
+            if str(self.fatura_status or "").lower() != "paga":
+                self.status_pago = False
+                self.data_pagamento = None
             if self.subtipo == "Consumo Caixinha":
                 self.subtipo = "Despesa"
         elif is_caixinha_str(nova_forma):
@@ -222,6 +239,9 @@ class LancamentoFormState:
         else:
             self.cartao_id = None
             self.caixinha_id = None
+            self.fatura_status = None
+            if not self.status_manual:
+                self.status_pago = (self.data_selecionada <= date.today())
             if self.subtipo == "Consumo Caixinha":
                 self.subtipo = "Despesa"
             if not self.is_repetir and not self.is_fixa:

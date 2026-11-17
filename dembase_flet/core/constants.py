@@ -68,6 +68,74 @@ def formatar_data_br(d: date | str) -> str:
         d = datetime.strptime(d[:10], "%Y-%m-%d").date()
     return d.strftime("%d/%m/%Y")
 
+
+def formatar_data_curta_br(d: date | str | None) -> str:
+    """Converte date ou string ISO (YYYY-MM-DD) para formato curto DD/MM."""
+    if not d:
+        return ""
+    if isinstance(d, str):
+        try:
+            d = datetime.strptime(d[:10], "%Y-%m-%d").date()
+        except Exception:
+            return str(d)[:5]
+    return d.strftime("%d/%m")
+
+
+def formatar_rastreio_datas(item: dict | None) -> str | None:
+    """
+    Formata o texto de rastreabilidade dos 3 marcos de tempo do lançamento:
+    - Data da Compra / Criação (`data_compra` ou `data`)
+    - Data de Vencimento Original (`data_vencimento` ou `fatura_data_vencimento`)
+    - Data de Pagamento Efetivo (`data_pagamento` ou `fatura_data_pagamento`)
+
+    Exemplos retornados quando há diferença entre as datas:
+    - Pagamento adiantado (ou em dia distinto do vencimento):
+      "Pago em 11/11 · Venc. 20/11"
+    - Compra de cartão em mês anterior ao vencimento da fatura:
+      "Compra 23/10 · Venc. 23/11" (ou "Compra 23/10 · Venc. 23/11 · Pago em 09/11")
+    """
+    if not isinstance(item, dict):
+        return None
+
+    fatura_rel = item.get("faturas") if isinstance(item.get("faturas"), dict) else {}
+    dt_compra = str(item.get("data_compra") or item.get("data") or "")[:10]
+    dt_venc = str(
+        item.get("data_vencimento")
+        or item.get("fatura_data_vencimento")
+        or fatura_rel.get("data_vencimento")
+        or item.get("data")
+        or ""
+    )[:10]
+    dt_pag = str(
+        item.get("data_pagamento")
+        or item.get("fatura_data_pagamento")
+        or fatura_rel.get("data_pagamento")
+        or ""
+    )[:10]
+
+    status_str = str(item.get("status") or "").strip().lower()
+    eh_pago = (status_str == "pago")
+    forma_str = str(item.get("forma_movimentacao") or "").strip().lower()
+    eh_credito = (
+        ("cred" in forma_str or "créd" in forma_str)
+        and (bool(item.get("cartao_id")) or bool(item.get("fatura_id")) or bool(item.get("cartao_nome")) or bool(item.get("cartoes")))
+    ) or bool(item.get("cartao_id")) or bool(item.get("fatura_id"))
+
+    if eh_credito:
+        if dt_compra and dt_venc and dt_compra != dt_venc:
+            base_txt = f"Compra {formatar_data_curta_br(dt_compra)} · Venc. {formatar_data_curta_br(dt_venc)}"
+            if eh_pago and dt_pag:
+                return f"{base_txt} · Pago em {formatar_data_curta_br(dt_pag)}"
+            return base_txt
+        if eh_pago and dt_pag and dt_venc and dt_pag != dt_venc:
+            return f"Pago em {formatar_data_curta_br(dt_pag)} · Venc. {formatar_data_curta_br(dt_venc)}"
+        return None
+
+    if eh_pago and dt_pag and dt_venc and dt_pag != dt_venc:
+        return f"Pago em {formatar_data_curta_br(dt_pag)} · Venc. {formatar_data_curta_br(dt_venc)}"
+
+    return None
+
 def formatar_moeda(valor: float) -> str:
     """Formata valor para o padrão monetário brasileiro."""
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")

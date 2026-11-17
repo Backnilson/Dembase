@@ -138,8 +138,17 @@ def abrir_lancamento(
         state.pote_id = str(pote_salvo) if pote_salvo else None
         state.regra = obter_regra_pote(regra_salva or pote_salvo)
         state.fatura_id = str(lancamento.get("fatura_id")) if lancamento.get("fatura_id") else None
+        faturas_rel = lancamento.get("faturas") if isinstance(lancamento.get("faturas"), dict) else {}
+        state.fatura_status = (
+            lancamento.get("fatura_status")
+            or faturas_rel.get("status")
+            or ("paga" if (state.eh_credito and lancamento.get("status") == "Pago") else None)
+        )
         state.hora = int(lancamento.get("hora", 12)) if lancamento.get("hora") is not None else 12
-        state.status_pago = (lancamento.get("status") == "Pago")
+        if state.eh_credito:
+            state.status_pago = (str(state.fatura_status or "").lower() == "paga")
+        else:
+            state.status_pago = (lancamento.get("status") == "Pago")
         state.status_manual = True  # Em edição, status gravado tem prioridade absoluta
 
         # Inicializa dados específicos de compras parceladas
@@ -186,7 +195,7 @@ def abrir_lancamento(
             state.modo_calculo_parcela = "parcela"
             state.definir_valor_parcela(state.valor)
 
-        d_raw = lancamento.get("data")
+        d_raw = lancamento.get("data_compra") or lancamento.get("data")
         if isinstance(d_raw, str):
             try:
                 state.data_selecionada = datetime.fromisoformat(d_raw[:10]).date()
@@ -194,6 +203,24 @@ def abrir_lancamento(
                 state.data_selecionada = date.today()
         elif isinstance(d_raw, (date, datetime)):
             state.data_selecionada = d_raw if isinstance(d_raw, date) else d_raw.date()
+
+        dv_raw = lancamento.get("data_vencimento")
+        if isinstance(dv_raw, str) and dv_raw[:10]:
+            try:
+                state.data_vencimento = datetime.fromisoformat(dv_raw[:10]).date()
+            except Exception:
+                state.data_vencimento = None
+        elif isinstance(dv_raw, (date, datetime)):
+            state.data_vencimento = dv_raw if isinstance(dv_raw, date) else dv_raw.date()
+
+        dp_raw = lancamento.get("data_pagamento")
+        if isinstance(dp_raw, str) and dp_raw[:10]:
+            try:
+                state.data_pagamento = datetime.fromisoformat(dp_raw[:10]).date()
+            except Exception:
+                state.data_pagamento = None
+        elif isinstance(dp_raw, (date, datetime)):
+            state.data_pagamento = dp_raw if isinstance(dp_raw, date) else dp_raw.date()
 
         if lancamento.get("tipo_recorrencia") == "fixa" or bool(lancamento.get("recorrente_id")):
             state.is_fixa = True
@@ -386,6 +413,15 @@ def abrir_lancamento(
                 else:
                     fatura_id_final = fat_str
 
+            if state.eh_credito:
+                status_final = (
+                    "Pago"
+                    if (is_edicao and str(state.fatura_status or "").lower() == "paga" and not state.fatura_foi_alterada)
+                    else "Pendente"
+                )
+            else:
+                status_final = "Pago" if (state.status_pago or state.eh_transferencia or eh_cx) else "Pendente"
+
             dados = {
                 "tipo": tipo_db,
                 "subtipo": subtipo_final,
@@ -394,7 +430,7 @@ def abrir_lancamento(
                 "data": str(state.data_selecionada),
                 "hora": state.hora,
                 "descricao": desc_final,
-                "status": "Pago" if (state.status_pago or state.eh_transferencia or eh_cx) else "Pendente",
+                "status": status_final,
                 "conta_id": conta_id_final,
                 "cartao_id": cartao_id_final,
                 "fatura_id": fatura_id_final,

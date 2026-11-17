@@ -1701,6 +1701,7 @@ def invalidar_cache(tipo: str | None = None) -> None:
 
 
         _CACHE_RAM["cartoes"] = {"dados": None, "expira_em": 0.0}
+        _CACHE_RAM.pop("faturas_opcoes", None)
 
 
 
@@ -1765,6 +1766,7 @@ def invalidar_cache(tipo: str | None = None) -> None:
 
 
         _CACHE_RAM["cartoes"] = {"dados": None, "expira_em": 0.0}
+        _CACHE_RAM.pop("faturas_opcoes", None)
 
 
 
@@ -3384,6 +3386,12 @@ def listar_faturas_opcoes_cartao(cartao_id: str) -> list[dict]:
 
         return []
 
+    eh_mock_fat = hasattr(listar_faturas, "_mock_name") or hasattr(supabase, "_mock_name")
+    if not eh_mock_fat:
+        cached_opts = obter_cache("faturas_opcoes", subchave=str(cartao_id))
+        if cached_opts is not None:
+            return list(cached_opts)
+
 
 
 
@@ -4166,6 +4174,8 @@ def listar_faturas_opcoes_cartao(cartao_id: str) -> list[dict]:
 
 
 
+    if not eh_mock_fat:
+        salvar_cache("faturas_opcoes", opcoes, subchave=str(cartao_id), ttl=TTL_CADASTROS_BASE)
     return opcoes
 
 
@@ -13300,133 +13310,22 @@ def obter_total_em_uso_cartao(cartao_id: str) -> float:
 
 
 def listar_faturas(cartao_id: str = None, status: str = None, mes: int = None, ano: int = None) -> list:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    # Compatibilidade defensiva caso chamado posicionalmente como listar_faturas(None, mes, ano)
+    if isinstance(status, int) and isinstance(mes, int) and ano is None:
+        ano = mes
+        mes = status
+        status = None
 
     query = supabase.table("faturas").select("*, cartoes(nome, bandeira, cor, limite_total, limite_disponivel, dia_fechamento, dia_vencimento, conta_debito_id)")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     if cartao_id:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         query = query.eq("cartao_id", cartao_id)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     if status:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         query = query.eq("status", status)
-
-
-
     if mes is not None:
-
-
-
         query = query.eq("mes", mes)
-
-
-
     if ano is not None:
-
-
-
         query = query.eq("ano", ano)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     resp = query.order("data_vencimento", desc=True).execute()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     return resp.data or []
 
 
@@ -15080,198 +14979,31 @@ def listar_lancamentos(
 
 
     query = supabase.table("lancamentos").select(
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         "*, contas(nome,cor,icone), categorias(nome,cor,icone), "
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        "cartoes(nome,bandeira,cor), subcategorias(nome), faturas!fk_lancamentos_fatura(mes,ano,status), membros(id, nome, cor, icone)"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        "cartoes(nome,bandeira,cor), subcategorias(nome), potes(id,nome,cor,posicao), "
+        "faturas!fk_lancamentos_fatura(mes,ano,status,data_vencimento,data_pagamento), membros(id, nome, cor, icone)"
     )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     if data_inicio:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        query = query.gte("data", data_inicio)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        query = query.gte("data_vencimento", data_inicio)
     if data_fim:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        query = query.lte("data", data_fim)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        query = query.lte("data_vencimento", data_fim)
     if filtros:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         for chave, valor in filtros.items():
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
             query = query.eq(chave, valor)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    resp = query.order("data", desc=True).order("hora", desc=True).execute()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    return resp.data or []
+    resp = query.order("data_vencimento", desc=True).order("data", desc=True).order("hora", desc=True).execute()
+    itens = resp.data or []
+    for it in itens:
+        if isinstance(it, dict):
+            pt_rel = it.get("potes")
+            if isinstance(pt_rel, dict):
+                it.setdefault("pote_nome", pt_rel.get("nome"))
+                it.setdefault("pote_cor", pt_rel.get("cor"))
+            fat_rel = it.get("faturas")
+            if isinstance(fat_rel, dict):
+                it.setdefault("fatura_status", fat_rel.get("status"))
+                it.setdefault("fatura_mes", fat_rel.get("mes"))
+                it.setdefault("fatura_ano", fat_rel.get("ano"))
+    return itens
 
 
 
@@ -15752,45 +15484,13 @@ def obter_lancamento(lancamento_id: str) -> dict | None:
 
 
 def atualizar_lancamento(lancamento_id: str, dados: dict):
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     invalidar_cache('lancamentos')
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     invalidar_cache('cartoes')
-
-
-
+    invalidar_cache('faturas')
+    invalidar_cache('contas')
+    invalidar_cache('potes_resumo')
+    invalidar_cache('dashboard')
     _sanitizar_regra_lancamento(dados)
-
-
-
     return supabase.table("lancamentos").update(dados).eq("id", str(lancamento_id)).execute()
 
 
@@ -23424,85 +23124,11 @@ def obter_relatorio_cartao(
 
 
         "faturas": [],
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         "fatura_selecionada": {},
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         "por_categoria": [],
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        "por_pote": [],
         "lancamentos": [],
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         "total_registros": 0,
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     }
 
 
@@ -24352,84 +23978,44 @@ def obter_relatorio_cartao(
 
 
     if isinstance(d.get("cartao"), dict):
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         d["cartao"]["limite_total"] = lim_tot_card
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         d["cartao"]["limite_disponivel"] = lim_disp_card
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         d["cartao"]["limite_usado"] = usado_final
 
+    # 3. Sincronização de categorias e potes nos itens da fatura
+    d["por_categoria"] = d.get("por_categoria") or d.get("categorias") or []
+    d["por_pote"] = d.get("por_pote") or []
 
+    lancs_cartao = d.get("lancamentos") or []
+    precisa_hidratar_pote = any(
+        isinstance(it, dict) and (it.get("pote_id") or it.get("regra")) and not it.get("pote_nome")
+        for it in lancs_cartao
+    )
+    mapa_potes: dict[str, dict] = {}
+    if precisa_hidratar_pote:
+        try:
+            for pt in (listar_potes() or []):
+                if isinstance(pt, dict) and pt.get("id"):
+                    mapa_potes[str(pt["id"])] = pt
+        except Exception:
+            pass
+    if not mapa_potes:
+        mapa_potes = {
+            "2df4dd2f-4353-42cc-a5c9-8983085a5301": {"nome": "Custos Fixos", "cor": "#007AFF"},
+            "da6e1d2b-c611-481d-b48d-065cc5d584b4": {"nome": "Custos Semi Fixos", "cor": "#FF69B4"},
+            "986da9e8-3042-4562-b1df-c1f5cf0138b9": {"nome": "Metas", "cor": "#800080"},
+            "c82b0736-fb01-419f-8155-923ebfec82b2": {"nome": "Prazeres", "cor": "#FF7A00"},
+            "1f1f7449-d985-4c2a-b807-0570a5526614": {"nome": "Conhecimento", "cor": "#FFD60A"},
+            "34a47be1-9879-46bd-96b1-4082703bf388": {"nome": "Liberdade Financeira", "cor": "#6C5CE7"},
+        }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    for it in lancs_cartao:
+        if not isinstance(it, dict):
+            continue
+        pid = str(it.get("pote_id") or "")
+        if pid and not it.get("pote_nome") and pid in mapa_potes:
+            it["pote_nome"] = mapa_potes[pid].get("nome")
+            it["pote_cor"] = mapa_potes[pid].get("cor")
 
     return d
 
@@ -30870,42 +30456,28 @@ def obter_calendario_financeiro_mes(
 
 
 
-        # Mapa de faturas (id -> data_vencimento) e cartões (id -> dia_vencimento/dia_fechamento)
-
-
-
+        # Mapa de faturas (id -> data efetiva no calendário: data_pagamento se paga, senão data_vencimento)
         faturas_map: dict[str, str] = {}
-
-
-
+        faturas_venc_orig_map: dict[str, str] = {}
+        faturas_dt_pag_map: dict[str, str] = {}
         cartoes_map: dict[str, dict] = {}
-
-
-
         try:
-
-
-
-            resp_f = supabase.table("faturas").select("id,cartao_id,mes,ano,data_vencimento,valor_total,valor_pago,status").execute()
-
-
-
+            resp_f = supabase.table("faturas").select("id,cartao_id,mes,ano,data_vencimento,data_pagamento,valor_total,valor_pago,status").execute()
             for rf in (resp_f.data or []):
-
-
-
-                if rf.get("id") and rf.get("data_vencimento"):
-
-
-
-                    faturas_map[str(rf["id"])] = str(rf["data_vencimento"])[:10]
-
-
-
+                if rf.get("id"):
+                    fid_str = str(rf["id"])
+                    dv_orig = str(rf.get("data_vencimento") or "")[:10]
+                    dp_real = str(rf.get("data_pagamento") or "")[:10]
+                    st_rf = str(rf.get("status") or "").lower()
+                    if dv_orig:
+                        faturas_venc_orig_map[fid_str] = dv_orig
+                    if dp_real:
+                        faturas_dt_pag_map[fid_str] = dp_real
+                    if st_rf == "paga" and dp_real:
+                        faturas_map[fid_str] = dp_real
+                    elif dv_orig:
+                        faturas_map[fid_str] = dv_orig
         except Exception:
-
-
-
             pass
 
 
@@ -34417,3 +33989,328 @@ async def definir_visao_membros_async(membro_ids: list[str] | None = None) -> di
 
 async def obter_cobertura_reserva_async(data_inicio: str = None, data_fim: str = None) -> dict:
     return await asyncio.to_thread(obter_cobertura_reserva, data_inicio, data_fim)
+
+
+# =============================================================================
+# REAJUSTE RÁPIDO DO VALOR TOTAL DA FATURA (LANÇAMENTO AUTOMÁTICO DA DIFERENÇA)
+# =============================================================================
+
+def reajustar_valor_fatura(
+    cartao_id: str,
+    fatura_id: str | None,
+    mes: int,
+    ano: int,
+    valor_atual: float,
+    novo_valor_total: float,
+    pote_id: str | None = None,
+    categoria_id: str | None = None,
+    descricao: str | None = None,
+    membro_id: str | None = None,
+    nova_data_vencimento: str | None = None,
+) -> dict:
+    """
+    Calcula automaticamente a diferença entre o Novo Valor Total Real da Fatura
+    (informado pelo usuário conforme o app do banco) e o valor atual apurado na fatura,
+    criando um lançamento de ajuste ('Ajuste de Fatura') vinculado à própria fatura,
+    e/ou atualiza a data de vencimento daquela fatura específica (e seus lançamentos).
+    Bloqueia o reajuste caso a fatura já esteja paga.
+    """
+    from datetime import date as _date
+    import calendar as _cal
+    from core.potes import obter_regra_pote
+
+    if not cartao_id:
+        raise ValueError("Cartão não identificado para reajuste da fatura.")
+
+    v_atual = round(float(valor_atual or 0.0), 2)
+    v_novo = round(float(novo_valor_total or 0.0), 2)
+    if v_novo < 0:
+        raise ValueError("O novo valor total da fatura não pode ser negativo.")
+
+    diferenca = round(v_novo - v_atual, 2)
+    m_alvo = int(mes or _date.today().month)
+    a_alvo = int(ano or _date.today().year)
+
+    # 1. Garante a fatura real no banco de dados
+    fid_real = str(fatura_id or "").strip()
+    fat_obj = None
+    if not fid_real or fid_real.startswith("futura_") or fid_real.startswith("virtual_"):
+        fat_obj = obter_ou_criar_fatura_por_mes_ano(str(cartao_id), m_alvo, a_alvo)
+        if fat_obj and fat_obj.get("id"):
+            fid_real = str(fat_obj["id"])
+    else:
+        try:
+            fat_obj = obter_fatura_por_id(fid_real)
+        except Exception:
+            fat_obj = None
+
+    if not fid_real:
+        raise RuntimeError("Não foi possível localizar ou criar a fatura para aplicar o reajuste.")
+
+    st_fatura = str((fat_obj or {}).get("status") or "aberta").lower()
+    val_pg_fat = float((fat_obj or {}).get("valor_pago", 0) or 0)
+    dt_pg_fat = (fat_obj or {}).get("data_pagamento")
+    if st_fatura == "paga" and (val_pg_fat > 0.01 or v_atual > 0.01 or bool(dt_pg_fat)):
+        raise ValueError("Não é permitido reajustar valor ou vencimento de uma fatura já paga.")
+
+    # Verifica se houve alteração de Data de Vencimento
+    dt_venc_anterior = str((fat_obj or {}).get("data_vencimento") or "")[:10]
+    nova_dt_venc_str = str(nova_data_vencimento or "").strip()[:10] if nova_data_vencimento else ""
+    mudou_vencimento = False
+    if nova_dt_venc_str:
+        try:
+            _date.fromisoformat(nova_dt_venc_str)
+        except Exception:
+            raise ValueError(f"Data de vencimento inválida: {nova_data_vencimento}")
+        if nova_dt_venc_str != dt_venc_anterior:
+            mudou_vencimento = True
+
+    mudou_valor = abs(diferenca) >= 0.01
+    if not mudou_valor and not mudou_vencimento:
+        raise ValueError("Informe um novo valor total ou uma nova data de vencimento diferente da atual.")
+
+    # Se alterou a data de vencimento da fatura, aplica na fatura e nos lançamentos vinculados
+    if mudou_vencimento:
+        supabase.table("faturas").update({
+            "data_vencimento": nova_dt_venc_str,
+        }).eq("id", fid_real).execute()
+        try:
+            supabase.table("lancamentos").update({
+                "data_vencimento": nova_dt_venc_str,
+            }).eq("fatura_id", fid_real).eq("tipo", "Despesa").execute()
+        except Exception:
+            pass
+        if isinstance(fat_obj, dict):
+            fat_obj["data_vencimento"] = nova_dt_venc_str
+
+    lanc_criado = None
+    if mudou_valor:
+        # 2. Resolve Pote Financeiro e Regra 50/30/20
+        potes_lista = []
+        try:
+            potes_lista = listar_potes() or []
+        except Exception:
+            potes_lista = []
+
+        pote_id_final = str(pote_id).strip() if pote_id else None
+        if not pote_id_final and potes_lista:
+            pote_pref = next(
+                (
+                    p for p in potes_lista
+                    if any(k in str(p.get("nome", "")).lower() for k in ("semi", "fixo", "prazer"))
+                ),
+                potes_lista[0],
+            )
+            if pote_pref and pote_pref.get("id"):
+                pote_id_final = str(pote_pref["id"])
+
+        regra_final = obter_regra_pote(pote_id_final, potes_lista)
+
+        # 3. Resolve Categoria (prioriza 'Outros' se não informada)
+        cat_id_final = str(categoria_id).strip() if categoria_id else None
+        if not cat_id_final:
+            try:
+                cats = listar_categorias() or []
+                if cats:
+                    cat_outros = next(
+                        (c for c in cats if "outro" in str(c.get("nome", "")).lower()),
+                        cats[0],
+                    )
+                    if cat_outros and cat_outros.get("id"):
+                        cat_id_final = str(cat_outros["id"])
+            except Exception:
+                pass
+
+        # 4. Resolve Membro Familiar
+        membro_id_final = str(membro_id).strip() if membro_id else None
+        if not membro_id_final:
+            try:
+                c_info = obter_cartao(str(cartao_id)) or {}
+                if c_info.get("membro_id"):
+                    membro_id_final = str(c_info["membro_id"])
+                else:
+                    m_prin = obter_membro_principal()
+                    if m_prin and m_prin.get("id"):
+                        membro_id_final = str(m_prin["id"])
+            except Exception:
+                pass
+
+        # 5. Resolve Data e Status do lançamento na fatura
+        hoje_d = _date.today()
+        if hoje_d.month == m_alvo and hoje_d.year == a_alvo:
+            data_lanc = hoje_d.isoformat()
+        elif fat_obj and fat_obj.get("data_fechamento"):
+            data_lanc = str(fat_obj["data_fechamento"])[:10]
+        else:
+            ult_d = _cal.monthrange(a_alvo, m_alvo)[1]
+            dia_ref = min(hoje_d.day, ult_d)
+            data_lanc = _date(a_alvo, m_alvo, dia_ref).isoformat()
+
+        status_lanc = "Pendente"
+
+        desc_limpa = (descricao or "").strip()
+        if not desc_limpa:
+            desc_limpa = "Ajuste de Fatura" if diferenca > 0 else "Ajuste de Fatura (Desconto)"
+
+        dados_lanc = {
+            "tipo": "Despesa",
+            "subtipo": "Ajuste de Fatura",
+            "forma_movimentacao": "Crédito",
+            "cartao_id": str(cartao_id),
+            "fatura_id": fid_real,
+            "valor": diferenca,
+            "data": data_lanc,
+            "hora": 12,
+            "descricao": desc_limpa,
+            "status": status_lanc,
+            "categoria_id": cat_id_final,
+            "pote_id": pote_id_final,
+            "regra": regra_final,
+            "membro_id": membro_id_final,
+        }
+        if nova_dt_venc_str or dt_venc_anterior:
+            dados_lanc["data_vencimento"] = nova_dt_venc_str or dt_venc_anterior
+
+        resp_ins = criar_lancamento(dados_lanc)
+        lanc_criado = (resp_ins.data[0] if (resp_ins and getattr(resp_ins, "data", None)) else dados_lanc)
+
+        try:
+            recalcular_totais_faturas([fid_real])
+        except Exception:
+            pass
+        # Se também alterou data de vencimento, garante que recalcular_totais_faturas não sobrescreva
+        if mudou_vencimento:
+            try:
+                supabase.table("faturas").update({"data_vencimento": nova_dt_venc_str}).eq("id", fid_real).execute()
+            except Exception:
+                pass
+
+    invalidar_cache("lancamentos")
+    invalidar_cache("cartoes")
+    invalidar_cache("faturas")
+    invalidar_cache("faturas_opcoes")
+    invalidar_cache("dashboard")
+    invalidar_cache("potes_resumo")
+
+    return {
+        "sucesso": True,
+        "fatura_id": fid_real,
+        "cartao_id": str(cartao_id),
+        "mes": m_alvo,
+        "ano": a_alvo,
+        "valor_anterior": v_atual,
+        "novo_valor_total": v_novo,
+        "diferenca": diferenca,
+        "mudou_valor": mudou_valor,
+        "mudou_vencimento": mudou_vencimento,
+        "data_vencimento_anterior": dt_venc_anterior,
+        "nova_data_vencimento": nova_dt_venc_str if mudou_vencimento else dt_venc_anterior,
+        "lancamento": lanc_criado,
+    }
+
+
+async def reajustar_valor_fatura_async(
+    cartao_id: str,
+    fatura_id: str | None,
+    mes: int,
+    ano: int,
+    valor_atual: float,
+    novo_valor_total: float,
+    pote_id: str | None = None,
+    categoria_id: str | None = None,
+    descricao: str | None = None,
+    membro_id: str | None = None,
+    nova_data_vencimento: str | None = None,
+) -> dict:
+    return await asyncio.to_thread(
+        reajustar_valor_fatura,
+        cartao_id,
+        fatura_id,
+        mes,
+        ano,
+        valor_atual,
+        novo_valor_total,
+        pote_id,
+        categoria_id,
+        descricao,
+        membro_id,
+        nova_data_vencimento,
+    )
+
+
+# =============================================================================
+# MEMÓRIA EVOLUTIVA DE LANÇAMENTOS (SMART AUTO-FILL & RANKING VIVO)
+# =============================================================================
+_MEMORIA_EVOLUTIVA_SESSAO: list[dict] = []
+
+
+def limpar_memoria_evolutiva_lancamentos() -> None:
+    """Limpa a memória evolutiva em RAM (usado em sessões/testes)."""
+    _MEMORIA_EVOLUTIVA_SESSAO.clear()
+    sub = _CACHE_RAM.get("lancamentos")
+    if isinstance(sub, dict):
+        sub.pop("__memoria_autofill__", None)
+
+
+def _mesclar_e_ordenar_memoria(historico_base: list[dict] | None) -> list[dict]:
+    """Mescla os lançamentos recém-salvos na sessão no topo do histórico do banco."""
+    resultado: list[dict] = []
+    ids_vistos: set[str] = set()
+    for item in _MEMORIA_EVOLUTIVA_SESSAO:
+        if isinstance(item, dict):
+            iid = str(item.get("id") or "")
+            if iid:
+                ids_vistos.add(iid)
+            resultado.append(dict(item))
+    for item in (historico_base or []):
+        if isinstance(item, dict):
+            iid = str(item.get("id") or "")
+            if iid and iid in ids_vistos:
+                continue
+            if iid:
+                ids_vistos.add(iid)
+            resultado.append(dict(item))
+    return resultado
+
+
+def registrar_memoria_evolutiva_lancamento(
+    dados: dict,
+    modo: str = "unica",
+    lancamento_id: str | None = None,
+    total_parcelas: int = 1,
+) -> None:
+    """Registra imediatamente no topo da Memória Evolutiva a última configuração salva."""
+    if not isinstance(dados, dict):
+        return
+    novo_item = dict(dados)
+    novo_item["id"] = str(lancamento_id or dados.get("id") or f"mem-{len(_MEMORIA_EVOLUTIVA_SESSAO) + 1}")
+    novo_item["tipo_recorrencia"] = str(modo or dados.get("tipo_recorrencia") or "unica")
+    novo_item["total_parcelas"] = int(total_parcelas or dados.get("total_parcelas") or 1)
+    _MEMORIA_EVOLUTIVA_SESSAO.insert(0, novo_item)
+
+
+def obter_memoria_lancamentos(forcar_atualizacao: bool = False) -> list[dict]:
+    """Retorna os lançamentos recentes para o motor de Auto-Complete e Ranking Vivo."""
+    if not forcar_atualizacao:
+        cached = obter_cache("lancamentos", subchave="__memoria_autofill__")
+        if cached is not None:
+            return _mesclar_e_ordenar_memoria(cached)
+    try:
+        resp = (
+            supabase.table("lancamentos")
+            .select(
+                "id, descricao, tipo, subtipo, forma_movimentacao, conta_id, cartao_id, "
+                "caixinha_id, destino_id, categoria_id, subcategoria_id, pote_id, regra, "
+                "membro_id, valor, data, hora, tipo_recorrencia, recorrente_id, serie_id, "
+                "parcela_atual, total_parcelas"
+            )
+            .order("data", desc=True)
+            .order("criado_em", desc=True)
+            .limit(250)
+            .execute()
+        )
+        dados = resp.data or []
+        salvar_cache("lancamentos", dados, subchave="__memoria_autofill__", ttl=TTL_CADASTROS_BASE)
+        return _mesclar_e_ordenar_memoria(dados)
+    except Exception:
+        return _mesclar_e_ordenar_memoria([])

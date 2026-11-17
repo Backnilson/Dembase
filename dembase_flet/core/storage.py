@@ -17,19 +17,30 @@ from core.constants import session_set, session_get, session_clear, session_remo
 # Diretório local seguro para fallback de persistência no computador do usuário
 _LOCAL_DIR = Path.home() / ".dembase"
 _LOCAL_FILE = _LOCAL_DIR / "auth_prefs.json"
+_LOCAL_JSON_CACHE: Optional[dict] = None
 
 
 def _ler_local_json() -> dict:
+    global _LOCAL_JSON_CACHE
+    if isinstance(_LOCAL_JSON_CACHE, dict):
+        return dict(_LOCAL_JSON_CACHE)
     try:
         if _LOCAL_FILE.exists():
             with open(_LOCAL_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                dados = json.load(f)
+                if isinstance(dados, dict):
+                    _LOCAL_JSON_CACHE = dict(dados)
+                    return dict(dados)
     except Exception:
         pass
+    _LOCAL_JSON_CACHE = {}
     return {}
 
 
 def _salvar_local_json(dados: dict) -> None:
+    global _LOCAL_JSON_CACHE
+    if isinstance(dados, dict):
+        _LOCAL_JSON_CACHE = dict(dados)
     try:
         _LOCAL_DIR.mkdir(parents=True, exist_ok=True)
         with open(_LOCAL_FILE, "w", encoding="utf-8") as f:
@@ -785,18 +796,20 @@ def obter_filtros_periodo_favoritos(page: ft.Page | None = None) -> list[dict]:
     ids_base = {f["id"] for f in base}
 
     custom: list[dict] = []
+    sess_carregada = False
     if page is not None:
         val_sess = session_get(page, "filtros_periodo_favoritos_custom")
         if isinstance(val_sess, list):
             custom = [dict(x) for x in val_sess if isinstance(x, dict)]
+            sess_carregada = True
 
-    if not custom:
+    if not sess_carregada:
         local = _ler_local_json()
         val_local = local.get("filtros_periodo_favoritos_custom")
         if isinstance(val_local, list):
             custom = [dict(x) for x in val_local if isinstance(x, dict)]
-            if page is not None:
-                session_set(page, "filtros_periodo_favoritos_custom", custom)
+        if page is not None:
+            session_set(page, "filtros_periodo_favoritos_custom", custom)
 
     for item in custom:
         fid = str(item.get("id") or "")

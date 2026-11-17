@@ -182,6 +182,11 @@ class CustomCalendarGrid(ft.Container):
         self.col_dias = ft.Column(spacing=4, tight=True)
         self.col_meses = ft.Column(spacing=8, tight=True, visible=False)
 
+        self._celulas_dias: list[tuple[ft.Container, ft.Text]] = []
+        self._linhas_semanas: list[ft.Row] = []
+        self._celulas_meses: list[tuple[ft.Container, ft.Text]] = []
+        self._inicializar_estrutura_fixa()
+
         self.content = ft.Column(
             spacing=8,
             tight=True,
@@ -192,6 +197,83 @@ class CustomCalendarGrid(ft.Container):
             ],
         )
         self._reconstruir_grade()
+
+    def _inicializar_estrutura_fixa(self):
+        """Pré-aloca as 42 células de dias e 12 células de meses uma única vez (0ms de alocação)."""
+        header_dias = ft.Row(
+            spacing=2,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            controls=[
+                ft.Container(
+                    width=38,
+                    alignment=ft.Alignment(0, 0),
+                    content=ft.Text(d_nome, size=11, weight=ft.FontWeight.BOLD, color=T.TEXT_MUTED),
+                )
+                for d_nome in DIAS_SEMANA_ABREV
+            ],
+        )
+        self._linhas_semanas = []
+        self._celulas_dias = []
+        for _ in range(6):
+            celulas_sem: list[ft.Control] = []
+            for _ in range(7):
+                txt_dia = ft.Text("", size=12.5, weight=ft.FontWeight.NORMAL, color=T.TEXT_PRIMARY)
+                celula = ft.Container(
+                    width=38,
+                    height=36,
+                    alignment=ft.Alignment(0, 0),
+                    bgcolor="transparent",
+                    border_radius=19,
+                    border=None,
+                    opacity=1.0,
+                    ink=True,
+                    data=None,
+                    on_click=self._ao_clicar_celula_dia,
+                    content=txt_dia,
+                )
+                self._celulas_dias.append((celula, txt_dia))
+                celulas_sem.append(celula)
+            linha_sem = ft.Row(
+                spacing=2,
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                controls=celulas_sem,
+            )
+            self._linhas_semanas.append(linha_sem)
+
+        self.col_dias.controls = [header_dias, *self._linhas_semanas]
+
+        linhas_m: list[ft.Row] = []
+        self._celulas_meses = []
+        for r in range(3):
+            controles_linha: list[ft.Control] = []
+            for c in range(4):
+                idx_mes = r * 4 + c + 1
+                nome_m = MESES_CURTOS_PT[idx_mes - 1]
+                txt_m = ft.Text(nome_m, size=13, weight=ft.FontWeight.W_500, color=T.TEXT_PRIMARY)
+                btn_m = ft.Container(
+                    content=txt_m,
+                    alignment=ft.Alignment(0, 0),
+                    padding=pad(v=10),
+                    bgcolor=T.SURFACE_ALT,
+                    border_radius=10,
+                    border=borda(1, T.BORDER),
+                    expand=True,
+                    ink=True,
+                    on_click=lambda _, m=idx_mes: self._selecionar_mes_direto(m),
+                )
+                self._celulas_meses.append((btn_m, txt_m))
+                controles_linha.append(btn_m)
+            linhas_m.append(ft.Row(controls=controles_linha, spacing=6))
+
+        self.col_meses.controls = [
+            ft.Text("Selecione um mês:", size=11.5, color=T.TEXT_MUTED),
+            *linhas_m,
+        ]
+
+    def _ao_clicar_celula_dia(self, e):
+        dia = getattr(e.control, "data", None) if (e and getattr(e, "control", None)) else None
+        if isinstance(dia, date):
+            self._clicar_dia(dia)
 
     def _construir_cabecalho_nav(self) -> ft.Row:
         return ft.Row(
@@ -257,68 +339,37 @@ class CustomCalendarGrid(ft.Container):
         self._safe_update()
 
     def _reconstruir_grade_meses(self):
-        """Constrói a grade 4x3 para seleção rápida de mês com seletor de ano."""
+        """Atualiza in-place a grade 4x3 pré-instanciada de meses sem recriar controles."""
         hoje = date.today()
         self.lbl_mes_ano.value = f"Ano {self.ano}"
 
-        linhas: list[ft.Row] = []
-        for r in range(3):
-            controles_linha: list[ft.Control] = []
-            for c in range(4):
-                idx_mes = r * 4 + c + 1
-                nome_m = MESES_CURTOS_PT[idx_mes - 1]
-                eh_selecionado = (idx_mes == self.mes)
-                eh_mes_atual = (idx_mes == hoje.month and self.ano == hoje.year)
+        for idx_zero, (btn_m, txt_m) in enumerate(self._celulas_meses):
+            idx_mes = idx_zero + 1
+            eh_selecionado = (idx_mes == self.mes)
+            eh_mes_atual = (idx_mes == hoje.month and self.ano == hoje.year)
 
-                cor_bg = T.PRIMARY if eh_selecionado else (f"{T.PRIMARY}18" if eh_mes_atual else T.SURFACE_ALT)
-                cor_txt = T.ON_PRIMARY if eh_selecionado else (T.PRIMARY if eh_mes_atual else T.TEXT_PRIMARY)
-
-                btn_m = ft.Container(
-                    content=ft.Text(
-                        nome_m,
-                        size=13,
-                        weight=ft.FontWeight.BOLD if eh_selecionado or eh_mes_atual else ft.FontWeight.W_500,
-                        color=cor_txt,
-                    ),
-                    alignment=ft.Alignment(0, 0),
-                    padding=pad(v=10),
-                    bgcolor=cor_bg,
-                    border_radius=10,
-                    border=borda(1, T.PRIMARY if (eh_selecionado or eh_mes_atual) else T.BORDER),
-                    expand=True,
-                    ink=True,
-                    on_click=lambda _, m=idx_mes: self._selecionar_mes_direto(m),
-                )
-                controles_linha.append(btn_m)
-            linhas.append(ft.Row(controls=controles_linha, spacing=6))
-
-        self.col_meses.controls = [
-            ft.Text("Selecione um mês:", size=11.5, color=T.TEXT_MUTED),
-            *linhas,
-        ]
+            btn_m.bgcolor = T.PRIMARY if eh_selecionado else (f"{T.PRIMARY}18" if eh_mes_atual else T.SURFACE_ALT)
+            btn_m.border = borda(1, T.PRIMARY if (eh_selecionado or eh_mes_atual) else T.BORDER)
+            txt_m.color = T.ON_PRIMARY if eh_selecionado else (T.PRIMARY if eh_mes_atual else T.TEXT_PRIMARY)
+            txt_m.weight = ft.FontWeight.BOLD if eh_selecionado or eh_mes_atual else ft.FontWeight.W_500
 
     def _reconstruir_grade(self):
+        """Atualiza in-place as células de dias pré-instanciadas (0 alocações de controles Flet)."""
         hoje = date.today()
         cal = calendar.Calendar(firstweekday=6)  # Domingo como primeiro dia da semana
         semanas = cal.monthdatescalendar(self.ano, self.mes)
+        qtd_semanas = len(semanas)
 
-        header_dias = ft.Row(
-            spacing=2,
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            controls=[
-                ft.Container(
-                    width=38,
-                    alignment=ft.Alignment(0, 0),
-                    content=ft.Text(d_nome, size=11, weight=ft.FontWeight.BOLD, color=T.TEXT_MUTED),
-                )
-                for d_nome in DIAS_SEMANA_ABREV
-            ],
-        )
+        for idx_sem in range(6):
+            linha_sem = self._linhas_semanas[idx_sem]
+            if idx_sem >= qtd_semanas:
+                linha_sem.visible = False
+                continue
 
-        linhas_semanas: list[ft.Row] = []
-        for sem in semanas:
-            celulas: list[ft.Control] = []
-            for d in sem:
+            linha_sem.visible = True
+            sem = semanas[idx_sem]
+            for idx_dia, d in enumerate(sem):
+                celula, txt_dia = self._celulas_dias[idx_sem * 7 + idx_dia]
                 eh_mes_corrente = (d.month == self.mes)
                 eh_hoje = (d == hoje)
 
@@ -357,36 +408,14 @@ class CustomCalendarGrid(ft.Container):
                     radius = 19
                     border_ctrl = None
 
-                opacity = 1.0 if eh_mes_corrente else 0.35
-
-                celula = ft.Container(
-                    width=38,
-                    height=36,
-                    alignment=ft.Alignment(0, 0),
-                    bgcolor=cor_bg,
-                    border_radius=radius,
-                    border=border_ctrl,
-                    opacity=opacity,
-                    ink=True,
-                    on_click=lambda _, dia=d: self._clicar_dia(dia),
-                    content=ft.Text(
-                        str(d.day),
-                        size=12.5,
-                        weight=peso_txt,
-                        color=cor_txt,
-                    ),
-                )
-                celulas.append(celula)
-
-            linhas_semanas.append(
-                ft.Row(
-                    spacing=2,
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    controls=celulas,
-                )
-            )
-
-        self.col_dias.controls = [header_dias, *linhas_semanas]
+                celula.data = d
+                celula.bgcolor = cor_bg
+                celula.border_radius = radius
+                celula.border = border_ctrl
+                celula.opacity = 1.0 if eh_mes_corrente else 0.35
+                txt_dia.value = str(d.day)
+                txt_dia.weight = peso_txt
+                txt_dia.color = cor_txt
 
     def _clicar_dia(self, d: date):
         if d.month != self.mes:
@@ -454,88 +483,105 @@ class CustomCalendarGrid(ft.Container):
 
 
 # =============================================================================
-# COMPONENTE 2: MODAL SELETOR DE DATA INDIVIDUAL (MOBILLS STYLE)
+# COMPONENTE 2: MODAL SELETOR DE DATA INDIVIDUAL (MOBILLS STYLE — PRÉ-INSTANCIADO)
 # =============================================================================
-def abrir_seletor_data_modal(
-    page: ft.Page,
-    data_inicial: date | datetime | str | None = None,
-    on_select: Callable[[date], None] | None = None,
-    titulo: str = "Selecionar Data",
-):
-    data_sel = [converter_para_date(data_inicial, permitir_none=False)]
+def _obter_ou_criar_seletor_data_modal(page: ft.Page) -> dict:
+    """
+    Cria uma única vez por página (ou retorna do cache) o componente completo de
+    calendário modal para que o clique em abrir calendário seja 100% instantâneo (0ms).
+    """
+    cache = getattr(page, "_dembase_seletor_data_cache", None)
+    if isinstance(cache, dict) and isinstance(cache.get("dlg"), ft.AlertDialog):
+        return cache
 
+    estado = {
+        "data_sel": date.today(),
+        "on_select": None,
+    }
+
+    lbl_titulo = ft.Text("Selecionar Data", color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD)
     lbl_data_extenso = ft.Text(
-        formatar_data_amigavel(data_sel[0]),
+        formatar_data_amigavel(estado["data_sel"]),
         size=15,
         weight=ft.FontWeight.BOLD,
         color=T.PRIMARY,
     )
 
-    def _atualizar_label():
-        lbl_data_extenso.value = formatar_data_amigavel(data_sel[0])
-        try:
-            lbl_data_extenso.update()
-        except Exception:
-            pass
+    chips_atalhos: list[tuple[ft.Container, ft.Text]] = []
+    for _ in range(3):
+        t_ch = ft.Text("", size=11.5, weight=ft.FontWeight.W_500, color=T.TEXT_PRIMARY)
+        c_ch = ft.Container(
+            content=t_ch,
+            padding=pad(h=12, v=6),
+            bgcolor=T.SURFACE_ALT,
+            border_radius=14,
+            border=borda(1, T.BORDER),
+            ink=True,
+            data=None,
+        )
+        chips_atalhos.append((c_ch, t_ch))
 
-    def _ao_clicar_data(d: date):
-        data_sel[0] = d
-        _atualizar_label()
-        _atualizar_chips_atalhos()
+    row_atalhos = ft.Row(spacing=6, tight=True, controls=[c for c, _ in chips_atalhos])
 
-    grid_cal = CustomCalendarGrid(
-        ano=data_sel[0].year,
-        mes=data_sel[0].month,
-        data_selecionada=data_sel[0],
-        modo="single",
-        on_date_click=_ao_clicar_data,
-    )
+    def _atualizar_label(emitir_update: bool = True):
+        lbl_data_extenso.value = formatar_data_amigavel(estado["data_sel"])
+        if emitir_update:
+            try:
+                lbl_data_extenso.update()
+            except Exception:
+                pass
 
-    def _aplicar_atalho(d: date):
-        data_sel[0] = d
-        grid_cal.definir_data(d)
-        _atualizar_label()
-        _atualizar_chips_atalhos()
-
-    row_atalhos = ft.Row(spacing=6, tight=True)
-
-    def _atualizar_chips_atalhos():
+    def _atualizar_chips_atalhos(emitir_update: bool = True):
         hoje = date.today()
         opcoes = [
             ("Ontem", hoje - timedelta(days=1)),
             ("Hoje", hoje),
             ("Amanhã", hoje + timedelta(days=1)),
         ]
-        row_atalhos.controls.clear()
-        for lbl, dt_val in opcoes:
-            ativo = (data_sel[0] == dt_val)
-            row_atalhos.controls.append(
-                ft.Container(
-                    content=ft.Text(
-                        lbl,
-                        size=11.5,
-                        weight=ft.FontWeight.BOLD if ativo else ft.FontWeight.W_500,
-                        color=T.ON_PRIMARY if ativo else T.TEXT_PRIMARY,
-                    ),
-                    padding=pad(h=12, v=6),
-                    bgcolor=T.PRIMARY if ativo else T.SURFACE_ALT,
-                    border_radius=14,
-                    border=borda(1, T.PRIMARY if ativo else T.BORDER),
-                    ink=True,
-                    on_click=lambda _, dt=dt_val: _aplicar_atalho(dt),
-                )
-            )
-        try:
-            row_atalhos.update()
-        except Exception:
-            pass
+        for idx, (lbl, dt_val) in enumerate(opcoes):
+            c_ch, t_ch = chips_atalhos[idx]
+            ativo = (estado["data_sel"] == dt_val)
+            c_ch.data = dt_val
+            c_ch.bgcolor = T.PRIMARY if ativo else T.SURFACE_ALT
+            c_ch.border = borda(1, T.PRIMARY if ativo else T.BORDER)
+            t_ch.value = lbl
+            t_ch.weight = ft.FontWeight.BOLD if ativo else ft.FontWeight.W_500
+            t_ch.color = T.ON_PRIMARY if ativo else T.TEXT_PRIMARY
+        if emitir_update:
+            try:
+                row_atalhos.update()
+            except Exception:
+                pass
 
-    _atualizar_chips_atalhos()
+    def _ao_clicar_data(d: date):
+        estado["data_sel"] = d
+        _atualizar_label(emitir_update=True)
+        _atualizar_chips_atalhos(emitir_update=True)
+
+    grid_cal = CustomCalendarGrid(
+        ano=estado["data_sel"].year,
+        mes=estado["data_sel"].month,
+        data_selecionada=estado["data_sel"],
+        modo="single",
+        on_date_click=_ao_clicar_data,
+    )
+
+    def _ao_clicar_chip_atalho(e):
+        dt = getattr(e.control, "data", None) if (e and getattr(e, "control", None)) else None
+        if isinstance(dt, date):
+            estado["data_sel"] = dt
+            grid_cal.definir_data(dt)
+            _atualizar_label(emitir_update=True)
+            _atualizar_chips_atalhos(emitir_update=True)
+
+    for c_ch, _ in chips_atalhos:
+        c_ch.on_click = _ao_clicar_chip_atalho
 
     def _confirmar(_):
         page.pop_dialog()
-        if callable(on_select):
-            on_select(data_sel[0])
+        cb = estado.get("on_select")
+        if callable(cb):
+            cb(estado["data_sel"])
 
     dlg = ft.AlertDialog(
         bgcolor=T.SURFACE,
@@ -547,7 +593,7 @@ def abrir_seletor_data_modal(
                     spacing=8,
                     controls=[
                         ft.Icon(ft.Icons.CALENDAR_MONTH_ROUNDED, color=T.PRIMARY, size=20),
-                        ft.Text(titulo, color=T.TEXT_PRIMARY, size=16, weight=ft.FontWeight.BOLD),
+                        lbl_titulo,
                     ],
                 ),
                 ft.IconButton(
@@ -609,7 +655,59 @@ def abrir_seletor_data_modal(
             ),
         ],
     )
-    page.show_dialog(dlg)
+
+    cache = {
+        "dlg": dlg,
+        "estado": estado,
+        "lbl_titulo": lbl_titulo,
+        "grid_cal": grid_cal,
+        "atualizar_label": _atualizar_label,
+        "atualizar_chips": _atualizar_chips_atalhos,
+    }
+    try:
+        setattr(page, "_dembase_seletor_data_cache", cache)
+    except Exception:
+        pass
+    return cache
+
+
+def preaquecer_seletor_data_modal(page: ft.Page | None) -> None:
+    """Pré-instancia em memória o modal seletor de data para abertura em 0ms."""
+    if page is None:
+        return
+    try:
+        _obter_ou_criar_seletor_data_modal(page)
+    except Exception:
+        pass
+
+
+def abrir_seletor_data_modal(
+    page: ft.Page,
+    data_inicial: date | datetime | str | None = None,
+    on_select: Callable[[date], None] | None = None,
+    titulo: str = "Selecionar Data",
+):
+    d_alvo = converter_para_date(data_inicial, permitir_none=False)
+    cache = _obter_ou_criar_seletor_data_modal(page)
+    estado = cache["estado"]
+    estado["data_sel"] = d_alvo
+    estado["on_select"] = on_select
+
+    cache["lbl_titulo"].value = titulo
+    grid_cal: CustomCalendarGrid = cache["grid_cal"]
+    grid_cal.mostrar_grade_meses = False
+    grid_cal.col_dias.visible = True
+    grid_cal.col_meses.visible = False
+    grid_cal.data_selecionada = d_alvo
+    grid_cal.mes = d_alvo.month
+    grid_cal.ano = d_alvo.year
+    grid_cal.lbl_mes_ano.value = f"{MESES_PT[grid_cal.mes - 1]} {grid_cal.ano}"
+    grid_cal._reconstruir_grade()
+
+    cache["atualizar_label"](emitir_update=False)
+    cache["atualizar_chips"](emitir_update=False)
+
+    page.show_dialog(cache["dlg"])
 
 
 # =============================================================================
@@ -1199,15 +1297,33 @@ def abrir_modal_periodo_mobills(
 
     _atualizar_resumo_range()
 
-    grid_range = CustomCalendarGrid(
-        ano=temp_fim[0].year,
-        mes=temp_fim[0].month,
-        range_inicio=temp_ini[0],
-        range_fim=temp_fim[0],
-        modo="range",
-        on_range_change=_ao_mudar_range,
-        on_month_change=_ao_mudar_mes_grid_custom,
-    )
+    grid_range = getattr(page, "_dembase_grid_range_cache", None)
+    if isinstance(grid_range, CustomCalendarGrid):
+        grid_range.on_range_change = _ao_mudar_range
+        grid_range.on_month_change = _ao_mudar_mes_grid_custom
+        grid_range.mostrar_grade_meses = False
+        grid_range.col_dias.visible = True
+        grid_range.col_meses.visible = False
+        grid_range.range_inicio = temp_ini[0]
+        grid_range.range_fim = temp_fim[0]
+        grid_range.mes = temp_fim[0].month
+        grid_range.ano = temp_fim[0].year
+        grid_range.lbl_mes_ano.value = f"{MESES_PT[grid_range.mes - 1]} {grid_range.ano}"
+        grid_range._reconstruir_grade()
+    else:
+        grid_range = CustomCalendarGrid(
+            ano=temp_fim[0].year,
+            mes=temp_fim[0].month,
+            range_inicio=temp_ini[0],
+            range_fim=temp_fim[0],
+            modo="range",
+            on_range_change=_ao_mudar_range,
+            on_month_change=_ao_mudar_mes_grid_custom,
+        )
+        try:
+            setattr(page, "_dembase_grid_range_cache", grid_range)
+        except Exception:
+            pass
     grid_range.fixar_inicio_hoje = modo_projecao_hoje[0]
 
     lbl_instrucao_custom = ft.Text(

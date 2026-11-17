@@ -42,6 +42,7 @@ import core.theme as T
 from core.theme import pad, borda, mostrar_feedback
 from views.widgets.custom_date_picker import (
     abrir_seletor_data_modal,
+    preaquecer_seletor_data_modal,
     formatar_data_amigavel,
     formatar_data_curta_amigavel,
 )
@@ -211,9 +212,14 @@ class LancamentoForm(ft.Column):
         # Flags de controle de interação manual na sessão do modal
         self._pote_escolhido_manualmente: bool = bool(state.lancamento_id)
         self._ultimo_termo_autofill: str = ""
+        self._formatando_valor: bool = False
+        self._ultimo_valor_formatado: str = formatar_moeda_input(state.valor)
+        self._faturas_por_cartao_cache: dict[str, list[dict]] = {}
+        self._ultimo_cartao_fatura_carregado: Optional[str] = None
 
-        # 1. Pré-carrega dados de negócio antes de montar controles para popular chips iniciais
+        # 1. Pré-carrega dados de negócio e pré-instancia o calendário modal para abertura em 0ms
         self._precarregar_dados_base()
+        preaquecer_seletor_data_modal(self._page)
 
         # 2. Constrói os controles filhos antes do super().__init__ (padrão dataclass Flet 1.0.1)
         controles_iniciais = self._construir_controles()
@@ -233,14 +239,19 @@ class LancamentoForm(ft.Column):
             self._dirty.clear()
 
     def _safe_update(self, ctrl: Optional[ft.Control] = None):
-        """Atualiza o controle específico e a página com segurança no Flet 1.0.1."""
-        if ctrl is not None:
+        """
+        Atualiza de forma cirúrgica apenas o controle modificado no Flet 1.0.1,
+        evitando re-renderizar o formulário inteiro ou a página inteira a cada tecla.
+        """
+        if ctrl is not None and ctrl is not self:
             try:
                 ctrl.update()
+                return
             except Exception:
                 pass
         try:
             self.update()
+            return
         except Exception:
             pass
         try:
@@ -2285,10 +2296,25 @@ class LancamentoForm(ft.Column):
         self.txt_data_label.value = formatar_data_amigavel(self.state.data_selecionada)
         self._construir_chips_data()
 
-        # 2. Switch Status
-        self.switch_status.value = self.state.status_pago
-        self.switch_status.visible = (not self.state.eh_transferencia and not self.state.eh_caixinha)
-        self.switch_status.label = "Recebida" if self.state.eh_receita else "Paga"
+        # 2. Switch Status (Trava automática para compras no Cartão de Crédito)
+        if self.state.eh_credito:
+            fat_ja_paga = (str(self.state.fatura_status or "").lower() == "paga" and not self.state.fatura_foi_alterada)
+            self.state.status_pago = fat_ja_paga
+            self.switch_status.value = fat_ja_paga
+            self.switch_status.disabled = True
+            self.switch_status.visible = True
+            self.switch_status.label = "Fatura Paga" if fat_ja_paga else "Paga na fatura"
+            self.switch_status.tooltip = (
+                "Fatura já liquidada"
+                if fat_ja_paga
+                else "Compras no cartão só mudam para Pago quando a fatura for paga"
+            )
+        else:
+            self.switch_status.disabled = False
+            self.switch_status.value = self.state.status_pago
+            self.switch_status.visible = (not self.state.eh_transferencia and not self.state.eh_caixinha)
+            self.switch_status.label = "Recebida" if self.state.eh_receita else "Paga"
+            self.switch_status.tooltip = None
 
         # 3. Cores e Segmentos
         cor_tema = (
@@ -2349,7 +2375,9 @@ class LancamentoForm(ft.Column):
             self.card_credito_recorrente_info.visible = self.state.is_fixa
             self.dd_parcelas.value = str(self.state.quantidade if self.state.quantidade > 0 else 1)
             self._atualizar_resumo_parcelas(atualizar_ui=False)
-            self._atualizar_opcoes_fatura(atualizar_ui=False)
+            cartao_atual = self._obter_cartao_id(self.state.cartao_id)
+            if cartao_atual != self._ultimo_cartao_fatura_carregado or not self.dd_fatura.options:
+                self._atualizar_opcoes_fatura(atualizar_ui=False)
 
     def _atualizar_opcoes_forma(self, atualizar_ui: bool = True):
         if self.state.eh_receita:
@@ -2440,13 +2468,22 @@ class LancamentoForm(ft.Column):
             self.dd_fatura.options = []
             self.dd_fatura.value = ""
             self.row_fatura.visible = False
+            self._ultimo_cartao_fatura_carregado = None
             if atualizar_ui:
                 self._safe_update(self.row_fatura)
             return
 
         self.row_fatura.visible = True
         cartao_id = self._obter_cartao_id(self.state.cartao_id)
-        opcoes = db.listar_faturas_opcoes_cartao(cartao_id) if cartao_id else []
+        if cartao_id:
+            if cartao_id in self._faturas_por_cartao_cache:
+                opcoes = self._faturas_por_cartao_cache[cartao_id]
+            else:
+                opcoes = db.listar_faturas_opcoes_cartao(cartao_id) or []
+                self._faturas_por_cartao_cache[cartao_id] = opcoes
+        else:
+            opcoes = []
+        self._ultimo_cartao_fatura_carregado = cartao_id
         self._faturas_opcoes_cache = {str(opt["id"]): opt for opt in opcoes}
 
         dropdown_opts = [
@@ -2600,6 +2637,10 @@ class LancamentoForm(ft.Column):
     def _atualizar_resumo_parcelas(self, atualizar_ui: bool = True):
         if not self.state.eh_credito:
             return
+        badge_vis_ant = getattr(getattr(self, "badge_edicao_parcela", None), "visible", False)
+        aviso_vis_ant = getattr(getattr(self, "lbl_aviso_mudanca_parcelas", None), "visible", False)
+        aviso_txt_ant = getattr(getattr(self, "lbl_aviso_mudanca_parcelas", None), "value", "")
+
         if self.state.is_fixa:
             self.lbl_resumo_parcelas.value = "Cobrança contínua todo mês na fatura do cartão."
             self.lbl_resumo_parcelas.color = T.PRIMARY
@@ -2656,9 +2697,12 @@ class LancamentoForm(ft.Column):
 
         if atualizar_ui:
             self._safe_update(self.lbl_resumo_parcelas)
-            if hasattr(self, "badge_edicao_parcela"):
+            if hasattr(self, "badge_edicao_parcela") and self.badge_edicao_parcela.visible != badge_vis_ant:
                 self._safe_update(self.badge_edicao_parcela)
-            if hasattr(self, "lbl_aviso_mudanca_parcelas"):
+            if hasattr(self, "lbl_aviso_mudanca_parcelas") and (
+                self.lbl_aviso_mudanca_parcelas.visible != aviso_vis_ant
+                or self.lbl_aviso_mudanca_parcelas.value != aviso_txt_ant
+            ):
                 self._safe_update(self.lbl_aviso_mudanca_parcelas)
 
     def _atualizar_resumo_repetir(self, atualizar_ui: bool = True):
@@ -2717,32 +2761,71 @@ class LancamentoForm(ft.Column):
         return centavos / 100.0
 
     def _ao_mudar_valor(self, e):
-        raw = e.control.value or ""
+        # Trava estrita contra reentrância e loops de eventos no WebSocket do Flet
+        if getattr(self, "_formatando_valor", False):
+            return
+
+        raw = ""
+        if e is not None:
+            if getattr(e, "control", None) is not None and getattr(e.control, "value", None) is not None:
+                raw = str(e.control.value)
+            elif getattr(e, "data", None) is not None:
+                raw = str(e.data)
+
         valor = self._parse_input_valor(raw)
+        eh_modo_parcela = (
+            self.state.eh_credito
+            and not self.state.is_fixa
+            and self.state.modo_calculo_parcela == "parcela"
+        )
+        val_anterior = self.state.obter_valor_exibicao_input()
+        novo_formatado = formatar_moeda_input(valor)
 
-        if self.state.eh_credito and not self.state.is_fixa and self.state.modo_calculo_parcela == "parcela":
-            self.state.definir_valor_parcela(valor)
-        else:
-            self.state.definir_valor_total(valor)
+        # Se o evento recebido já está exatamente formatado e o estado numérico não mudou,
+        # evita disparar .update() redundante no WebSocket (previne race condition ao digitar rápido)
+        if (
+            raw == novo_formatado
+            and self.txt_valor.value == novo_formatado
+            and abs(valor - val_anterior) < 1e-9
+        ):
+            return
 
-        val_exibir = self.state.obter_valor_exibicao_input()
-        self.txt_valor.value = formatar_moeda_input(val_exibir)
+        self._formatando_valor = True
+        try:
+            if eh_modo_parcela:
+                self.state.definir_valor_parcela(valor)
+            else:
+                self.state.definir_valor_total(valor)
 
-        if self.state.eh_credito:
-            self._atualizar_resumo_parcelas()
-        elif self.state.is_repetir:
-            self._atualizar_resumo_repetir()
+            val_exibir = self.state.obter_valor_exibicao_input()
+            txt_final = formatar_moeda_input(val_exibir)
+            precisa_update_input = (raw != txt_final) or (self.txt_valor.value != txt_final)
+            self.txt_valor.value = txt_final
+            self._ultimo_valor_formatado = txt_final
+
+            if precisa_update_input:
+                self._safe_update(self.txt_valor)
+
+            if self.state.eh_credito:
+                self._atualizar_resumo_parcelas(atualizar_ui=True)
+            elif self.state.is_repetir:
+                self._atualizar_resumo_repetir(atualizar_ui=True)
+        finally:
+            self._formatando_valor = False
+
         self._notificar_mudanca()
 
     def _ao_sair_do_valor(self, e):
         val_exibir = self.state.obter_valor_exibicao_input()
-        self.txt_valor.value = formatar_moeda_input(val_exibir)
-        self._safe_update(self.txt_valor)
+        txt_final = formatar_moeda_input(val_exibir)
+        if self.txt_valor.value != txt_final:
+            self.txt_valor.value = txt_final
+            self._safe_update(self.txt_valor)
 
     def _ao_focar_valor(self, e):
-        if self.state.valor == 0:
-            self.txt_valor.value = ""
-            self._safe_update(self.txt_valor)
+        # Não muta txt_valor.value nem dispara .update() no on_focus para evitar
+        # condição de corrida no WebSocket contra o primeiro dígito digitado.
+        pass
 
     def _selecionar_data_rapida(self, dt: date):
         self.state.atualizar_data(dt)

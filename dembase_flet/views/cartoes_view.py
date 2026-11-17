@@ -223,6 +223,7 @@ def criar_view_cartoes(
 
     cartoes_lista: list[dict] = []
     faturas_lista: list[dict] = []
+    faturas_mes_todas: list[dict] = []
     faturas_prox_lista: list[dict] = []
     resumo_periodo: dict = {}
     # Regra 1: O estado padrão (default) ao carregar deve ser obrigatoriamente "Meus Cartões"
@@ -297,9 +298,10 @@ def criar_view_cartoes(
 
     # ── Carregar Dados ────────────────────────────────────────────────────────
     def _aplicar_dados_cartoes(c_lista, fat_brutas, fat_prox_brutas, res_per):
-        nonlocal cartoes_lista, faturas_lista, faturas_prox_lista, resumo_periodo
+        nonlocal cartoes_lista, faturas_lista, faturas_mes_todas, faturas_prox_lista, resumo_periodo
         cartoes_lista = c_lista or []
         faturas_brutas = fat_brutas or []
+        faturas_mes_todas = list(faturas_brutas)
         faturas_prox_brutas = fat_prox_brutas or []
         mes_prox = 1 if mes_sel[0] == 12 else mes_sel[0] + 1
         ano_prox = ano_sel[0] + 1 if mes_sel[0] == 12 else ano_sel[0]
@@ -347,8 +349,16 @@ def criar_view_cartoes(
             filtradas_faixa = []
             for f_item in faturas_brutas:
                 dv_raw = str(f_item.get("data_vencimento") or "")[:10]
+                dp_raw = str(f_item.get("data_pagamento") or "")[:10]
                 incluir = False
-                if dv_raw:
+                if dp_raw:
+                    try:
+                        dp_dt = date.fromisoformat(dp_raw)
+                        if d_i_dt <= dp_dt <= d_f_dt:
+                            incluir = True
+                    except Exception:
+                        pass
+                if not incluir and dv_raw:
                     try:
                         dv_dt = date.fromisoformat(dv_raw)
                         if d_i_dt <= dv_dt <= d_f_dt:
@@ -357,7 +367,7 @@ def criar_view_cartoes(
                             incluir = True
                     except Exception:
                         pass
-                else:
+                elif not incluir:
                     c_ref = mapa_cartoes_id.get(str(f_item.get("cartao_id"))) or {}
                     dia_v = int(c_ref.get("dia_vencimento") or 10)
                     if d_i_dt.day <= dia_v <= d_f_dt.day:
@@ -420,8 +430,8 @@ def criar_view_cartoes(
                 try:
                     res = await asyncio.gather(
                         asyncio.to_thread(db.listar_cartoes, forcar),
-                        asyncio.to_thread(db.listar_faturas, None, mes_atual, ano_atual),
-                        asyncio.to_thread(db.listar_faturas, None, mes_prox, ano_prox),
+                        asyncio.to_thread(db.listar_faturas, None, None, mes_atual, ano_atual),
+                        asyncio.to_thread(db.listar_faturas, None, None, mes_prox, ano_prox),
                         asyncio.to_thread(db.obter_resumo_cartoes, mes_atual, ano_atual),
                         return_exceptions=True,
                     )
@@ -1232,12 +1242,27 @@ def criar_view_cartoes(
                 ),
             )
 
+            borda_padrao_card = borda(1.5, T.PRIMARY if eh_melhor else T.BORDER)
+            borda_hover_card = borda(1.8, T.PRIMARY)
+
+            def _ao_hover_card_cartao(e, c_ref_bool=eh_melhor, b_pad=borda_padrao_card, b_hov=borda_hover_card):
+                eh_hover = (str(getattr(e, "data", "")).lower() == "true" or getattr(e, "data", False) is True)
+                e.control.border = b_hov if eh_hover else b_pad
+                try:
+                    e.control.update()
+                except Exception:
+                    pass
+
             card = ft.Container(
                 col={"xs": 12, "sm": 6, "md": 4},
                 padding=pad(all_=18),
                 bgcolor=T.SURFACE,
                 border_radius=16,
-                border=borda(1.5, T.PRIMARY if eh_melhor else T.BORDER),
+                border=borda_padrao_card,
+                ink=True,
+                on_click=_ir_extrato_cartao,
+                on_hover=_ao_hover_card_cartao,
+                tooltip=f"Clique para abrir Fatura & Extrato de {cartao.get('nome', 'Cartão')}",
                 content=ft.Column(
                     spacing=12,
                     controls=[
@@ -1369,12 +1394,37 @@ def criar_view_cartoes(
                 else f"Fatura de {MESES_NOMES[mes_f]}/{ano_f}"
             )
 
+            borda_padrao_fat = borda(1.5, cor_borda)
+            borda_hover_fat = borda(1.8, T.PRIMARY)
+
+            def _ao_hover_card_fatura(e, b_pad=borda_padrao_fat, b_hov=borda_hover_fat):
+                eh_hover = (str(getattr(e, "data", "")).lower() == "true" or getattr(e, "data", False) is True)
+                e.control.border = b_hov if eh_hover else b_pad
+                try:
+                    e.control.update()
+                except Exception:
+                    pass
+
+            def _ir_extrato_fatura(_=None, target_id=cid, fat_obj=fat):
+                if not target_id:
+                    return
+                fid_raw = str((fat_obj or {}).get("id") or "")
+                fid_valido = fid_raw if (fid_raw and not fid_raw.startswith("virtual_") and not fid_raw.startswith("futura_")) else None
+                if fid_valido:
+                    ir_cartao(page, target_id, fatura_id=fid_valido)
+                else:
+                    ir_cartao(page, target_id)
+
             return ft.Container(
                 col={"xs": 12, "sm": 6, "md": 4},
                 padding=pad(all_=18),
                 bgcolor=T.SURFACE,
                 border_radius=16,
-                border=borda(1.5, cor_borda),
+                border=borda_padrao_fat,
+                ink=True,
+                on_click=_ir_extrato_fatura,
+                on_hover=_ao_hover_card_fatura,
+                tooltip=f"Clique para abrir Fatura & Extrato de {nome_c}",
                 content=ft.Column(
                     spacing=14,
                     controls=[
@@ -1748,16 +1798,45 @@ def criar_view_cartoes(
     def _renderizar_faturas_fechadas():
         cartao_dict = {str(c["id"]): c for c in cartoes_lista}
 
-        # Regra 2: Filtra faturas pagas ESTRITAMENTE do mês e ano filtrado
-        faturas_pagas = [
-            f for f in faturas_lista
+        # Combina faturas brutas do mês com eventuais registros do resumo_periodo
+        base_faturas_mes = list(faturas_mes_todas if faturas_mes_todas else faturas_lista)
+        ids_cartoes_na_base = {str(f.get("cartao_id") or "") for f in base_faturas_mes}
+        for cr in (resumo_periodo.get("cartoes") or []):
+            cid_cr = str(cr.get("id") or "")
+            st_cr = str(cr.get("fatura_status") or "").lower()
+            val_cr = float(cr.get("fatura_valor", 0) or 0)
+            pg_cr = float(cr.get("fatura_pago", 0) or 0)
+            if cid_cr and cid_cr not in ids_cartoes_na_base and (st_cr in ("paga", "fechada") or pg_cr >= val_cr > 0.01):
+                base_faturas_mes.append({
+                    "id": cr.get("fatura_id"),
+                    "cartao_id": cid_cr,
+                    "mes": mes_sel[0],
+                    "ano": ano_sel[0],
+                    "valor_total": val_cr,
+                    "valor_pago": pg_cr,
+                    "status": st_cr or "paga",
+                    "data_vencimento": cr.get("data_vencimento"),
+                    "data_pagamento": cr.get("data_pagamento"),
+                })
+
+        # Filtra faturas pagas/liquidadas ou fechadas do período selecionado
+        candidatas_fechadas = [
+            f for f in base_faturas_mes
             if (int(f.get("mes") or 0) == mes_sel[0] and int(f.get("ano") or 0) == ano_sel[0])
             and (
-                str(f.get("status", "")).lower() == "paga"
-                or float(f.get("valor_pago", 0) or 0) >= float(f.get("valor_total", 0) or 0) > 0
-                or float(f.get("valor_total", 0) or 0) <= 0.01
+                str(f.get("status", "")).lower() in ("paga", "fechada")
+                or float(f.get("valor_pago", 0) or 0) >= float(f.get("valor_total", 0) or 0) > 0.01
+                or bool(f.get("data_pagamento"))
             )
         ]
+        # Prioriza faturas que tiveram movimentação real ou pagamento registrado
+        com_movimento = [
+            f for f in candidatas_fechadas
+            if float(f.get("valor_total", 0) or 0) > 0.01
+            or float(f.get("valor_pago", 0) or 0) > 0.01
+            or bool(f.get("data_pagamento"))
+        ]
+        faturas_pagas = com_movimento if com_movimento else candidatas_fechadas
 
         if not faturas_pagas:
             grid_conteudo.controls.append(
@@ -1787,43 +1866,119 @@ def criar_view_cartoes(
             c_obj = cartao_dict.get(cid, fat.get("cartoes") or {})
             nome_c = c_obj.get("nome", "Cartão")
             cor_c = c_obj.get("cor", "#1E293B")
-            val_pago = float(fat.get("valor_pago", fat.get("valor_total", 0)) or 0)
+            st_fat_item = str(fat.get("status") or "").lower()
+            val_tot_item = float(fat.get("valor_total", 0) or 0)
+            val_pg_item = float(fat.get("valor_pago", 0) or 0)
+            dt_pag = fat.get("data_pagamento")
+            dt_venc_f = fat.get("data_vencimento")
+            eh_liquidada = (
+                st_fat_item == "paga"
+                or (val_pg_item >= val_tot_item > 0.01)
+                or bool(dt_pag)
+            )
+            val_exibicao = (val_pg_item if val_pg_item > 0.01 else val_tot_item) if eh_liquidada else val_tot_item
             mes_f = int(fat.get("mes") or mes_sel[0])
             ano_f = int(fat.get("ano") or ano_sel[0])
 
-            dt_pag = fat.get("data_pagamento")
             dt_pag_txt = ""
-            if dt_pag:
-                try:
-                    dt_p = datetime.fromisoformat(str(dt_pag).split("T")[0]).date()
-                    dt_pag_txt = f"Pago em {dt_p.strftime('%d/%m/%Y')}"
-                except Exception:
-                    dt_pag_txt = f"Pago em {dt_pag}"
-            elif val_pago <= 0.01:
-                dt_pag_txt = "Sem Débito / Zerada"
+            if eh_liquidada:
+                if dt_pag:
+                    try:
+                        dt_p = datetime.fromisoformat(str(dt_pag).split("T")[0]).date()
+                        dt_pag_txt = f"Pago em {dt_p.strftime('%d/%m/%Y')}"
+                    except Exception:
+                        dt_pag_txt = f"Pago em {dt_pag}"
+                    if dt_venc_f and str(dt_venc_f)[:10] != str(dt_pag)[:10]:
+                        try:
+                            dt_v_o = datetime.fromisoformat(str(dt_venc_f).split("T")[0]).date()
+                            dt_pag_txt += f" · Venc. {dt_v_o.strftime('%d/%m')}"
+                        except Exception:
+                            pass
+                elif val_exibicao <= 0.01:
+                    dt_pag_txt = "Sem Débito / Zerada"
+                else:
+                    dt_pag_txt = "Liquidada"
+            else:
+                if dt_venc_f:
+                    try:
+                        dt_v_o = datetime.fromisoformat(str(dt_venc_f).split("T")[0]).date()
+                        dt_pag_txt = f"Fechada · Vence em {dt_v_o.strftime('%d/%m/%Y')}"
+                    except Exception:
+                        dt_pag_txt = f"Fechada · Vence em {dt_venc_f}"
+                else:
+                    dt_pag_txt = "Fatura Fechada · Aguardando pagamento"
 
-            btn_estornar = ft.TextButton(
-                content=ft.Row(
-                    spacing=4,
-                    tight=True,
-                    controls=[
-                        ft.Icon(ft.Icons.RESTORE_ROUNDED, size=15, color=T.DESPESA),
-                        ft.Text("Estornar", color=T.DESPESA, size=12),
-                    ],
-                ),
-                on_click=lambda _, f=fat, c=c_obj: abrir_modal_estorno(f, c),
-            ) if val_pago > 0.01 else ft.Container()
+            cor_status_card = T.RECEITA if eh_liquidada else T.WARNING
+            txt_badge_card = "Paga" if eh_liquidada else "Fechada"
+            ic_badge_card = ft.Icons.CHECK_CIRCLE_ROUNDED if eh_liquidada else ft.Icons.LOCK_CLOCK_ROUNDED
+
+            if eh_liquidada and val_exibicao > 0.01:
+                acao_direita = ft.TextButton(
+                    content=ft.Row(
+                        spacing=4,
+                        tight=True,
+                        controls=[
+                            ft.Icon(ft.Icons.RESTORE_ROUNDED, size=15, color=T.DESPESA),
+                            ft.Text("Estornar", color=T.DESPESA, size=12),
+                        ],
+                    ),
+                    on_click=lambda _, f=fat, c=c_obj: abrir_modal_estorno(f, c),
+                )
+            elif not eh_liquidada and val_exibicao > 0.01:
+                acao_direita = ft.FilledButton(
+                    content=ft.Row(
+                        spacing=4,
+                        tight=True,
+                        controls=[
+                            ft.Icon(ft.Icons.PAYMENTS_ROUNDED, size=14, color=ft.Colors.WHITE),
+                            ft.Text("Pagar Fatura", color=ft.Colors.WHITE, size=11.5, weight=ft.FontWeight.BOLD),
+                        ],
+                    ),
+                    style=ft.ButtonStyle(
+                        bgcolor=T.RECEITA,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                        padding=pad(h=10, v=6),
+                    ),
+                    on_click=lambda _, f=fat, c=c_obj: abrir_modal_pagar_fatura(f, c),
+                )
+            else:
+                acao_direita = ft.Container()
+
+            borda_padrao_paga = borda(1, ft.Colors.with_opacity(0.35, cor_status_card))
+            borda_hover_paga = borda(1.8, T.PRIMARY)
+
+            def _ao_hover_card_paga(e, b_pad=borda_padrao_paga, b_hov=borda_hover_paga):
+                eh_hover = (str(getattr(e, "data", "")).lower() == "true" or getattr(e, "data", False) is True)
+                e.control.border = b_hov if eh_hover else b_pad
+                try:
+                    e.control.update()
+                except Exception:
+                    pass
+
+            def _ir_extrato_fatura_paga(_=None, target_id=cid, fat_obj=fat):
+                if not target_id:
+                    return
+                fid_raw = str((fat_obj or {}).get("id") or "")
+                fid_valido = fid_raw if (fid_raw and not fid_raw.startswith("virtual_") and not fid_raw.startswith("futura_")) else None
+                if fid_valido:
+                    ir_cartao(page, target_id, fatura_id=fid_valido)
+                else:
+                    ir_cartao(page, target_id)
 
             card_paga = ft.Container(
                 col={"xs": 12, "sm": 6, "md": 4},
                 padding=pad(all_=18),
                 bgcolor=T.SURFACE,
                 border_radius=16,
-                border=borda(1, ft.Colors.with_opacity(0.35, T.RECEITA)),
+                border=borda_padrao_paga,
+                ink=True,
+                on_click=_ir_extrato_fatura_paga,
+                on_hover=_ao_hover_card_paga,
+                tooltip=f"Clique para abrir Fatura & Extrato de {nome_c}",
                 content=ft.Column(
                     spacing=12,
                     controls=[
-                        # Topo: Cartão + Badge Verde Paga
+                        # Topo: Cartão + Badge Semântico (Paga / Fechada)
                         ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1838,33 +1993,33 @@ def criar_view_cartoes(
                                 ),
                                 ft.Container(
                                     padding=pad(h=8, v=3),
-                                    bgcolor=ft.Colors.with_opacity(0.12, T.RECEITA),
+                                    bgcolor=ft.Colors.with_opacity(0.12, cor_status_card),
                                     border_radius=6,
                                     content=ft.Row(
                                         spacing=4,
                                         tight=True,
                                         controls=[
-                                            ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED, size=13, color=T.RECEITA),
-                                            ft.Text("Paga", color=T.RECEITA, size=11, weight=ft.FontWeight.BOLD),
+                                            ft.Icon(ic_badge_card, size=13, color=cor_status_card),
+                                            ft.Text(txt_badge_card, color=cor_status_card, size=11, weight=ft.FontWeight.BOLD),
                                         ],
                                     ),
                                 ),
                             ],
                         ),
 
-                        # Dados do Pagamento
+                        # Dados do Pagamento / Fechamento
                         ft.Column(
                             spacing=3,
                             controls=[
                                 ft.Text(f"Fatura de {MESES_NOMES[mes_f]}/{ano_f}", color=T.TEXT_MUTED, size=12),
-                                ft.Text(formatar_moeda(val_pago), color=T.RECEITA, size=22, weight=ft.FontWeight.BOLD),
-                                ft.Text(dt_pag_txt or "Liquidada", color=T.TEXT_MUTED, size=11) if dt_pag_txt else ft.Container(),
+                                ft.Text(formatar_moeda(val_exibicao), color=cor_status_card, size=22, weight=ft.FontWeight.BOLD),
+                                ft.Text(dt_pag_txt, color=T.TEXT_MUTED, size=11) if dt_pag_txt else ft.Container(),
                             ],
                         ),
 
                         ft.Divider(height=1, color=T.BORDER),
 
-                        # Ações: Extrato e Estorno
+                        # Ações: Extrato e Estorno / Pagamento
                         ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1878,9 +2033,9 @@ def criar_view_cartoes(
                                             ft.Text("Ver Extrato", color=T.PRIMARY, size=12, weight=ft.FontWeight.W_600),
                                         ],
                                     ),
-                                    on_click=lambda _, target_id=cid: ir_cartao(page, target_id),
+                                    on_click=_ir_extrato_fatura_paga,
                                 ),
-                                btn_estornar,
+                                acao_direita,
                             ],
                         ),
                     ],

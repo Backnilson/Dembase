@@ -21,7 +21,7 @@ import flet as ft
 import flet.canvas as cv
 
 from core import theme as T
-from core.constants import formatar_data_br, formatar_moeda
+from core.constants import formatar_data_br, formatar_moeda, formatar_rastreio_datas
 from core.theme import abrir_dialogo, fechar_dialogo
 from core.potes import calcular_teto_seguro_gastavel
 from core.theme import borda, pad
@@ -191,9 +191,17 @@ def montar_texto_tooltip_raio_x(raio_x: dict) -> str:
     ]
     for vf in vencimentos_dia:
         st_f = str(vf.get("status") or "aberta").upper()
-        linhas.append(
-            f"💳 Vencimento {vf.get('cartao_nome')}: {formatar_moeda(float(vf.get('valor_total', 0) or 0))} ({st_f})"
-        )
+        dt_pg_vf = str(vf.get("data_pagamento") or "")[:10]
+        dt_orig_vf = str(vf.get("data_vencimento_original") or vf.get("data_vencimento") or "")[:10]
+        if st_f == "PAGA" and dt_pg_vf and float(vf.get("valor_total", 0) or 0) > 0.01:
+            det_venc = f" · Venc. original {formatar_data_br(dt_orig_vf)[:5]}" if (dt_orig_vf and dt_orig_vf != dt_pg_vf) else ""
+            linhas.append(
+                f"💳 Fatura Paga {vf.get('cartao_nome')}: {formatar_moeda(float(vf.get('valor_total', 0) or 0))} (Pago em {formatar_data_br(dt_pg_vf)[:5]}{det_venc})"
+            )
+        else:
+            linhas.append(
+                f"💳 Vencimento {vf.get('cartao_nome')}: {formatar_moeda(float(vf.get('valor_total', 0) or 0))} ({st_f})"
+            )
     for cx_l in caixinhas:
         cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "Caixinha"
         cx_v = float(cx_l.get("valor", 0) or 0)
@@ -573,7 +581,18 @@ def construir_painel_raio_x(
             st_fat = str(vf.get("status") or "aberta").lower()
             eh_paga = (st_fat == "paga" or v_fat <= 0.01)
             cor_vf = T.RECEITA if eh_paga else T.WARNING
-            lbl_st = "Fatura Paga / Zerada" if eh_paga else "Vencimento de Fatura"
+            dt_pg_vf = str(vf.get("data_pagamento") or "")[:10]
+            dt_orig_vf = str(vf.get("data_vencimento_original") or vf.get("data_vencimento") or "")[:10]
+            if v_fat <= 0.01:
+                lbl_st = "Fatura Zerada"
+            elif eh_paga and dt_pg_vf:
+                lbl_st = f"Fatura Paga em {formatar_data_br(dt_pg_vf)[:5]}" + (
+                    f" · Venc. orig. {formatar_data_br(dt_orig_vf)[:5]}" if (dt_orig_vf and dt_orig_vf != dt_pg_vf) else ""
+                )
+            elif eh_paga:
+                lbl_st = "Fatura Paga"
+            else:
+                lbl_st = "Vencimento de Fatura"
 
             itens_raio_x.append(
                 ft.Container(
@@ -713,7 +732,18 @@ def abrir_modal_raio_x_dia(
         st_fat = str(vf.get("status") or "aberta").lower()
         eh_paga = (st_fat == "paga" or v_fat <= 0.01)
         cor_vf = T.RECEITA if eh_paga else T.WARNING
-        lbl_st = "Fatura Paga / Zerada" if eh_paga else "Vencimento de Fatura"
+        dt_pg_vf = str(vf.get("data_pagamento") or "")[:10]
+        dt_orig_vf = str(vf.get("data_vencimento_original") or vf.get("data_vencimento") or "")[:10]
+        if v_fat <= 0.01:
+            lbl_st = "Fatura Zerada"
+        elif eh_paga and dt_pg_vf:
+            lbl_st = f"Fatura Paga em {formatar_data_br(dt_pg_vf)[:5]}" + (
+                f" · Vencimento original {formatar_data_br(dt_orig_vf)[:5]}" if (dt_orig_vf and dt_orig_vf != dt_pg_vf) else ""
+            )
+        elif eh_paga:
+            lbl_st = "Fatura Paga"
+        else:
+            lbl_st = "Vencimento de Fatura"
         itens_modal.append(
             ft.Container(
                 padding=pad(h=12, v=10),
@@ -791,7 +821,10 @@ def abrir_modal_raio_x_dia(
             if l_it.get("parcela_atual") and l_it.get("total_parcelas"):
                 origem_str += f" ({l_it['parcela_atual']}/{l_it['total_parcelas']})"
             dt_compra_orig = str(l_it.get("data_compra") or "")[:10]
-            if crt_n and dt_compra_orig and dt_compra_orig != dt_str[:10]:
+            rastreio_modal_txt = formatar_rastreio_datas(l_it)
+            if rastreio_modal_txt:
+                origem_str += f" • {rastreio_modal_txt}"
+            elif crt_n and dt_compra_orig and dt_compra_orig != dt_str[:10]:
                 origem_str += f" • Compra {formatar_data_br(dt_compra_orig)[:5]}"
             eh_caixinha = bool(l_it.get("caixinha_id")) or str(l_it.get("subtipo") or "").lower() == "provisionamento"
             if eh_caixinha:
