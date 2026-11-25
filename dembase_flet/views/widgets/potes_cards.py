@@ -220,7 +220,7 @@ def card_pote(pote: dict, on_click=None, on_liberar: Callable[[int, bool], None]
                     spacing=10,
                     controls=[
                         _caixa_valor("GASTO REAL", gasto, cor_valor),
-                        _caixa_valor(f"LIMITE ({perc_pote:.1f}%)", previsto, T.TEXT_PRIMARY),
+                        _caixa_valor(f"LIMITE ({_pct_br(perc_pote)})", previsto, T.TEXT_PRIMARY),
                     ],
                 ),
                 ft.Row(

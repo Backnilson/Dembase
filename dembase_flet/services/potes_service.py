@@ -59,6 +59,14 @@ def obter_pct_investimento_db(mes: int, ano: int) -> tuple[float | None, bool]:
     return None, False
 
 
+def salvar_pct_investimento_db(mes: int, ano: int, pct_investimento: float) -> None:
+    """Persiste no banco a proporção do Caixa Livre (Liberdade vs Prazeres) para o mês."""
+    try:
+        db.salvar_config_caixa_livre_mes(mes, ano, round(max(0.0, min(100.0, float(pct_investimento))), 1))
+    except Exception:
+        pass
+
+
 def salvar_configuracao(
     itens: list[dict],
     mes: int | None = None,
@@ -70,13 +78,19 @@ def salvar_configuracao(
     itens: [{"id", "nome", "percentual"}]. Levanta P.ErroPotes se inválido.
     """
     P.exigir_configuracao_valida(itens)
+    percs_dec = [P.para_decimal(i["percentual"]).quantize(P.CENTAVO) for i in itens]
+    diff = P.TOTAL_PERCENTUAL - sum(percs_dec, Decimal("0"))
+    if diff != Decimal("0") and abs(diff) <= Decimal("0.05") and percs_dec:
+        # Ajusta resíduo de arredondamento (<= 0.05%) no maior pote para fechar 100.00 exato no PostgreSQL
+        idx_maior = max(range(len(percs_dec)), key=lambda idx: percs_dec[idx])
+        percs_dec[idx_maior] = (percs_dec[idx_maior] + diff).quantize(P.CENTAVO)
     payload = [
         {
             "id": i["id"],
             "nome": str(i["nome"]).strip(),
-            "percentual": float(P.para_decimal(i["percentual"])),
+            "percentual": float(p_dec),
         }
-        for i in itens
+        for i, p_dec in zip(itens, percs_dec)
     ]
     try:
         return P.potes_de_registros(db.salvar_potes(payload, mes=mes, ano=ano))

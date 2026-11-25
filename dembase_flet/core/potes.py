@@ -223,7 +223,7 @@ def validar_configuracao(itens: list[dict]) -> list[str]:
         percentuais.append(perc)
 
     soma = sum(percentuais, Decimal("0"))
-    if soma != TOTAL_PERCENTUAL:
+    if abs(soma - TOTAL_PERCENTUAL) > Decimal("0.05"):
         erros.append(f"A soma dos percentuais deve ser exatamente 100% (atual: {soma.normalize():f}%).")
 
     return erros
@@ -438,8 +438,20 @@ def calcular_arquitetura_unificada_potes(
         teto_caixa_livre = round(rec * (pct_caixa_livre / 100.0), 2)
 
     # 4. Divisão do Slider entre Prazeres (pos 4) e Liberdade Financeira (pos 6)
-    pct4 = round(pct_caixa_livre * (s_livre / 100.0), 2)
-    lim4 = round(teto_caixa_livre * (s_livre / 100.0), 2)
+    soma_cl_meta = p4["percentual"] + p6["percentual"]
+    pct_inv_meta = round((p6["percentual"] / soma_cl_meta) * 100.0, 1) if soma_cl_meta > 0 else None
+    if (
+        not tem_liberacao
+        and pct_inv_meta is not None
+        and abs(s_inv - pct_inv_meta) <= 0.15
+        and p4["percentual"] <= pct_caixa_livre
+    ):
+        # Respeita exatamente a meta salva de Prazeres (Fonte Única da Verdade com o modal)
+        pct4 = round(p4["percentual"], 4)
+        lim4 = round(rec * (pct4 / 100.0), 2)
+    else:
+        pct4 = round(pct_caixa_livre * (s_livre / 100.0), 2)
+        lim4 = round(teto_caixa_livre * (s_livre / 100.0), 2)
 
     # Liberdade Financeira absorve a diferença para fechar SEMPRE exatamente 100,00%
     pct6 = round(100.0 - (pct1 + pct2 + pct3 + pct4 + pct5), 2)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import calendar
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 
 import flet as ft
 try:
@@ -40,10 +40,36 @@ COR_ALERTA = "#F97316"
 
 
 def _fmt_perc(v: Decimal | float) -> str:
-    val = float(v)
-    if abs(val - round(val)) < 0.05:
+    val = round(float(v), 2)
+    if abs(val - round(val)) < 0.005:
         return f"{int(round(val))}%"
-    return f"{val:.1f}%".replace(".", ",")
+    if abs(val * 10 - round(val * 10)) < 0.05:
+        return f"{val:.1f}%".replace(".", ",")
+    return f"{val:.2f}%".replace(".", ",")
+
+
+def _fmt_input_perc(v: Decimal | float) -> str:
+    val = round(float(v), 2)
+    if abs(val - round(val)) < 0.005:
+        return str(int(round(val)))
+    if abs(val * 10 - round(val * 10)) < 0.05:
+        return f"{val:.1f}".replace(".", ",")
+    return f"{val:.2f}".replace(".", ",")
+
+
+def _parse_perc_decimal(texto: str | None) -> Decimal:
+    bruto = str(texto or "").strip().replace("%", "").replace(",", ".")
+    if not bruto or bruto == ".":
+        return Decimal("0")
+    try:
+        d = Decimal(bruto)
+    except Exception:
+        return Decimal("0")
+    if d < Decimal("0"):
+        d = Decimal("0")
+    elif d > Decimal("100"):
+        d = Decimal("100")
+    return d.quantize(Decimal("0.01"))
 
 
 def _intervalo_mes(m: int, a: int) -> tuple[str, str]:
@@ -190,11 +216,12 @@ def montar_aba_potes(
                     np = por_pos[pos]
                     l["pote"] = np
                     l["nome"].value = np.nome
-                    val_pct = float(np.percentual)
-                    l["slider"].value = int(round(val_pct))
-                    l["perc"].value = str(int(round(val_pct)))
+                    val_pct = P.para_decimal(np.percentual, Decimal("0")).quantize(Decimal("0.01"))
+                    l["pct_dec"] = val_pct
+                    l["slider"].value = float(val_pct)
+                    l["perc"].value = _fmt_input_perc(val_pct)
                     if renda_ref[0] > 0:
-                        v_rs = float(renda_ref[0]) * (val_pct / 100.0)
+                        v_rs = float(renda_ref[0]) * (float(val_pct) / 100.0)
                         l["tf_rs"].value = f"{v_rs:.2f}".replace(".", ",")
             _atualizar_cabecalho_mes()
             _atualizar_info_renda()
@@ -324,7 +351,9 @@ def montar_aba_potes(
     # ── Núcleo reativo ───────────────────────────────────────────────────────
     def _percentual(linha: dict) -> Decimal:
         try:
-            return Decimal(str(int(linha["slider"].value or 0)))
+            if "pct_dec" in linha and linha["pct_dec"] is not None:
+                return linha["pct_dec"]
+            return Decimal(str(round(float(linha["slider"].value or 0), 2)))
         except Exception:
             return Decimal("0")
 
@@ -381,7 +410,12 @@ def montar_aba_potes(
             for l in linhas
         ]
         piso = storage.obter_piso_custos_fixos(page, 1150.0)
-        pct_inv = _pct_invest_mes()
+        # Proporção em tempo real dos potes de Caixa Livre (Prazeres pos 4 vs Liberdade pos 6)
+        pct4_sel = next((float(_percentual(l)) for l in linhas if l["pote"].posicao == 4), 0.0)
+        pct6_sel = next((float(_percentual(l)) for l in linhas if l["pote"].posicao == 6), 0.0)
+        soma_cl_sel = pct4_sel + pct6_sel
+        pct_inv = round((pct6_sel / soma_cl_sel) * 100.0, 1) if soma_cl_sel > 0 else _pct_invest_mes()
+
         arch = P.calcular_arquitetura_unificada_potes(
             rec, potes_in, piso_custos_fixos=piso, slider_pct_investimento=pct_inv,
             protecao_fluxo=None, travar_pelo_teto_seguro=False, potes_liberados=liberados,
@@ -389,22 +423,34 @@ def montar_aba_potes(
         por_pos = {p["posicao"]: p for p in arch["potes"]}
 
         for l in linhas:
-            p = por_pos.get(l["pote"].posicao)
+            pos = l["pote"].posicao
+            p = por_pos.get(pos)
             if not p:
                 continue
-            lim, g = p["previsto"], p["gasto"]
-            disp = p.get("disponivel_efetivo", p["restante"])
-            estourou = p["restante"] < -0.005
+            g = p["gasto"]
+            if pos in (4, 6):
+                # Potes de Caixa Livre: a prévia abaixo da barra reflete 100% o valor/percentual escolhido no slider/input
+                pct_exib = float(_percentual(l))
+                lim = round(rec * (pct_exib / 100.0), 2) if rec > 0 else 0.0
+                restante = round(lim - g, 2)
+                disp = max(0.0, restante)
+            else:
+                pct_exib = p["percentual"]
+                lim = p["previsto"]
+                restante = p["restante"]
+                disp = p.get("disponivel_efetivo", restante)
+
+            estourou = restante < -0.005
             cor_disp = COR_ALERTA if estourou else T.RECEITA
             txt_disp = (
-                f"{formatar_moeda(abs(p['restante']))} acima do limite"
+                f"{formatar_moeda(abs(restante))} acima do limite"
                 if estourou else f"+{formatar_moeda(disp)} disponível"
             )
             extra = ""
             if p.get("liberado"):
                 extra = " · sobra liberada p/ Caixa Livre"
             l["preview"].spans = [
-                ft.TextSpan(f"Limite {formatar_moeda(lim)} ({_fmt_perc(p['percentual'])})",
+                ft.TextSpan(f"Limite {formatar_moeda(lim)} ({_fmt_perc(pct_exib)})",
                             style=ft.TextStyle(color=T.TEXT_PRIMARY)),
                 ft.TextSpan(f"  ·  Gasto real {formatar_moeda(g)}", style=ft.TextStyle(color=T.TEXT_MUTED)),
                 ft.TextSpan(f"  ·  {txt_disp}", style=ft.TextStyle(color=cor_disp, weight=ft.FontWeight.W_600)),
@@ -508,7 +554,7 @@ def montar_aba_potes(
 
         cor_estado = T.PRIMARY if valido else COR_ALERTA
         txt_centro_valor.value = _fmt_perc(soma)
-        txt_centro_valor.color = T.TEXT_PRIMARY if soma == P.TOTAL_PERCENTUAL else COR_ALERTA
+        txt_centro_valor.color = T.TEXT_PRIMARY if abs(soma - P.TOTAL_PERCENTUAL) <= Decimal("0.05") else COR_ALERTA
         txt_alocado.value = f"{_fmt_perc(soma)} / 100%"
         txt_alocado.color = cor_estado
 
@@ -525,7 +571,11 @@ def montar_aba_potes(
     def _ao_mover_slider(e):
         for l in linhas:
             if l["slider"] is e.control:
-                v = int(e.control.value)
+                # Arraste manual da barra trabalha sempre em números inteiros (1 em 1)
+                v = int(round(float(e.control.value or 0.0)))
+                v = max(0, min(100, v))
+                l["pct_dec"] = Decimal(str(v))
+                l["slider"].value = float(v)
                 l["perc"].value = str(v)
                 r_flt = float(renda_ref[0])
                 if r_flt > 0:
@@ -536,15 +586,12 @@ def montar_aba_potes(
     def _ao_digitar_percentual(e):
         for l in linhas:
             if l["perc"] is e.control:
-                try:
-                    v = int(e.control.value or 0)
-                except ValueError:
-                    v = 0
-                v = max(0, min(100, v))
-                l["slider"].value = v
+                v_dec = _parse_perc_decimal(e.control.value)
+                l["pct_dec"] = v_dec
+                l["slider"].value = float(v_dec)
                 r_flt = float(renda_ref[0])
                 if r_flt > 0:
-                    l["tf_rs"].value = f"{r_flt * (v / 100.0):.2f}".replace(".", ",")
+                    l["tf_rs"].value = f"{r_flt * (float(v_dec) / 100.0):.2f}".replace(".", ",")
                 break
         _atualizar_tela()
 
@@ -558,12 +605,40 @@ def montar_aba_potes(
                     val_rs = 0.0
                 r_flt = float(renda_ref[0])
                 if r_flt > 0:
-                    v_pct = int(round(max(0.0, min(100.0, (val_rs / r_flt) * 100.0))))
+                    v_pct = max(0.0, min(100.0, (val_rs / r_flt) * 100.0))
+                    v_dec = Decimal(str(round(v_pct, 2))).quantize(Decimal("0.01"))
                 else:
-                    v_pct = 0
-                l["slider"].value = v_pct
-                l["perc"].value = str(v_pct)
+                    v_dec = Decimal("0")
+                l["pct_dec"] = v_dec
+                l["slider"].value = float(v_dec)
+                l["perc"].value = _fmt_input_perc(v_dec)
                 break
+        _atualizar_tela()
+
+    def _cravar_no_gasto_real(l: dict):
+        """Duplo clique na barra: crava o limite no Gasto Real (arredondando SEMPRE para cima em dízimas)."""
+        r_flt = float(renda_ref[0])
+        gasto = round(float(ctx_ref[0]["gastos"].get(l["pote"].posicao, 0.0)), 2)
+        if r_flt <= 0 or gasto <= 0:
+            v_dec = Decimal("0")
+            val_rs = 0.0
+        else:
+            rec_dec = Decimal(str(round(r_flt, 2)))
+            gasto_dec = Decimal(str(gasto))
+            pct_bruto = (gasto_dec / rec_dec) * Decimal("100")
+            if pct_bruto >= Decimal("100"):
+                v_dec = Decimal("100")
+                val_rs = r_flt
+            else:
+                # 4 casas decimais arredondando SEMPRE para cima (Limite >= Gasto Real)
+                v_dec = pct_bruto.quantize(Decimal("0.0001"), rounding=ROUND_CEILING)
+                while round(r_flt * (float(v_dec) / 100.0), 2) < gasto and v_dec < Decimal("100"):
+                    v_dec += Decimal("0.0001")
+                val_rs = round(r_flt * (float(v_dec) / 100.0), 2)
+        l["pct_dec"] = v_dec
+        l["slider"].value = float(v_dec)
+        l["perc"].value = _fmt_input_perc(v_dec)
+        l["tf_rs"].value = f"{val_rs:.2f}".replace(".", ",")
         _atualizar_tela()
 
     def _ao_alterar_nome(_):
@@ -572,22 +647,23 @@ def montar_aba_potes(
     # ── Linhas dos 6 potes com Edição Flexível (R$ e %) ─────────────────────
     for pote in potes:
         pos = pote.posicao
-        val_pct = int(round(float(pote.percentual)))
+        val_pct_dec = P.para_decimal(pote.percentual, Decimal("0")).quantize(Decimal("0.01"))
         slider = ft.Slider(
-            min=0, max=100, divisions=100, value=val_pct,
+            min=0, max=100, value=float(val_pct_dec),
             active_color=pote.cor, inactive_color=T.SURFACE_ALT, thumb_color=pote.cor,
             expand=True, on_change=_ao_mover_slider,
         )
         perc = ft.TextField(
-            value=str(val_pct), width=58, text_align=ft.TextAlign.CENTER,
+            value=_fmt_input_perc(val_pct_dec), width=66, text_align=ft.TextAlign.CENTER,
             keyboard_type=ft.KeyboardType.NUMBER,
-            input_filter=ft.NumbersOnlyInputFilter(), max_length=3, counter=ft.Text(""),
+            input_filter=ft.InputFilter(allow=True, regex_string=r"[0-9.,]", replacement_string=""),
+            max_length=6, counter=ft.Text(""),
             on_change=_ao_digitar_percentual,
             **T.campo_estilo(content_padding=pad(h=4, v=6)),
         )
 
         r_flt = float(renda)
-        val_rs_ini = r_flt * (val_pct / 100.0) if r_flt > 0 else 0.0
+        val_rs_ini = r_flt * (float(val_pct_dec) / 100.0) if r_flt > 0 else 0.0
         tf_rs = ft.TextField(
             value=f"{val_rs_ini:.2f}".replace(".", ","),
             width=92,
@@ -622,12 +698,13 @@ def montar_aba_potes(
             )
         else:
             tag_comp = ft.Container(
-                content=ft.Text("Caixa Livre", size=9.5, color="#8B5CF6", weight=ft.FontWeight.BOLD),
-                padding=pad(h=6, v=2), border_radius=6, bgcolor="#8B5CF618",
+                content=ft.Text("Caixa Livre", size=9.5, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                padding=pad(h=7, v=2), border_radius=6, bgcolor="#7C3AED",
             )
 
         linhas.append({
             "pote": pote,
+            "pct_dec": val_pct_dec,
             "slider": slider,
             "perc": perc,
             "tf_rs": tf_rs,
@@ -653,6 +730,15 @@ def montar_aba_potes(
             return
         for l, novo in zip(linhas, salvos):
             l["pote"] = novo
+        # Sincroniza a proporção do Caixa Livre (Liberdade Financeira vs Prazeres) com o Dashboard
+        pct4_salvo = next((float(_percentual(l)) for l in linhas if l["pote"].posicao == 4), 0.0)
+        pct6_salvo = next((float(_percentual(l)) for l in linhas if l["pote"].posicao == 6), 0.0)
+        soma_cl_salvo = pct4_salvo + pct6_salvo
+        if soma_cl_salvo > 0:
+            pct_inv_salvo = round((pct6_salvo / soma_cl_salvo) * 100.0, 1)
+            storage.salvar_percentual_sobra_investimento_sync(page, pct_inv_salvo, mes=m_alvo, ano=a_alvo)
+            svc.salvar_pct_investimento_db(m_alvo, a_alvo, pct_inv_salvo)
+            pct_cache[(m_alvo, a_alvo)] = pct_inv_salvo
         estado_periodo["herdado"] = False
         _atualizar_cabecalho_mes()
         mostrar_feedback(
@@ -673,11 +759,12 @@ def montar_aba_potes(
         for l in linhas:
             d = padrao[l["pote"].posicao]
             l["nome"].value = d["nome"]
-            v = int(d["percentual"])
-            l["slider"].value = v
-            l["perc"].value = str(v)
+            v_dec = Decimal(str(int(d["percentual"])))
+            l["pct_dec"] = v_dec
+            l["slider"].value = float(v_dec)
+            l["perc"].value = str(int(v_dec))
             if r_flt > 0:
-                l["tf_rs"].value = f"{r_flt * (v / 100.0):.2f}".replace(".", ",")
+                l["tf_rs"].value = f"{r_flt * (float(v_dec) / 100.0):.2f}".replace(".", ",")
         _atualizar_tela()
 
     btn_salvar.on_click = _salvar_metas
@@ -782,7 +869,13 @@ def montar_aba_potes(
                         ft.Text("%", size=11, color=T.TEXT_MUTED),
                     ],
                 ),
-                l["slider"],
+                ft.GestureDetector(
+                    on_double_tap=lambda _, linha=l: _cravar_no_gasto_real(linha),
+                    content=ft.Container(
+                        tooltip="Duplo clique na barra para igualar o limite ao Gasto Real",
+                        content=l["slider"],
+                    ),
+                ),
                 ft.Container(padding=pad(left=18), content=l["preview"]),
             ],
         )
@@ -850,7 +943,7 @@ def montar_aba_potes(
         content=ft.Column(spacing=10, controls=[
             ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
                 ft.Text("Controle de Metas Flexível (R$ ou %)", size=15, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
-                ft.Text("Digite em R$ ou % · Converte na hora", size=10.5, color=T.TEXT_MUTED),
+                ft.Text("Digite R$ ou % · Duplo clique na barra = Gasto Real", size=10.5, color=T.TEXT_MUTED),
             ]),
             *[_linha_ui(l) for l in linhas],
             ft.Divider(color=T.BORDER, height=16),
