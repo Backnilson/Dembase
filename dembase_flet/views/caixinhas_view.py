@@ -37,6 +37,7 @@ from views.widgets.custom_date_picker import (
     formatar_data_br,
 )
 import services.supabase_client as db
+from views.widgets.dembox_fatura_ui import montar_secao_fatura
 
 CORES_CAIXINHAS = [
     {"hex": "#10B981", "label": "Verde Esmeralda"},
@@ -96,15 +97,27 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
     caixinhas_lista: list[dict] = []
     filtro_aba_atual = ["todos"]  # "todos" | "provisao_mensal" | "divida"
 
-    # ── Controles de KPIs do Topo ─────────────────────────────────────────────
+    # ── Controles de KPIs do Topo (4 Cards Separados: Guardado, Faturas, Provisões, Dívidas) ──
     tam_kpi = 15 if mobile else 18
-    txt_total_meta   = ft.Text("R$ 0,00", color=T.TEXT_PRIMARY, size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
-    txt_total_saldo  = ft.Text("R$ 0,00", color=T.PRIMARY,      size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
-    txt_total_gasto  = ft.Text("R$ 0,00", color=T.WARNING,      size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
-    txt_ritmo_diario = ft.Text("R$ 0,00 / dia", color=T.INFO,   size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    tam_sub = 10 if mobile else 11
+    txt_kpi_guardado = ft.Text("R$ 0,00", color=T.PRIMARY, size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_sub_guardado = ft.Text("Prov: R$ 0 · Dív: R$ 0 · Fat: R$ 0", color=T.TEXT_MUTED, size=tam_sub, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+
+    txt_kpi_fatura = ft.Text("R$ 0,00", color="#8B5CF6", size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_sub_fatura = ft.Text("Sem faturas ativas", color=T.TEXT_MUTED, size=tam_sub, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+
+    txt_kpi_provisao = ft.Text("R$ 0,00", color="#10B981", size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_sub_provisao = ft.Text("Gasto: R$ 0,00 · R$ 0,00/dia", color=T.TEXT_MUTED, size=tam_sub, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+
+    txt_kpi_divida = ft.Text("R$ 0,00", color="#F59E0B", size=tam_kpi, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+    txt_sub_divida = ft.Text("de R$ 0,00 · 0%", color=T.TEXT_MUTED, size=tam_sub, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
 
     grid_caixinhas = ft.ResponsiveRow(spacing=14, run_spacing=14, controls=[])
-    row_filtros_modo = ft.Row(spacing=8, wrap=True)
+    # DemBox Fatura: seção própria (core/dembox_fatura.py = fonte única de cálculo)
+    secao_fatura, _recarregar_fatura, _totais_fatura, _buscar_fatura = montar_secao_fatura(
+        page, ao_mudar=lambda: _atualizar_kpis_e_abas(), mobile=mobile,
+    )
+    row_filtros_modo = ft.Row(spacing=8, run_spacing=6, wrap=True)
     spinner = ft.ProgressRing(color=T.PRIMARY, width=20, height=20, stroke_width=2, visible=False)
 
     banner_aviso_migracao = ft.Container(
@@ -127,7 +140,13 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
     )
 
     def _safe_update():
-        for ctrl in (txt_total_meta, txt_total_saldo, txt_total_gasto, txt_ritmo_diario, row_filtros_modo, grid_caixinhas, banner_aviso_migracao):
+        for ctrl in (
+            txt_kpi_guardado, txt_sub_guardado,
+            txt_kpi_fatura, txt_sub_fatura,
+            txt_kpi_provisao, txt_sub_provisao,
+            txt_kpi_divida, txt_sub_divida,
+            row_filtros_modo, secao_fatura, grid_caixinhas, banner_aviso_migracao,
+        ):
             try:
                 ctrl.update()
             except Exception:
@@ -140,55 +159,70 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
     def _atualizar_kpis_e_abas():
         provisoes = [c for c in caixinhas_lista if not _eh_modo_divida(c)]
         dividas = [c for c in caixinhas_lista if _eh_modo_divida(c)]
+        tf = _totais_fatura()
 
-        aba = filtro_aba_atual[0]
-        if aba == "divida":
-            itens_kpi = dividas
-            tot_meta = sum(float(c.get("valor_meta", 0) or 0) for c in itens_kpi)
-            tot_guardado = sum(float(c.get("total_guardado", c.get("saldo_atual", 0)) or 0) for c in itens_kpi)
-            tot_abatido = sum(float(c.get("total_abatido", 0) or 0) for c in itens_kpi)
-            tot_falta = sum(float(c.get("falta_guardar", max(0.0, float(c.get("valor_meta", 0) or 0) - float(c.get("total_guardado", 0) or 0))) or 0) for c in itens_kpi)
-            txt_total_meta.value = formatar_moeda(tot_meta)
-            txt_total_saldo.value = formatar_moeda(tot_guardado)
-            txt_total_gasto.value = formatar_moeda(tot_abatido)
-            txt_ritmo_diario.value = f"Falta {formatar_moeda(tot_falta)}"
+        # ── Card 2: DemBox Faturas (Cartões) ──────────────────────────────────
+        fat_guardado = float(tf.get("guardado", 0) or 0)
+        fat_meta = float(tf.get("meta", 0) or 0)
+        fat_falta = float(tf.get("falta", max(0.0, fat_meta - fat_guardado)) or 0)
+        fat_qtd = int(tf.get("qtd", 0) or 0)
+        txt_kpi_fatura.value = formatar_moeda(fat_guardado)
+        if fat_meta > 0:
+            txt_sub_fatura.value = f"de {formatar_moeda(fat_meta)} · Falta {formatar_moeda(fat_falta)}"
+        elif fat_qtd > 0:
+            txt_sub_fatura.value = f"{fat_qtd} box(es) · Sem fatura em aberto"
         else:
-            itens_kpi = provisoes if aba == "provisao_mensal" else caixinhas_lista
-            tot_meta = sum(float(c.get("valor_provisionado_periodo", c.get("valor_meta", 0)) or 0) for c in itens_kpi)
-            tot_saldo = sum(float(c.get("saldo_atual", 0) or 0) for c in itens_kpi)
-            tot_gasto = sum(float(c.get("total_gasto", 0) or 0) for c in itens_kpi)
+            txt_sub_fatura.value = "Crie atalhos de cartão abaixo"
 
-            hoje = date.today()
-            ritmo_tot = 0.0
-            for c in provisoes:
-                s = float(c.get("saldo_atual", 0) or 0)
-                dt_str = c.get("data_alvo")
-                if dt_str and s > 0:
-                    try:
-                        d_alvo = datetime.strptime(str(dt_str)[:10], "%Y-%m-%d").date()
-                        dias = max(1, (d_alvo - hoje).days + 1)
-                        ritmo_tot += (s / dias)
-                    except Exception:
-                        pass
+        # ── Card 3: Provisões do Mês (Consumo) ────────────────────────────────
+        prov_saldo = sum(float(c.get("saldo_atual", 0) or 0) for c in provisoes)
+        prov_gasto = sum(float(c.get("total_gasto", 0) or 0) for c in provisoes)
+        hoje = date.today()
+        ritmo_tot = 0.0
+        for c in provisoes:
+            s = float(c.get("saldo_atual", 0) or 0)
+            dt_str = c.get("data_alvo")
+            if dt_str and s > 0:
+                try:
+                    d_alvo = datetime.strptime(str(dt_str)[:10], "%Y-%m-%d").date()
+                    dias = max(1, (d_alvo - hoje).days + 1)
+                    ritmo_tot += (s / dias)
+                except Exception:
+                    pass
+        txt_kpi_provisao.value = formatar_moeda(prov_saldo)
+        txt_sub_provisao.value = f"Gasto: {formatar_moeda(prov_gasto)} · {formatar_moeda(ritmo_tot)}/dia"
 
-            txt_total_meta.value = formatar_moeda(tot_meta)
-            txt_total_saldo.value = formatar_moeda(tot_saldo)
-            txt_total_gasto.value = formatar_moeda(tot_gasto)
-            if dividas and aba == "todos" and ritmo_tot <= 0:
-                tot_falta_div = sum(float(c.get("falta_guardar", 0) or 0) for c in dividas)
-                txt_ritmo_diario.value = f"Falta {formatar_moeda(tot_falta_div)}"
-            else:
-                txt_ritmo_diario.value = f"{formatar_moeda(ritmo_tot)} / dia"
+        # ── Card 4: Dívidas & Quitações ───────────────────────────────────────
+        div_meta = sum(float(c.get("valor_meta", 0) or 0) for c in dividas)
+        div_guardado = sum(float(c.get("total_guardado", c.get("saldo_atual", 0)) or 0) for c in dividas)
+        div_em_caixa = sum(float(c.get("saldo_atual", 0) or 0) for c in dividas)
+        div_pct = (div_guardado / div_meta * 100.0) if div_meta > 0 else 0.0
+        txt_kpi_divida.value = formatar_moeda(div_guardado)
+        if div_meta > 0:
+            txt_sub_divida.value = f"de {formatar_moeda(div_meta)} · {div_pct:.0f}%"
+        else:
+            txt_sub_divida.value = "Nenhuma dívida ativa"
 
-        # Abas de filtro rápido (1 clique)
+        # ── Card 1: Total Guardado nos Boxes (Saldo real blindado agora) ──────
+        total_blindado = prov_saldo + div_em_caixa + fat_guardado
+        txt_kpi_guardado.value = formatar_moeda(total_blindado)
+        txt_sub_guardado.value = f"Prov {formatar_moeda(prov_saldo)} · Dív {formatar_moeda(div_em_caixa)} · Fat {formatar_moeda(fat_guardado)}"
+
+        # ── Abas de filtro unificadas no topo ─────────────────────────────────
+        aba = filtro_aba_atual[0]
+        secao_fatura.visible = aba in ("todos", "fatura")
+        grid_caixinhas.visible = aba != "fatura"
+
+        total_geral = len(caixinhas_lista) + fat_qtd
         row_filtros_modo.controls.clear()
         opcoes_abas = [
-            ("todos",           f"Todos ({len(caixinhas_lista)})",                  ft.Icons.APPS_ROUNDED,        T.PRIMARY),
-            ("provisao_mensal", f"Provisões do Mês ({len(provisoes)})",             ft.Icons.INVENTORY_2_ROUNDED, "#10B981"),
-            ("divida",          f"Dívidas & Quitações ({len(dividas)})",            ft.Icons.TRACK_CHANGES_ROUNDED, "#F59E0B"),
+            ("todos",           f"Todos ({total_geral})",                   ft.Icons.APPS_ROUNDED,          T.PRIMARY),
+            ("fatura",          f"Faturas ({fat_qtd})",                     ft.Icons.CREDIT_CARD_ROUNDED,   "#8B5CF6"),
+            ("provisao_mensal", f"Provisões do Mês ({len(provisoes)})",     ft.Icons.INVENTORY_2_ROUNDED,   "#10B981"),
+            ("divida",          f"Dívidas & Quitações ({len(dividas)})",    ft.Icons.TRACK_CHANGES_ROUNDED, "#F59E0B"),
         ]
         for chave_aba, rotulo_aba, icone_aba, cor_aba in opcoes_abas:
-            ativo = (filtro_aba_atual[0] == chave_aba)
+            ativo = (aba == chave_aba)
             row_filtros_modo.controls.append(
                 ft.Container(
                     padding=pad(h=12, v=7),
@@ -238,6 +272,8 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             async def _carregar_caixinhas_async():
                 try:
                     resumo = await asyncio.to_thread(db.obter_resumo_caixinhas, forcar)
+                    dados_fat = await asyncio.to_thread(_buscar_fatura)
+                    _recarregar_fatura(dados_fat)
                     _aplicar_resumo_caixinhas(resumo or {})
                 except Exception as ex:
                     err_str = str(ex)
@@ -257,6 +293,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             _safe_update()
         try:
             resumo = db.obter_resumo_caixinhas(forcar_atualizacao=forcar)
+            _recarregar_fatura(_buscar_fatura())
             _aplicar_resumo_caixinhas(resumo or {})
         except Exception as ex:
             err_str = str(ex)
@@ -757,6 +794,185 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         )
         abrir_dialogo(page, modal)
 
+    # ── Modal de Retirar / Resgatar Dinheiro (Dívidas & Quitações) ────────────
+    def abrir_modal_retirar(caixinha: dict, ao_concluir=None):
+        cid = str(caixinha.get("id"))
+        nome = caixinha.get("nome", "DemBox")
+        saldo_atual = round(float(caixinha.get("saldo_atual", 0) or 0), 2)
+
+        if saldo_atual <= 0:
+            mostrar_feedback(page, f"Não há saldo em caixa para retirar de '{nome}'.", "alerta")
+            return
+
+        txt_valor = ft.TextField(
+            label="Valor a Retirar / Resgatar (R$) *",
+            hint_text="Ex: 100,00",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            prefix="R$ ",
+            value="",
+            autofocus=True,
+            **T.campo_estilo(),
+        )
+
+        def _preencher_retirada(v: float):
+            txt_valor.value = f"{v:.2f}".replace(".", ",")
+            try:
+                txt_valor.update()
+            except Exception:
+                pass
+
+        row_atalhos_ret = ft.Row(spacing=6, run_spacing=6, wrap=True)
+        opcoes_ret = [v for v in (50.0, 100.0, 200.0) if v < saldo_atual - 0.01]
+        opcoes_ret.append(saldo_atual)
+        for v_op in opcoes_ret:
+            eh_tudo = abs(v_op - saldo_atual) < 0.01
+            lbl_op = f"Tirar tudo ({formatar_moeda(v_op)})" if eh_tudo else f"R$ {v_op:.0f}"
+            row_atalhos_ret.controls.append(
+                ft.Container(
+                    padding=pad(h=9, v=4),
+                    bgcolor=T.SURFACE_ALT,
+                    border_radius=12,
+                    border=borda(1, T.WARNING if eh_tudo else T.BORDER),
+                    ink=True,
+                    on_click=lambda _, v=v_op: _preencher_retirada(v),
+                    content=ft.Text(
+                        lbl_op,
+                        size=10.5,
+                        weight=ft.FontWeight.BOLD if eh_tudo else ft.FontWeight.W_600,
+                        color=T.WARNING if eh_tudo else T.TEXT_PRIMARY,
+                    ),
+                )
+            )
+
+        try:
+            contas = db.listar_contas() or []
+        except Exception:
+            contas = []
+        conta_id_padrao = str(caixinha.get("conta_id") or "")
+        conta_sel, row_contas = _criar_seletor_pilulas_contas(contas, conta_id_padrao)
+
+        txt_desc = ft.TextField(
+            label="Motivo / Observação (Opcional)",
+            value=f"Resgate / Retirada · {nome}",
+            **T.campo_estilo(),
+        )
+
+        modal = None
+
+        def confirmar_retirada(_):
+            val_str = (txt_valor.value or "").replace(",", ".").replace("R$", "").strip()
+            try:
+                val = round(float(val_str or 0), 2)
+                if val <= 0:
+                    raise ValueError
+            except ValueError:
+                mostrar_feedback(page, "Informe um valor válido maior que zero.", "alerta")
+                return
+
+            if val > saldo_atual + 0.005:
+                mostrar_feedback(page, f"Valor maior que o saldo guardado disponível ({formatar_moeda(saldo_atual)}).", "alerta")
+                return
+
+            conta_escolhida = (conta_sel[0] or "").strip()
+            if not conta_escolhida:
+                mostrar_feedback(page, "Selecione para qual Conta Bancária o dinheiro vai voltar.", "alerta")
+                return
+
+            nome_conta = "Conta"
+            for cta in contas:
+                if str(cta.get("id")) == conta_escolhida:
+                    nome_conta = cta.get("nome", "Conta")
+                    break
+
+            fechar_dialogo(page, modal)
+            spinner.visible = True
+            _safe_update()
+            try:
+                db.retirar_saldo_caixinha(
+                    caixinha_id=cid,
+                    valor=val,
+                    conta_id=conta_escolhida,
+                    descricao=txt_desc.value.strip() or f"Resgate / Retirada · {nome}",
+                    data_resgate=date.today().isoformat(),
+                )
+                mostrar_feedback(
+                    page,
+                    f"{formatar_moeda(val)} resgatados de '{nome}' de volta para '{nome_conta}'!",
+                    "sucesso",
+                )
+                carregar_dados(inicial=False, forcar=True)
+                if callable(ao_concluir):
+                    ao_concluir()
+            except Exception as ex:
+                spinner.visible = False
+                _safe_update()
+                mostrar_feedback(page, f"Erro ao retirar valor: {ex}", "erro")
+
+        modal = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.OUTPUT_ROUNDED, color=T.WARNING, size=22),
+                ft.Text(f"Retirar Dinheiro · {nome}", size=16, weight=ft.FontWeight.BOLD),
+            ], spacing=8),
+            content=ft.Container(
+                width=450,
+                content=ft.Column(
+                    spacing=11,
+                    tight=True,
+                    scroll=ft.ScrollMode.AUTO,
+                    controls=[
+                        ft.Container(
+                            padding=pad(h=10, v=7),
+                            bgcolor=T.SURFACE_ALT,
+                            border_radius=8,
+                            content=ft.Row(
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                controls=[
+                                    ft.Text("Disponível em caixa p/ resgatar:", size=11.5, color=T.TEXT_MUTED),
+                                    ft.Text(formatar_moeda(saldo_atual), size=13, weight=ft.FontWeight.BOLD, color=T.PRIMARY),
+                                ],
+                            ),
+                        ),
+                        txt_valor,
+                        row_atalhos_ret,
+                        ft.Column([
+                            ft.Text("Para qual Conta Bancária o dinheiro vai voltar? *", size=11.5, weight=ft.FontWeight.W_600, color=T.TEXT_MUTED),
+                            row_contas,
+                        ], spacing=5),
+                        txt_desc,
+                        ft.Container(
+                            padding=pad(h=10, v=8),
+                            bgcolor=T.SURFACE_ALT,
+                            border_radius=8,
+                            border=borda(1, T.WARNING),
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.ACCOUNT_BALANCE_ROUNDED, color=T.WARNING, size=16),
+                                ft.Text(
+                                    "Diminui o saldo guardado desta dívida, devolve o valor para a Conta Bancária escolhida e registra no Raio-X sem distorcer seus 6 Potes.",
+                                    size=11,
+                                    color=T.TEXT_PRIMARY,
+                                    expand=True,
+                                ),
+                            ], spacing=8),
+                        ),
+                    ],
+                ),
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(page, modal)),
+                ft.FilledButton(
+                    "Confirmar Retirada",
+                    on_click=confirmar_retirada,
+                    style=ft.ButtonStyle(
+                        bgcolor=T.WARNING,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                        padding=pad(h=16, v=10),
+                    ),
+                ),
+            ],
+        )
+        abrir_dialogo(page, modal)
+
     # ── Modal de Pagar/Abater Dívida ou Deduzir Gasto (Etapa B) ────────────────
     def abrir_modal_deduzir(caixinha: dict, ao_concluir=None):
         cid = str(caixinha.get("id"))
@@ -972,6 +1188,10 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 fechar_dialogo(page, modal_rx)
                 abrir_modal_deduzir(cx)
 
+            def _acao_retirar_rx(_):
+                fechar_dialogo(page, modal_rx)
+                abrir_modal_retirar(cx)
+
             def _acao_editar_rx(_):
                 fechar_dialogo(page, modal_rx)
                 abrir_modal_caixinha(cx)
@@ -987,6 +1207,21 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                         ], spacing=5, tight=True),
                         on_click=_acao_guardar_rx,
                         style=ft.ButtonStyle(bgcolor=T.PRIMARY, shape=ft.RoundedRectangleBorder(radius=8), padding=pad(h=12, v=8)),
+                    ),
+                    *(
+                        [
+                            ft.OutlinedButton(
+                                content=ft.Row([
+                                    ft.Icon(ft.Icons.OUTPUT_ROUNDED, size=15, color=T.WARNING),
+                                    ft.Text("Retirar", size=12, weight=ft.FontWeight.BOLD, color=T.WARNING),
+                                ], spacing=4, tight=True),
+                                on_click=_acao_retirar_rx,
+                                disabled=(saldo <= 0),
+                                style=ft.ButtonStyle(side=ft.BorderSide(1, T.WARNING), shape=ft.RoundedRectangleBorder(radius=8), padding=pad(h=10, v=8)),
+                            )
+                        ]
+                        if eh_divida
+                        else []
                     ),
                     ft.FilledButton(
                         content=ft.Row([
@@ -1049,6 +1284,11 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                         cor_h = T.PRIMARY
                         sinal = "+"
                         tag_h = "Guardado" if eh_divida else "Abastecido"
+                    elif nat == "resgate":
+                        ic_h = ft.Icons.OUTPUT_ROUNDED
+                        cor_h = T.WARNING
+                        sinal = "-"
+                        tag_h = "Resgatado p/ Conta"
                     elif nat == "pendente":
                         ic_h = ft.Icons.SCHEDULE_ROUNDED
                         cor_h = T.WARNING
@@ -1905,6 +2145,9 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         grid_caixinhas.controls.clear()
 
         aba = filtro_aba_atual[0]
+        if aba == "fatura":
+            _safe_update()
+            return
         if aba == "divida":
             itens_visiveis = [c for c in caixinhas_lista if _eh_modo_divida(c)]
         elif aba == "provisao_mensal":
@@ -2166,7 +2409,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 )
 
                 botoes_acao_card = ft.Row(
-                    spacing=8,
+                    spacing=6,
                     controls=[
                         ft.Container(
                             expand=True,
@@ -2174,14 +2417,32 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                             border=borda(1, T.PRIMARY),
                             content=ft.FilledButton(
                                 content=ft.Row([
-                                    ft.Icon(ft.Icons.ADD_ROUNDED, size=15, color=T.ON_NEON),
-                                    ft.Text("Guardar Dinheiro", size=11.5, weight=ft.FontWeight.BOLD, color=T.ON_NEON),
-                                ], spacing=4, alignment=ft.MainAxisAlignment.CENTER),
+                                    ft.Icon(ft.Icons.ADD_ROUNDED, size=14, color=T.ON_NEON),
+                                    ft.Text("Guardar", size=11, weight=ft.FontWeight.BOLD, color=T.ON_NEON),
+                                ], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
                                 on_click=lambda _, it=c: abrir_modal_provisionar(it),
                                 style=ft.ButtonStyle(
                                     bgcolor=T.PRIMARY,
                                     shape=ft.RoundedRectangleBorder(radius=8),
-                                    padding=pad(v=8),
+                                    padding=pad(h=6, v=8),
+                                ),
+                            ),
+                        ),
+                        ft.Container(
+                            expand=True,
+                            border_radius=8,
+                            border=borda(1, T.WARNING if saldo > 0 else T.BORDER),
+                            content=ft.FilledButton(
+                                content=ft.Row([
+                                    ft.Icon(ft.Icons.OUTPUT_ROUNDED, size=14, color=T.WARNING if saldo > 0 else T.TEXT_MUTED),
+                                    ft.Text("Retirar", size=11, weight=ft.FontWeight.W_600, color=T.WARNING if saldo > 0 else T.TEXT_MUTED),
+                                ], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
+                                on_click=lambda _, it=c: abrir_modal_retirar(it),
+                                disabled=(saldo <= 0),
+                                style=ft.ButtonStyle(
+                                    bgcolor=T.SURFACE_ALT,
+                                    shape=ft.RoundedRectangleBorder(radius=8),
+                                    padding=pad(h=6, v=8),
                                 ),
                             ),
                         ),
@@ -2191,14 +2452,14 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                             border=borda(1, T.INFO),
                             content=ft.FilledButton(
                                 content=ft.Row([
-                                    ft.Icon(ft.Icons.CHECK_ROUNDED, size=15, color=T.INFO),
-                                    ft.Text("Pagar / Abater", size=11.5, weight=ft.FontWeight.W_600, color=T.INFO),
-                                ], spacing=4, alignment=ft.MainAxisAlignment.CENTER),
+                                    ft.Icon(ft.Icons.CHECK_ROUNDED, size=14, color=T.INFO),
+                                    ft.Text("Abater", size=11, weight=ft.FontWeight.W_600, color=T.INFO),
+                                ], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
                                 on_click=lambda _, it=c: abrir_modal_deduzir(it),
                                 style=ft.ButtonStyle(
                                     bgcolor=T.SURFACE_ALT,
                                     shape=ft.RoundedRectangleBorder(radius=8),
-                                    padding=pad(v=8),
+                                    padding=pad(h=6, v=8),
                                 ),
                             ),
                         ),
@@ -2427,6 +2688,20 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                                                         else confirmar_pagamento_provisao(it)
                                                     ),
                                                 ),
+                                                *(
+                                                    [
+                                                        ft.PopupMenuItem(
+                                                            content=ft.Row([
+                                                                ft.Icon(ft.Icons.OUTPUT_ROUNDED, size=15, color=T.WARNING),
+                                                                ft.Text("Retirar / Resgatar p/ Conta", size=13, color=T.WARNING),
+                                                            ], spacing=8),
+                                                            disabled=(saldo <= 0),
+                                                            on_click=lambda _, it=c: abrir_modal_retirar(it),
+                                                        )
+                                                    ]
+                                                    if eh_divida
+                                                    else []
+                                                ),
                                                 ft.PopupMenuItem(
                                                     content=ft.Row([
                                                         ft.Icon(ft.Icons.CHECK_ROUNDED if eh_divida else ft.Icons.REMOVE_ROUNDED, size=15, color=T.INFO if eh_divida else T.DESPESA),
@@ -2482,50 +2757,54 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
 
         _safe_update()
 
-    # ── KPIs Resumo no Topo ───────────────────────────────────────────────────
+    # ── KPIs Resumo no Topo (Raio-X Instantâneo Separado) ─────────────────────
     strip_kpis = ft.ResponsiveRow(
         spacing=8 if mobile else 12,
         run_spacing=8 if mobile else 12,
         controls=[
             kpi_clicavel(
-                titulo="Total Metas & Dívidas",
-                valor_control=txt_total_meta,
-                subtitulo="Soma dos alvos ativos",
-                icone=ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED,
-                cor=T.TEXT_PRIMARY,
-                col={"xs": 6, "sm": 6, "md": 3},
-                mobile=mobile,
-                compacto=mobile,
-            ),
-            kpi_clicavel(
-                titulo="Guardado / Disponível",
-                valor_control=txt_total_saldo,
-                subtitulo="Saldo acumulado nos boxes",
+                titulo="Total Guardado nos Boxes",
+                valor_control=txt_kpi_guardado,
+                subtitulo=txt_sub_guardado,
                 icone=ft.Icons.SAVINGS_ROUNDED,
                 cor=T.PRIMARY,
                 col={"xs": 6, "sm": 6, "md": 3},
                 mobile=mobile,
                 compacto=mobile,
+                on_click=lambda _: _selecionar_aba("todos"),
             ),
             kpi_clicavel(
-                titulo="Consumido / Abatido",
-                valor_control=txt_total_gasto,
-                subtitulo="Gastos e quitações",
-                icone=ft.Icons.SHOPPING_BAG_ROUNDED,
-                cor=T.WARNING,
+                titulo="DemBox Faturas (Cartões)",
+                valor_control=txt_kpi_fatura,
+                subtitulo=txt_sub_fatura,
+                icone=ft.Icons.CREDIT_CARD_ROUNDED,
+                cor="#8B5CF6",
                 col={"xs": 6, "sm": 6, "md": 3},
                 mobile=mobile,
                 compacto=mobile,
+                on_click=lambda _: _selecionar_aba("fatura"),
             ),
             kpi_clicavel(
-                titulo="Ritmo / Meta Restante",
-                valor_control=txt_ritmo_diario,
-                subtitulo="Média diária ou falta quitar",
-                icone=ft.Icons.SPEED_ROUNDED,
-                cor=T.INFO,
+                titulo="Provisões do Mês",
+                valor_control=txt_kpi_provisao,
+                subtitulo=txt_sub_provisao,
+                icone=ft.Icons.INVENTORY_2_ROUNDED,
+                cor="#10B981",
                 col={"xs": 6, "sm": 6, "md": 3},
                 mobile=mobile,
                 compacto=mobile,
+                on_click=lambda _: _selecionar_aba("provisao_mensal"),
+            ),
+            kpi_clicavel(
+                titulo="Dívidas & Quitações",
+                valor_control=txt_kpi_divida,
+                subtitulo=txt_sub_divida,
+                icone=ft.Icons.TRACK_CHANGES_ROUNDED,
+                cor="#F59E0B",
+                col={"xs": 6, "sm": 6, "md": 3},
+                mobile=mobile,
+                compacto=mobile,
+                on_click=lambda _: _selecionar_aba("divida"),
             ),
         ],
     )
@@ -2581,15 +2860,16 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         ],
     )
 
-    # ── Layout da View ────────────────────────────────────────────────────────
+    # ── Layout da View (Abas Unificadas no Topo -> Seções Compactas) ──────────
     conteudo = ft.Column(
-        spacing=16,
+        spacing=14,
         controls=[
             header_view,
             banner_aviso_migracao,
             strip_kpis,
             row_filtros_modo,
             ft.Divider(height=1, color=T.BORDER),
+            secao_fatura,
             grid_caixinhas,
             ft.Container(height=30),
         ],

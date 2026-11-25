@@ -25828,6 +25828,8 @@ def listar_caixinhas(forcar_atualizacao: bool = False, data_inicio: str | None =
 
 
 
+    # DemBox Fatura vive em modulo proprio (listar_boxes_fatura): nunca entra nas listas/KPIs dos DemBoxes atuais
+    dados = [c for c in dados if (c.get("tipo_box") or "padrao") != "fatura"]
     # Enriquecimento de Contas e Potes vinculados
     try:
         potes_todos = listar_potes() or []
@@ -26032,7 +26034,7 @@ def listar_caixinhas(forcar_atualizacao: bool = False, data_inicio: str | None =
                         m_cid = str(m_it.get("caixinha_id"))
                         m_val = float(m_it.get("valor", 0) or 0)
                         m_tp = str(m_it.get("tipo") or "").lower()
-                        if m_tp == "injecao":
+                        if m_tp in ("injecao", "ajuste"):
                             injecoes_acum[m_cid] = injecoes_acum.get(m_cid, 0.0) + m_val
                         elif m_tp == "deducao":
                             deducoes_acum[m_cid] = deducoes_acum.get(m_cid, 0.0) + m_val
@@ -27206,6 +27208,93 @@ def injetar_saldo_caixinha(
     return resultado
 
 
+def retirar_saldo_caixinha(
+    caixinha_id: str,
+    valor: float,
+    conta_id: str,
+    descricao: str = "",
+    data_resgate: str | None = None,
+) -> dict:
+    """
+    Resgata dinheiro guardado em um DemBox (ex: Dívidas & Quitações) de volta para uma Conta Bancária.
+    - Diminui o saldo_atual e o total_guardado (via movimentação tipo='ajuste' com valor negativo).
+    - Aumenta o saldo da Conta Bancária de destino (lançamento Receita / Resgate DemBox, sem pote_id).
+    - Não distorce despesas do mês nem os 6 Potes.
+    """
+    v = round(float(valor or 0), 2)
+    if v <= 0:
+        raise ValueError("Informe um valor maior que zero para retirar.")
+    if not conta_id:
+        raise ValueError("Selecione a Conta Bancária de destino.")
+
+    from datetime import date
+    dt_final = str(data_resgate or date.today().isoformat())[:10]
+    cid = str(caixinha_id)
+
+    c = obter_caixinha(cid)
+    if not c:
+        raise ValueError("DemBox não encontrado.")
+
+    ant_saldo = round(float(c.get("saldo_atual", 0) or 0), 2)
+    if v > ant_saldo + 0.005:
+        raise ValueError(f"Valor maior que o saldo disponível em caixa ({ant_saldo:.2f}).")
+
+    nome_caixinha = c.get("nome", "DemBox")
+    desc_final = str(descricao or f"Resgate DemBox · {nome_caixinha}").strip()
+    novo_saldo = round(max(0.0, ant_saldo - v), 2)
+    user = usuario_atual()
+
+    # 1. Credita de volta na Conta Bancária escolhida (Receita neutra de resgate, sem pote_id)
+    dados_receita = {
+        "tipo": "Receita",
+        "subtipo": "Resgate DemBox",
+        "forma_movimentacao": "Transferência",
+        "valor": v,
+        "data": dt_final,
+        "status": "Pago",
+        "descricao": desc_final,
+        "caixinha_id": cid,
+        "conta_id": str(conta_id),
+        "pote_id": None,
+        "categoria_id": c.get("categoria_id") or None,
+        "subcategoria_id": c.get("subcategoria_id") or None,
+    }
+    if user:
+        dados_receita["user_id"] = user.id
+        dados_receita["perfil_id"] = user.id
+
+    l_ins = supabase.table("lancamentos").insert(dados_receita).execute()
+    lid = l_ins.data[0].get("id") if (l_ins and l_ins.data) else None
+
+    # 2. Registra movimentação negativa ('ajuste') no histórico do DemBox (Raio-X)
+    mov_payload = {
+        "caixinha_id": cid,
+        "user_id": user.id if user else c.get("user_id"),
+        "tipo": "ajuste",
+        "valor": -v,
+        "saldo_anterior": ant_saldo,
+        "saldo_posterior": novo_saldo,
+        "descricao": desc_final,
+        "data": dt_final,
+        "lancamento_id": lid,
+    }
+    supabase.table("caixinhas_teto_movimentacoes").insert(mov_payload).execute()
+
+    # 3. Recalcula e invalida caches
+    recalcular_saldo_caixinha(cid)
+    for chave in ("caixinhas", "resumo_caixinhas", "lancamentos", "contas", "potes", "potes_resumo", "dashboard", "calendario"):
+        invalidar_cache(chave)
+
+    return {
+        "sucesso": True,
+        "caixinha_id": cid,
+        "lancamento_id": lid,
+        "saldo_anterior": ant_saldo,
+        "saldo_atual": novo_saldo,
+        "valor_retirado": v,
+    }
+
+
 def deduzir_saldo_caixinha(caixinha_id: str, valor: float, descricao: str = "") -> dict:
     """Subtrai valor do saldo da caixinha (gasto/dedução). Não debita o banco novamente."""
     try:
@@ -27469,6 +27558,13 @@ def obter_extrato_caixinha(caixinha_id: str) -> dict:
         cta_nome = mapa_contas.get(str(cta_id)) if cta_id else None
 
         if tp_mov == "injecao":
+            natureza = "entrada"
+            total_guardado += val_m
+        elif tp_mov == "ajuste" and val_m < 0:
+            natureza = "resgate"
+            total_guardado = max(0.0, total_guardado + val_m)
+            val_m = abs(val_m)
+        elif tp_mov == "ajuste":
             natureza = "entrada"
             total_guardado += val_m
         else:
@@ -34314,3 +34410,136 @@ def obter_memoria_lancamentos(forcar_atualizacao: bool = False) -> list[dict]:
         return _mesclar_e_ordenar_memoria(dados)
     except Exception:
         return _mesclar_e_ordenar_memoria([])
+
+
+
+# =============================================================================
+# DEMBOX FATURA (migration 035) — I/O apenas; TODO cálculo vive em core/dembox_fatura.py
+# Movimentos NÃO geram Despesa em lancamentos => zero impacto nos 6 Potes.
+# =============================================================================
+def _msg_erro_rpc(ex: Exception) -> str:
+    """Extrai a mensagem legível de uma exceção de RPC (RAISE EXCEPTION)."""
+    txt = str(ex)
+    for chave in ("'message': '", '"message": "'):
+        if chave in txt:
+            ini = txt.index(chave) + len(chave)
+            fim = txt.find(chave[-1], ini)
+            return txt[ini:fim if fim > ini else None]
+    return txt
+
+
+def listar_boxes_fatura() -> list[dict]:
+    """Boxes de fatura ativos com situação calculada (fonte única: core.dembox_fatura)."""
+    from core import dembox_fatura as DF
+    try:
+        boxes = (
+            supabase.table("caixinhas_teto")
+            .select("id, nome, cor, icone, membro_id, cartao_id, auto_efetivar, ativo, tipo_box, cartoes(id, nome, cor, icone, membro_id, conta_debito_id)")
+            .eq("tipo_box", "fatura").eq("ativo", True).order("criado_em").execute().data
+        ) or []
+    except Exception as ex:
+        print(f"[SupabaseClient] listar_boxes_fatura: {ex}")
+        return []
+    if not boxes:
+        return []
+    cartao_ids = [b["cartao_id"] for b in boxes if b.get("cartao_id")]
+    box_ids = [b["id"] for b in boxes]
+    faturas = (supabase.table("faturas")
+               .select("id, cartao_id, mes, ano, valor_total, status, data_fechamento, data_vencimento")
+               .in_("cartao_id", cartao_ids).neq("status", "paga").execute().data) if cartao_ids else []
+    fat_ids = [f["id"] for f in (faturas or [])]
+    pagos: dict[str, float] = {}
+    if fat_ids:
+        pgs = (supabase.table("lancamentos").select("fatura_id, valor")
+               .in_("fatura_id", fat_ids).eq("tipo", "Transferência")
+               .eq("subtipo", "Pagamento de Fatura").eq("status", "Pago").execute().data) or []
+        for r in pgs:
+            pagos[r["fatura_id"]] = pagos.get(r["fatura_id"], 0.0) + float(r.get("valor") or 0)
+    for f in faturas or []:
+        f["valor_pago_parcial"] = pagos.get(f["id"], 0.0)
+    movs = (supabase.table("dembox_fatura_movs").select("*")
+            .in_("caixinha_id", box_ids).neq("status", "cancelado")
+            .order("data_prevista").execute().data) or []
+    resultado = []
+    for b in boxes:
+        fs = [f for f in (faturas or []) if f["cartao_id"] == b.get("cartao_id")]
+        ms = [m for m in movs if m["caixinha_id"] == b["id"]]
+        b["faturas"], b["movimentos"] = fs, ms
+        b["situacao"] = DF.calcular_situacao(fs, ms)
+        resultado.append(b)
+    return resultado
+
+
+def listar_cartoes_sem_box_fatura() -> list[dict]:
+    """Cartões ativos sem box de fatura (alimenta o banner de sugestão)."""
+    from core import dembox_fatura as DF
+    cartoes = listar_cartoes(forcar_atualizacao=True) or []
+    boxes = listar_boxes_fatura()
+    return DF.cartoes_sem_box(cartoes, boxes)
+
+
+def criar_box_fatura(cartao_id: str) -> dict:
+    """Cria o box vinculado a UM cartão. conta_id/pote_id ficam NULL de propósito:
+    com conta_id NULL o trigger de provisões não gera nenhum lançamento."""
+    cartao = obter_cartao(cartao_id)
+    if not cartao:
+        raise ValueError("Cartão não encontrado.")
+    user = usuario_atual()
+    payload = {
+        "nome": f"Fatura {cartao.get('nome', 'Cartão')}",
+        "valor_meta": 0,
+        "tipo_box": "fatura",
+        "cartao_id": str(cartao_id),
+        "membro_id": cartao.get("membro_id"),
+        "cor": cartao.get("cor") or "#8B5CF6",
+        "icone": "credit_card",
+        "tipo_provisao": "despesa",
+    }
+    if user:
+        payload["user_id"] = user.id
+    try:
+        resp = supabase.table("caixinhas_teto").insert(payload).execute()
+    except Exception as ex:
+        raise ValueError(_msg_erro_rpc(ex))
+    invalidar_cache("caixinhas")
+    invalidar_cache("resumo_caixinhas")
+    return (resp.data or [{}])[0]
+
+
+def _rpc_box_fatura(nome: str, params: dict) -> dict:
+    try:
+        resp = supabase.rpc(nome, params).execute()
+    except Exception as ex:
+        raise ValueError(_msg_erro_rpc(ex))
+    return resp.data or {}
+
+
+def aportar_box_fatura(caixinha_id: str, valor: float, data: str | None = None, agendado: bool = False) -> dict:
+    return _rpc_box_fatura("dembox_fatura_registrar", {
+        "p_caixinha_id": str(caixinha_id), "p_tipo": "aporte", "p_valor": float(valor),
+        "p_data": data, "p_status": "pendente" if agendado else "efetivado",
+        "p_descricao": "Aporte agendado" if agendado else "Aporte",
+    })
+
+
+def retirar_box_fatura(caixinha_id: str, valor: float) -> dict:
+    return _rpc_box_fatura("dembox_fatura_registrar", {
+        "p_caixinha_id": str(caixinha_id), "p_tipo": "retirada", "p_valor": float(valor),
+        "p_data": None, "p_status": "efetivado", "p_descricao": "Retirada p/ Caixa Livre",
+    })
+
+
+def mover_entre_boxes_fatura(origem_id: str, destino_id: str, valor: float) -> dict:
+    return _rpc_box_fatura("dembox_fatura_transferir", {
+        "p_origem": str(origem_id), "p_destino": str(destino_id), "p_valor": float(valor),
+    })
+
+
+def pagar_fatura_box(caixinha_id: str, fatura_id: str, conta_id: str, valor: float, data: str | None = None) -> dict:
+    res = _rpc_box_fatura("dembox_fatura_pagar", {
+        "p_caixinha_id": str(caixinha_id), "p_fatura_id": str(fatura_id),
+        "p_conta_id": str(conta_id), "p_valor": float(valor), "p_data": data,
+    })
+    for tipo in ("contas", "cartoes", "lancamentos", "faturas"):
+        invalidar_cache(tipo)
+    return res
