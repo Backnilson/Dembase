@@ -36,6 +36,7 @@ from views.widgets.custom_date_picker import (
     formatar_data_amigavel,
     formatar_data_br,
 )
+from views.widgets.lancamento_sheet import abrir_lancamento
 import services.supabase_client as db
 from views.widgets.dembox_fatura_ui import montar_secao_fatura
 
@@ -261,6 +262,10 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         renderizar_cards()
 
     def carregar_dados(inicial: bool = False, forcar: bool = False):
+        estado_p = obter_estado_periodo_atual(page)
+        dt_ini_iso = estado_p["data_inicio"].isoformat() if estado_p.get("data_inicio") else None
+        dt_fim_iso = estado_p["data_fim"].isoformat() if estado_p.get("data_fim") else None
+
         loop_check = getattr(page, "loop", None)
         eh_loop_ativo = isinstance(loop_check, asyncio.AbstractEventLoop) and loop_check.is_running() and hasattr(page, "run_task")
 
@@ -271,7 +276,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
 
             async def _carregar_caixinhas_async():
                 try:
-                    resumo = await asyncio.to_thread(db.obter_resumo_caixinhas, forcar)
+                    resumo = await asyncio.to_thread(db.obter_resumo_caixinhas, forcar, dt_ini_iso, dt_fim_iso)
                     dados_fat = await asyncio.to_thread(_buscar_fatura)
                     _recarregar_fatura(dados_fat)
                     _aplicar_resumo_caixinhas(resumo or {})
@@ -292,7 +297,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             spinner.visible = True
             _safe_update()
         try:
-            resumo = db.obter_resumo_caixinhas(forcar_atualizacao=forcar)
+            resumo = db.obter_resumo_caixinhas(forcar_atualizacao=forcar, data_inicio=dt_ini_iso, data_fim=dt_fim_iso)
             _recarregar_fatura(_buscar_fatura())
             _aplicar_resumo_caixinhas(resumo or {})
         except Exception as ex:
@@ -990,10 +995,53 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             **T.campo_estilo(),
         )
         txt_desc = ft.TextField(
-            label="Observação do Pagamento / Abatimento" if eh_divida else "Descrição do Gasto (Opcional)",
-            hint_text=f"Ex: Pagamento p/ {nome}..." if eh_divida else "Ex: Abastecimento, compra rápida...",
+            label="Observação do Pagamento / Abatimento *" if eh_divida else "Descrição do Gasto *",
+            hint_text=f"Ex: Pagamento p/ {nome}..." if eh_divida else "Ex: Gasolina, Seguro, Manutenção...",
             value=f"Pagamento / Abatimento · {nome}" if eh_divida else "",
             **T.campo_estilo(),
+        )
+
+        data_gasto_sel = [date.today()]
+        txt_data_gasto_lbl = ft.Text(
+            formatar_data_amigavel(data_gasto_sel[0]),
+            size=12,
+            weight=ft.FontWeight.W_600,
+            color=T.TEXT_PRIMARY,
+        )
+
+        def _ao_selecionar_data_gasto(nova_dt: date):
+            data_gasto_sel[0] = nova_dt
+            txt_data_gasto_lbl.value = formatar_data_amigavel(nova_dt)
+            try:
+                txt_data_gasto_lbl.update()
+            except Exception:
+                pass
+
+        card_data_gasto = ft.Container(
+            content=ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.CALENDAR_MONTH_ROUNDED, color=T.PRIMARY, size=16),
+                    padding=pad(all_=6),
+                    bgcolor=T.SURFACE_ALT,
+                    border_radius=8,
+                ),
+                ft.Column([
+                    ft.Text("Data do Pagamento *" if eh_divida else "Data do Gasto *", size=10.5, color=T.TEXT_MUTED),
+                    txt_data_gasto_lbl,
+                ], spacing=1, expand=True),
+                ft.Icon(ft.Icons.ARROW_DROP_DOWN_ROUNDED, color=T.TEXT_MUTED, size=20),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=pad(h=10, v=8),
+            bgcolor=T.SURFACE,
+            border_radius=10,
+            border=borda(1, T.BORDER),
+            ink=True,
+            on_click=lambda _: abrir_seletor_data_modal(
+                page=page,
+                data_inicial=data_gasto_sel[0],
+                on_select=_ao_selecionar_data_gasto,
+                titulo="Selecionar Data",
+            ),
         )
 
         modal = None
@@ -1008,17 +1056,23 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 mostrar_feedback(page, "Informe um valor válido maior que zero.", "alerta")
                 return
 
+            desc_informada = (txt_desc.value or "").strip()
+            if not desc_informada:
+                mostrar_feedback(page, "Informe uma descrição para o lançamento (ex: Gasolina, Seguro).", "alerta")
+                return
+
             try:
                 db.deduzir_saldo_caixinha(
-                    cid,
-                    val,
-                    txt_desc.value.strip() or ("Abatimento de Dívida" if eh_divida else "Gasto registrado"),
+                    caixinha_id=cid,
+                    valor=val,
+                    descricao=desc_informada,
+                    data_gasto=data_gasto_sel[0].isoformat(),
                 )
                 fechar_dialogo(page, modal)
                 msg = (
                     f"{formatar_moeda(val)} registrados como pagos/abatidos na dívida '{nome}'!"
                     if eh_divida
-                    else f"{formatar_moeda(val)} deduzidos do DemBox '{nome}'!"
+                    else f"'{desc_informada}' ({formatar_moeda(val)}) registrado no DemBox '{nome}' e sincronizado nos Relatórios!"
                 )
                 mostrar_feedback(page, msg, "sucesso")
                 carregar_dados(inicial=False, forcar=True)
@@ -1028,13 +1082,13 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 mostrar_feedback(page, f"Erro ao registrar: {ex}", "erro")
 
         modal = ft.AlertDialog(
-            modal=True,
+            modal=False,
             title=ft.Row([
                 ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED if eh_divida else ft.Icons.MONEY_OFF_CSRED_ROUNDED, color=T.INFO if eh_divida else T.DESPESA, size=22),
                 ft.Text(f"{'Pagar / Abater Dívida' if eh_divida else 'Deduzir Gasto'} · {nome}", size=16, weight=ft.FontWeight.BOLD),
             ], spacing=8),
             content=ft.Container(
-                width=400,
+                width=420,
                 content=ft.Column(
                     spacing=12,
                     tight=True,
@@ -1052,6 +1106,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                         ),
                         txt_valor,
                         txt_desc,
+                        card_data_gasto,
                         ft.Container(
                             padding=pad(h=10, v=8),
                             bgcolor=T.SURFACE_ALT,
@@ -1091,10 +1146,83 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         cid = str(caixinha.get("id"))
         modal_rx = None
         corpo_rx = ft.Column(spacing=12, tight=True, scroll=ft.ScrollMode.AUTO)
+        eh_div_inicial = _eh_modo_divida(caixinha)
+        # Provisão Mensal começa filtrada pelo Mês/Período do topo; Dívidas começam no Histórico Completo
+        escopo_rx = ["todos" if eh_div_inicial else "mes"]
+
+        def _apos_alterar_rx():
+            _popular_raio_x()
+            try:
+                corpo_rx.update()
+            except Exception:
+                pass
+            carregar_dados(inicial=False, forcar=True)
+
+        def _confirmar_excluir_item_rx(item_h: dict):
+            desc_del = item_h.get("descricao") or "este registro"
+            val_del = formatar_moeda(float(item_h.get("valor", 0) or 0))
+            dlg_del = None
+
+            def _exec_del(_):
+                fechar_dialogo(page, dlg_del)
+                try:
+                    db.excluir_movimentacao_caixinha(
+                        caixinha_id=cid,
+                        mov_id=item_h.get("mov_id"),
+                        lancamento_id=item_h.get("lancamento_id"),
+                    )
+                    mostrar_feedback(page, f"'{desc_del}' ({val_del}) excluído e saldo recalculado!", "sucesso")
+                    _apos_alterar_rx()
+                except Exception as ex:
+                    mostrar_feedback(page, f"Erro ao excluir registro: {ex}", "erro")
+
+            dlg_del = ft.AlertDialog(
+                modal=False,
+                title=ft.Text("Excluir Lançamento do DemBox", size=15, weight=ft.FontWeight.BOLD),
+                content=ft.Text(f"Deseja excluir '{desc_del}' ({val_del})? O saldo do DemBox e dos relatórios será recalculado automaticamente."),
+                actions=[
+                    ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(page, dlg_del)),
+                    ft.FilledButton(
+                        "Excluir",
+                        on_click=_exec_del,
+                        style=ft.ButtonStyle(bgcolor=T.DESPESA, shape=ft.RoundedRectangleBorder(radius=8)),
+                    ),
+                ],
+            )
+            abrir_dialogo(page, dlg_del)
+
+        def _editar_item_rx(item_h: dict):
+            lanc_obj = item_h.get("lancamento")
+            lid = item_h.get("lancamento_id")
+            if not lanc_obj and lid:
+                try:
+                    lanc_obj = db.obter_lancamento_por_id(lid) if hasattr(db, "obter_lancamento_por_id") else None
+                except Exception:
+                    lanc_obj = None
+            if lanc_obj:
+                abrir_lancamento(
+                    page,
+                    lancamento=lanc_obj,
+                    on_saved=_apos_alterar_rx,
+                )
+            else:
+                mostrar_feedback(page, "Este registro legado não possui lançamento vinculado. Exclua e registre novamente se necessário.", "alerta")
+
+        def _trocar_escopo_rx(novo_escopo: str):
+            escopo_rx[0] = novo_escopo
+            _popular_raio_x()
+            try:
+                corpo_rx.update()
+            except Exception:
+                pass
 
         def _popular_raio_x():
             corpo_rx.controls.clear()
-            pacote_rx = db.obter_extrato_caixinha(cid) or {}
+            estado_p = obter_estado_periodo_atual(page)
+            dt_ini_rx = estado_p["data_inicio"].isoformat() if (escopo_rx[0] == "mes" and estado_p.get("data_inicio")) else None
+            dt_fim_rx = estado_p["data_fim"].isoformat() if (escopo_rx[0] == "mes" and estado_p.get("data_fim")) else None
+
+            pacote_rx = db.obter_extrato_caixinha(cid, data_inicio=dt_ini_rx, data_fim=dt_fim_rx) or {}
             cx = pacote_rx.get("caixinha") or caixinha
             historico = pacote_rx.get("historico") or []
 
@@ -1234,7 +1362,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                     ft.OutlinedButton(
                         content=ft.Row([
                             ft.Icon(ft.Icons.EDIT_ROUNDED, size=15, color=T.TEXT_PRIMARY),
-                            ft.Text("Editar", size=12, color=T.TEXT_PRIMARY),
+                            ft.Text("Editar Box", size=12, color=T.TEXT_PRIMARY),
                         ], spacing=4, tight=True),
                         on_click=_acao_editar_rx,
                         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8), padding=pad(h=10, v=8)),
@@ -1242,7 +1370,41 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 ],
             )
 
-            # Lista de movimentações na ponta do lápis
+            # Toggle de Período do Histórico (Mês Atual | Histórico Completo)
+            def _pilula_escopo(chave_e: str, rotulo_e: str) -> ft.Container:
+                ativo_e = (escopo_rx[0] == chave_e)
+                return ft.Container(
+                    padding=pad(h=10, v=4),
+                    bgcolor=T.PRIMARY if ativo_e else T.SURFACE_ALT,
+                    border_radius=14,
+                    border=borda(1, T.PRIMARY if ativo_e else T.BORDER),
+                    ink=True,
+                    on_click=lambda _, k=chave_e: _trocar_escopo_rx(k),
+                    content=ft.Text(
+                        rotulo_e,
+                        size=11,
+                        weight=ft.FontWeight.BOLD if ativo_e else ft.FontWeight.W_500,
+                        color=T.ON_NEON if ativo_e else T.TEXT_PRIMARY,
+                    ),
+                )
+
+            cabecalho_hist = ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                wrap=True,
+                controls=[
+                    ft.Row([
+                        ft.Icon(ft.Icons.HISTORY_EDU_ROUNDED, size=16, color=T.PRIMARY),
+                        ft.Text(f"Histórico ({len(historico)} registro{'s' if len(historico) != 1 else ''})", size=13, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                    ], spacing=6, tight=True),
+                    ft.Row([
+                        _pilula_escopo("mes", "Mês Atual"),
+                        _pilula_escopo("todos", "Histórico Completo"),
+                    ], spacing=6, tight=True),
+                ],
+            )
+
+            # Lista de movimentações na ponta do lápis (clicáveis + Editar / Excluir)
             itens_hist_ui = []
             if not historico:
                 itens_hist_ui.append(
@@ -1256,9 +1418,9 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                             spacing=6,
                             controls=[
                                 ft.Icon(ft.Icons.RECEIPT_LONG_ROUNDED, size=30, color=T.TEXT_MUTED),
-                                ft.Text("Nenhuma movimentação registrada ainda", size=12.5, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                                ft.Text("Nenhuma movimentação neste período", size=12.5, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
                                 ft.Text(
-                                    "Clique em '+ Guardar Dinheiro' para fazer seu primeiro depósito neste DemBox!",
+                                    "Alterne para 'Histórico Completo' ou registre uma movimentação acima.",
                                     size=11,
                                     color=T.TEXT_MUTED,
                                     text_align=ft.TextAlign.CENTER,
@@ -1310,6 +1472,9 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                             bgcolor=T.SURFACE_ALT,
                             border_radius=10,
                             border=borda(1, T.BORDER),
+                            ink=True,
+                            on_click=lambda _, item=h: _editar_item_rx(item),
+                            tooltip="Clique para editar este lançamento",
                             content=ft.Row(
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1335,11 +1500,32 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                                             ),
                                         ],
                                     ),
-                                    ft.Text(
-                                        f"{sinal} {formatar_moeda(val_h)}",
-                                        size=13,
-                                        weight=ft.FontWeight.BOLD,
-                                        color=cor_h,
+                                    ft.Row(
+                                        spacing=2,
+                                        tight=True,
+                                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                        controls=[
+                                            ft.Text(
+                                                f"{sinal} {formatar_moeda(val_h)}",
+                                                size=12.5,
+                                                weight=ft.FontWeight.BOLD,
+                                                color=cor_h,
+                                            ),
+                                            ft.IconButton(
+                                                icon=ft.Icons.EDIT_OUTLINED,
+                                                icon_size=16,
+                                                icon_color=T.TEXT_MUTED,
+                                                tooltip="Editar lançamento",
+                                                on_click=lambda _, item=h: _editar_item_rx(item),
+                                            ),
+                                            ft.IconButton(
+                                                icon=ft.Icons.DELETE_OUTLINE_ROUNDED,
+                                                icon_size=16,
+                                                icon_color=T.DESPESA,
+                                                tooltip="Excluir lançamento",
+                                                on_click=lambda _, item=h: _confirmar_excluir_item_rx(item),
+                                            ),
+                                        ],
                                     ),
                                 ],
                             ),
@@ -1351,10 +1537,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 bloco_barra,
                 barra_acoes_rx,
                 ft.Divider(height=1, color=T.BORDER),
-                ft.Row([
-                    ft.Icon(ft.Icons.HISTORY_EDU_ROUNDED, size=16, color=T.PRIMARY),
-                    ft.Text(f"Histórico na Ponta do Lápis ({len(historico)} registro{'s' if len(historico) != 1 else ''})", size=13, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
-                ], spacing=6),
+                cabecalho_hist,
                 ft.Column(spacing=6, controls=itens_hist_ui),
             ])
 
@@ -1366,9 +1549,10 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         eh_div = _eh_modo_divida(caixinha)
 
         modal_rx = ft.AlertDialog(
-            modal=True,
+            modal=False,
             title=ft.Row(
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
                     ft.Row([
                         ft.Container(
@@ -1387,11 +1571,18 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                                 weight=ft.FontWeight.W_600,
                             ),
                         ], spacing=1),
-                    ], spacing=10),
+                    ], spacing=10, expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.CLOSE_ROUNDED,
+                        icon_color=T.TEXT_MUTED,
+                        icon_size=20,
+                        tooltip="Fechar Raio-X (ESC)",
+                        on_click=lambda _: fechar_dialogo(page, modal_rx),
+                    ),
                 ],
             ),
             content=ft.Container(
-                width=540,
+                width=560,
                 content=corpo_rx,
             ),
             actions=[
@@ -2876,6 +3067,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
     )
 
     carregar_dados(inicial=True)
+    conteudo._recarregar_caixinhas = lambda: carregar_dados(inicial=False, forcar=True)
 
     return conteudo
 
@@ -2889,4 +3081,5 @@ def criar_view_caixinhas(page: ft.Page, match=None) -> ft.View:
         rota_view="/caixinhas",
         titulo="DemBoxes",
         mostrar_voltar=False,
+        on_periodo_change=lambda *_: getattr(conteudo, "_recarregar_caixinhas", lambda: None)(),
     )

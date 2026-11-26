@@ -1003,10 +1003,11 @@ class PainelGestaoSobra:
             mudou_mes = (int(mes) != self.mes_atual or int(ano) != self.ano_atual)
             self.mes_atual = int(mes)
             self.ano_atual = int(ano)
+            pct_storage = storage.obter_percentual_sobra_investimento(
+                self.page, 50.0, mes=self.mes_atual, ano=self.ano_atual
+            )
             if mudou_mes:
-                pct_carregado = storage.obter_percentual_sobra_investimento(
-                    self.page, 50.0, mes=self.mes_atual, ano=self.ano_atual
-                )
+                pct_carregado = pct_storage
                 try:
                     cfg_db = db.obter_config_caixa_livre_mes(self.mes_atual, self.ano_atual)
                     if isinstance(cfg_db, dict) and "pct_investimento" in cfg_db:
@@ -1022,6 +1023,14 @@ class PainelGestaoSobra:
                 self.slider_pct.value = self.pct_investimento
                 self.tf_pct.value = str(int(round(self.pct_investimento)))
                 self.row_chips_atalho.controls = self._construir_chips_atalho()
+            else:
+                # Mesmo mês: sincroniza com eventual alteração salva no modal "Ajustar metas do mês"
+                pct_sync = round(max(0.0, min(100.0, float(pct_storage))), 1)
+                if abs(pct_sync - self.pct_investimento) > 0.05:
+                    self.pct_investimento = pct_sync
+                    self.slider_pct.value = self.pct_investimento
+                    self.tf_pct.value = str(int(round(self.pct_investimento)))
+                    self.row_chips_atalho.controls = self._construir_chips_atalho()
 
         dados = self._sincronizar_ui(notificar_kpi=True)
         if self.on_potes_alterados and "potes_atualizados" in dados:

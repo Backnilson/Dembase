@@ -55,6 +55,8 @@ class FilterBar(ft.Column):
         self.cartoes_cache: list[dict] = []
         self.categorias_cache: list[dict] = []
         self.potes_cache: list[dict] = []
+        self.caixinhas_cache: list[dict] = []
+        self.membros_cache: list[dict] = []
 
         self._carregar_metadados()
 
@@ -171,6 +173,23 @@ class FilterBar(ft.Column):
             self.potes_cache = db.listar_potes() or []
         except Exception:
             self.potes_cache = []
+        try:
+            cxs = list(db.listar_caixinhas() or [])
+            try:
+                fats = list(db.listar_boxes_fatura() or [])
+            except Exception:
+                fats = []
+            vistas = {str(c.get("id")) for c in cxs if c.get("id")}
+            for fb in fats:
+                if str(fb.get("id")) not in vistas:
+                    cxs.append(fb)
+            self.caixinhas_cache = cxs
+        except Exception:
+            self.caixinhas_cache = []
+        try:
+            self.membros_cache = db.listar_membros_familia() or []
+        except Exception:
+            self.membros_cache = []
 
     def atualizar_contexto(self, novo_ctx: ReportContext, emitir: bool = True):
         self.ctx = novo_ctx
@@ -303,6 +322,27 @@ class FilterBar(ft.Column):
             nome_pote = self._nome_por_id(self.potes_cache, self.ctx.pote_id, "Pote")
             pilulas.append((f"Pote: {nome_pote}", lambda _: self.atualizar_contexto(self.ctx.com(pote_id=None))))
 
+        if self.ctx.caixinha_id:
+            nome_box = self._nome_por_id(self.caixinhas_cache, self.ctx.caixinha_id, "DemBox")
+            pilulas.append((f"DemBox: {nome_box}", lambda _: self.atualizar_contexto(self.ctx.com(caixinha_id=None))))
+
+        if self.ctx.modalidade_box:
+            mapa_mod = {
+                "provisao_mensal": "Provisões do Mês",
+                "divida": "Dívidas & Quitações",
+                "fatura": "DemBox Fatura",
+            }
+            lbl_mod = mapa_mod.get(self.ctx.modalidade_box, self.ctx.modalidade_box)
+            pilulas.append((f"Modalidade Box: {lbl_mod}", lambda _: self.atualizar_contexto(self.ctx.com(modalidade_box=None))))
+
+        if self.ctx.tratamento_box:
+            lbl_trat = "Apenas DemBox" if self.ctx.tratamento_box == "apenas_box" else "Sem Neutros DemBox"
+            pilulas.append((lbl_trat, lambda _: self.atualizar_contexto(self.ctx.com(tratamento_box=None))))
+
+        if self.ctx.membro_id:
+            nome_m = self._nome_por_id(self.membros_cache, self.ctx.membro_id, "Membro")
+            pilulas.append((f"Perfil: {nome_m}", lambda _: self.atualizar_contexto(self.ctx.com(membro_id=None))))
+
         if self.ctx.regra and not self.fixar_regra:
             pilulas.append((f"Regra: {self.ctx.regra}", lambda _: self.atualizar_contexto(self.ctx.com(regra=None))))
 
@@ -412,6 +452,61 @@ class FilterBar(ft.Column):
             **T.dropdown_estilo(),
         )
 
+        dd_caixinha = ft.Dropdown(
+            label="DemBox / Envelope",
+            value=self.ctx.caixinha_id or "",
+            options=[ft.dropdown.Option(key="", text="Todos os DemBoxes")] + [
+                ft.dropdown.Option(key=str(c["id"]), text=c.get("nome", "DemBox"))
+                for c in self.caixinhas_cache
+            ],
+            **T.dropdown_estilo(),
+        )
+
+        dd_modalidade_box = ft.Dropdown(
+            label="Modalidade de DemBox",
+            value=self.ctx.modalidade_box or "",
+            options=[
+                ft.dropdown.Option(key="", text="Todas as modalidades"),
+                ft.dropdown.Option(key="provisao_mensal", text="Provisões do Mês"),
+                ft.dropdown.Option(key="divida", text="Dívidas & Quitações"),
+                ft.dropdown.Option(key="fatura", text="DemBox Fatura"),
+            ],
+            **T.dropdown_estilo(),
+        )
+
+        dd_tratamento_box = ft.Dropdown(
+            label="Tratamento de Gastos de DemBox",
+            value=self.ctx.tratamento_box or "",
+            options=[
+                ft.dropdown.Option(key="", text="Mostrar Todos"),
+                ft.dropdown.Option(key="apenas_box", text="Apenas lançamentos de DemBox"),
+                ft.dropdown.Option(key="ocultar_neutros", text="Ocultar gastos neutros de DemBox"),
+            ],
+            **T.dropdown_estilo(),
+        )
+
+        dd_status = ft.Dropdown(
+            label="Status do Lançamento",
+            value=self.ctx.status or "",
+            options=[
+                ft.dropdown.Option(key="", text="Todos os status"),
+                ft.dropdown.Option(key="Pago", text="Pago / Realizado"),
+                ft.dropdown.Option(key="Pendente", text="Pendente (Incl. Fatura Aberta)"),
+                ft.dropdown.Option(key="Agendado", text="Agendado (Futuro)"),
+            ],
+            **T.dropdown_estilo(),
+        )
+
+        dd_membro = ft.Dropdown(
+            label="Perfil Familiar / Membro",
+            value=self.ctx.membro_id or "",
+            options=[ft.dropdown.Option(key="", text="Todos (Respeitar seletor do topo)")] + [
+                ft.dropdown.Option(key=str(m["id"]), text=m.get("nome", "Membro"))
+                for m in self.membros_cache
+            ],
+            **T.dropdown_estilo(),
+        )
+
         dd_regra = ft.Dropdown(
             label="Regra 50/30/20 (Legado)",
             value=self.ctx.regra or "",
@@ -430,6 +525,11 @@ class FilterBar(ft.Column):
                     cartao_id=(dd_cartao.value or None) if not self.fixar_cartao else self.ctx.cartao_id,
                     categoria_id=(dd_cat.value or None) if not self.fixar_categoria else self.ctx.categoria_id,
                     pote_id=(dd_pote.value or None) if not self.fixar_pote else self.ctx.pote_id,
+                    caixinha_id=dd_caixinha.value or None,
+                    modalidade_box=dd_modalidade_box.value or None,
+                    tratamento_box=dd_tratamento_box.value or None,
+                    status=dd_status.value or None,
+                    membro_id=dd_membro.value or None,
                     forma=dd_forma.value or None,
                     regra=(dd_regra.value or None) if not self.fixar_regra else self.ctx.regra,
                 ),
@@ -445,6 +545,10 @@ class FilterBar(ft.Column):
                     categoria_id=self.ctx.categoria_id if self.fixar_categoria else None,
                     subcategoria_id=None,
                     pote_id=self.ctx.pote_id if self.fixar_pote else None,
+                    caixinha_id=None,
+                    modalidade_box=None,
+                    tratamento_box=None,
+                    membro_id=None,
                     forma=None,
                     regra=self.ctx.regra if self.fixar_regra else None,
                     status=None,
@@ -463,6 +567,14 @@ class FilterBar(ft.Column):
         if not self.fixar_pote:
             campos.append(dd_pote)
         campos.append(dd_forma)
+        campos.append(ft.Divider(height=1, color=T.BORDER))
+        campos.append(ft.Text("DemBoxes, Status & Perfil", size=12, weight=ft.FontWeight.BOLD, color=T.PRIMARY))
+        campos.append(dd_caixinha)
+        campos.append(dd_modalidade_box)
+        campos.append(dd_tratamento_box)
+        campos.append(dd_status)
+        if self.membros_cache:
+            campos.append(dd_membro)
 
         if self.mobile:
             sheet = ft.BottomSheet(
@@ -524,8 +636,9 @@ class FilterBar(ft.Column):
                     ],
                 ),
                 content=ft.Container(
-                    width=420,
-                    content=ft.Column(tight=True, spacing=12, controls=campos),
+                    width=440,
+                    height=480,
+                    content=ft.Column(tight=True, spacing=12, scroll=ft.ScrollMode.AUTO, controls=campos),
                 ),
                 actions=[
                     ft.TextButton("Limpar Filtros", on_click=_limpar),

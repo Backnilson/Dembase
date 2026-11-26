@@ -379,14 +379,10 @@ def calcular_arquitetura_unificada_potes(
 
     gasto_total = round(sum(mapa_potes[pos]["gasto"] for pos in range(1, 7)), 2)
 
-    # 1. Custos Fixos (pos 1): Automático / Ajustado à Despesa
+    # 1. Custos Fixos (pos 1): Respeita 100% a porcentagem salva pelo usuário (sem auto-ajuste silencioso)
     g1 = p1["gasto"]
-    if rec > 0:
-        lim1 = max(g1, piso_fix)
-        pct1 = min(100.0, round((lim1 / rec) * 100.0, 2))
-    else:
-        lim1 = 0.0
-        pct1 = 0.0
+    pct1 = round(max(0.0, min(100.0, p1["percentual"])), 2)
+    lim1 = round(rec * (pct1 / 100.0), 2)
 
     # 2. Custos Semi Fixos (pos 2), Metas (pos 3), Conhecimento (pos 5): Orçamentos Retidos / Intocáveis
     pct2 = round(max(0.0, min(100.0, p2["percentual"])), 2)
@@ -401,10 +397,15 @@ def calcular_arquitetura_unificada_potes(
     g3 = p3["gasto"]
     g5 = p5["gasto"]
 
-    # 2.1 Liberação de sobra: teto = gasto real; a folga ociosa vai para o Caixa Livre
-    liberados = {int(x) for x in (potes_liberados or [])} & {2, 3, 5}
-    liberado_valor = {2: 0.0, 3: 0.0, 5: 0.0}
+    # 2.1 Liberação explícita de sobra pelo usuário (posições 1, 2, 3 e/ou 5):
+    # teto do pote = gasto real; a folga ociosa vai como bônus transparente para o Caixa Livre
+    liberados = {int(x) for x in (potes_liberados or [])} & {1, 2, 3, 5}
+    liberado_valor = {1: 0.0, 2: 0.0, 3: 0.0, 5: 0.0}
     if rec > 0:
+        if 1 in liberados and lim1 - g1 > 0.005:
+            liberado_valor[1] = round(lim1 - g1, 2)
+            lim1 = round(g1, 2)
+            pct1 = round((lim1 / rec) * 100.0, 2)
         if 2 in liberados and lim2 - g2 > 0.005:
             liberado_valor[2] = round(lim2 - g2, 2)
             lim2 = round(g2, 2)
@@ -417,12 +418,14 @@ def calcular_arquitetura_unificada_potes(
             liberado_valor[5] = round(lim5 - g5, 2)
             lim5 = round(g5, 2)
             pct5 = round((lim5 / rec) * 100.0, 2)
-    tem_liberacao = any(v > 0 for v in liberado_valor.values())
+    bonus_total_liberado = round(sum(liberado_valor.values()), 2)
+    tem_liberacao = bonus_total_liberado > 0.005
 
+    retido1 = max(0.0, round(lim1 - g1, 2))
     retido2 = max(0.0, round(lim2 - g2, 2))
     retido3 = max(0.0, round(lim3 - g3, 2))
     retido5 = max(0.0, round(lim5 - g5, 2))
-    retido_total = round(retido2 + retido3 + retido5 + max(0.0, round(lim1 - g1, 2)), 2)
+    retido_total = round(retido1 + retido2 + retido3 + retido5, 2)
 
     excesso_outros = round(
         max(0.0, g2 - lim2) + max(0.0, g3 - lim3) + max(0.0, g5 - lim5) + max(0.0, g1 - lim1), 2
@@ -431,31 +434,35 @@ def calcular_arquitetura_unificada_potes(
     # 3. Orçamento Restante do Caixa Livre (Liberdade Financeira + Prazeres)
     soma_retidos_pct = round(pct1 + pct2 + pct3 + pct5, 2)
     pct_caixa_livre = max(0.0, round(100.0 - soma_retidos_pct, 2))
-    if tem_liberacao:
-        # Valor exato (sem perda de centavos por arredondamento de percentuais)
-        teto_caixa_livre = max(0.0, round(rec - lim1 - lim2 - lim3 - lim5, 2))
-    else:
-        teto_caixa_livre = round(rec * (pct_caixa_livre / 100.0), 2)
+    teto_caixa_livre = max(0.0, round(rec - lim1 - lim2 - lim3 - lim5, 2)) if tem_liberacao else round(rec * (pct_caixa_livre / 100.0), 2)
 
-    # 4. Divisão do Slider entre Prazeres (pos 4) e Liberdade Financeira (pos 6)
-    soma_cl_meta = p4["percentual"] + p6["percentual"]
-    pct_inv_meta = round((p6["percentual"] / soma_cl_meta) * 100.0, 1) if soma_cl_meta > 0 else None
-    if (
-        not tem_liberacao
-        and pct_inv_meta is not None
-        and abs(s_inv - pct_inv_meta) <= 0.15
-        and p4["percentual"] <= pct_caixa_livre
-    ):
-        # Respeita exatamente a meta salva de Prazeres (Fonte Única da Verdade com o modal)
-        pct4 = round(p4["percentual"], 4)
+    # 4. Divisão entre Prazeres (pos 4) e Liberdade Financeira (pos 6)
+    # Mantém fidelidade 100% às metas salvas; se houver sobra liberada, aplica como bônus transparente
+    pct4_meta = round(max(0.0, min(100.0, p4["percentual"])), 2)
+    pct6_meta = round(max(0.0, min(100.0, p6["percentual"])), 2)
+    soma_cl_meta = pct4_meta + pct6_meta
+    pct_inv_meta = round((pct6_meta / soma_cl_meta) * 100.0, 1) if soma_cl_meta > 0 else None
+
+    bonus4 = 0.0
+    bonus6 = 0.0
+    if tem_liberacao:
+        pct4 = pct4_meta
+        pct6 = pct6_meta
+        bonus4 = round(bonus_total_liberado * (s_livre / 100.0), 2)
+        bonus6 = round(bonus_total_liberado - bonus4, 2)
+        lim4 = round(rec * (pct4 / 100.0) + bonus4, 2)
+        lim6 = round(rec * (pct6 / 100.0) + bonus6, 2)
+    elif pct_inv_meta is not None and abs(s_inv - pct_inv_meta) <= 0.15 and pct4_meta <= pct_caixa_livre + 0.05:
+        # Espelho 100% idêntico à meta salva pelo usuário
+        pct4 = pct4_meta
         lim4 = round(rec * (pct4 / 100.0), 2)
+        pct6 = round(max(0.0, 100.0 - (pct1 + pct2 + pct3 + pct4 + pct5)), 2)
+        lim6 = round(rec * (pct6 / 100.0), 2)
     else:
         pct4 = round(pct_caixa_livre * (s_livre / 100.0), 2)
         lim4 = round(teto_caixa_livre * (s_livre / 100.0), 2)
-
-    # Liberdade Financeira absorve a diferença para fechar SEMPRE exatamente 100,00%
-    pct6 = round(100.0 - (pct1 + pct2 + pct3 + pct4 + pct5), 2)
-    lim6 = max(0.0, round(teto_caixa_livre - lim4, 2))
+        pct6 = round(max(0.0, 100.0 - (pct1 + pct2 + pct3 + pct4 + pct5)), 2)
+        lim6 = max(0.0, round(teto_caixa_livre - lim4, 2))
 
     g4 = p4["gasto"]
     g6 = p6["gasto"]
@@ -504,7 +511,11 @@ def calcular_arquitetura_unificada_potes(
             "gasto": g1,
             "qtd_transacoes": p1["qtd_transacoes"],
             "restante": round(lim1 - g1, 2),
-            "tipo_comportamento": "automatico_fixo",
+            "tipo_comportamento": "retido_intocavel",
+            "disponivel_retido": retido1,
+            "liberavel": bool(retido1 > 0.005),
+            "liberado": bool(liberado_valor[1] > 0 or 1 in liberados),
+            "liberado_valor": liberado_valor[1],
             "piso_configurado": piso_fix,
         },
         {
@@ -551,6 +562,7 @@ def calcular_arquitetura_unificada_potes(
             "restante": round(lim4 - g4, 2),
             "tipo_comportamento": "caixa_livre_prazeres",
             "disponivel_efetivo": disp4_efetivo,
+            "bonus_liberado": bonus4,
         },
         {
             "id": p5["id"],
@@ -580,6 +592,7 @@ def calcular_arquitetura_unificada_potes(
             "restante": round(lim6 - g6, 2),
             "tipo_comportamento": "caixa_livre_investimento",
             "disponivel_efetivo": disp6_efetivo,
+            "bonus_liberado": bonus6,
         },
     ]
 

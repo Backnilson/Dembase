@@ -8,6 +8,7 @@ Permite criar, renomear, listar e excluir categorias e suas subcategorias filhas
 """
 import flet as ft
 from core import theme as T
+from core import theme_tokens as TT
 from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
 from core.router import ROTA_CATEGORIAS
 from views.shell_view import criar_shell

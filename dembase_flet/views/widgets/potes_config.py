@@ -144,6 +144,8 @@ def montar_aba_potes(
 
     renda_ref = [renda]                       # renda de referência atual
     linhas: list[dict] = []                   # uma por pote (controles + estado)
+    estado_pct: dict[int, Decimal] = {}       # fonte única de verdade em memória: {posicao: Decimal}
+    _syncing = [False]                        # trava de reentrância sempre protegida por try/finally
 
     # ── Seletor de Mês/Ano independente ──────────────────────────────────────
     txt_mes_ano = ft.Text(
@@ -210,19 +212,26 @@ def montar_aba_potes(
                 renda_ref[0] = _definir_renda_base()
                 txt_renda.value = formatar_moeda(float(renda_ref[0]))
             por_pos = {p.posicao: p for p in novos_potes}
-            for l in linhas:
-                pos = l["pote"].posicao
-                if pos in por_pos:
-                    np = por_pos[pos]
-                    l["pote"] = np
-                    l["nome"].value = np.nome
-                    val_pct = P.para_decimal(np.percentual, Decimal("0")).quantize(Decimal("0.01"))
-                    l["pct_dec"] = val_pct
-                    l["slider"].value = float(val_pct)
-                    l["perc"].value = _fmt_input_perc(val_pct)
-                    if renda_ref[0] > 0:
-                        v_rs = float(renda_ref[0]) * (float(val_pct) / 100.0)
-                        l["tf_rs"].value = f"{v_rs:.2f}".replace(".", ",")
+            _syncing[0] = True
+            try:
+                for l in linhas:
+                    pos = l["pote"].posicao
+                    if pos in por_pos:
+                        np = por_pos[pos]
+                        l["pote"] = np
+                        l["nome"].value = np.nome
+                        val_pct = P.para_decimal(np.percentual, Decimal("0")).quantize(Decimal("0.01"))
+                        estado_pct[pos] = val_pct
+                        l["pct_dec"] = val_pct
+                        l["slider"].value = float(val_pct)
+                        l["perc"].value = _fmt_input_perc(val_pct)
+                        if renda_ref[0] > 0:
+                            v_rs = float(renda_ref[0]) * (float(val_pct) / 100.0)
+                            l["tf_rs"].value = f"{v_rs:.2f}".replace(".", ",")
+            finally:
+                _syncing[0] = False
+            # Pré-carrega proporção do Caixa Livre fora do arraste (zero rede no drag)
+            _pct_invest_mes()
             _atualizar_cabecalho_mes()
             _atualizar_info_renda()
             _atualizar_tela(montado=True)
@@ -351,6 +360,9 @@ def montar_aba_potes(
     # ── Núcleo reativo ───────────────────────────────────────────────────────
     def _percentual(linha: dict) -> Decimal:
         try:
+            pos = linha["pote"].posicao
+            if pos in estado_pct:
+                return estado_pct[pos]
             if "pct_dec" in linha and linha["pct_dec"] is not None:
                 return linha["pct_dec"]
             return Decimal(str(round(float(linha["slider"].value or 0), 2)))
@@ -568,34 +580,87 @@ def montar_aba_potes(
             except Exception:
                 pass
 
+    def _aplicar_percentual_linha(
+        l: dict,
+        v_dec: Decimal,
+        *,
+        atualizar_slider: bool = True,
+        atualizar_perc: bool = True,
+        atualizar_rs: bool = True,
+    ):
+        """Atualiza o estado único `estado_pct` e sincroniza os controles da linha com trava try/finally."""
+        pos = l["pote"].posicao
+        v_norm = max(Decimal("0.00"), min(Decimal("100.00"), v_dec.quantize(Decimal("0.01"))))
+        estado_pct[pos] = v_norm
+        l["pct_dec"] = v_norm
+        r_flt = float(renda_ref[0])
+        _syncing[0] = True
+        try:
+            if atualizar_slider:
+                l["slider"].value = float(v_norm)
+            if atualizar_perc:
+                l["perc"].value = _fmt_input_perc(v_norm)
+            if atualizar_rs and r_flt > 0:
+                l["tf_rs"].value = f"{r_flt * (float(v_norm) / 100.0):.2f}".replace(".", ",")
+            elif atualizar_rs:
+                l["tf_rs"].value = "0,00"
+        finally:
+            _syncing[0] = False
+
     def _ao_mover_slider(e):
+        if _syncing[0]:
+            return
         for l in linhas:
             if l["slider"] is e.control:
                 # Arraste manual da barra trabalha sempre em números inteiros (1 em 1)
                 v = int(round(float(e.control.value or 0.0)))
                 v = max(0, min(100, v))
-                l["pct_dec"] = Decimal(str(v))
-                l["slider"].value = float(v)
-                l["perc"].value = str(v)
-                r_flt = float(renda_ref[0])
-                if r_flt > 0:
-                    l["tf_rs"].value = f"{r_flt * (v / 100.0):.2f}".replace(".", ",")
+                _aplicar_percentual_linha(
+                    l,
+                    Decimal(str(v)),
+                    atualizar_slider=False,
+                    atualizar_perc=True,
+                    atualizar_rs=True,
+                )
+                break
+        _atualizar_tela()
+
+    def _ao_finalizar_slider(e):
+        if _syncing[0]:
+            return
+        for l in linhas:
+            if l["slider"] is e.control:
+                v = int(round(float(e.control.value or 0.0)))
+                v = max(0, min(100, v))
+                _aplicar_percentual_linha(
+                    l,
+                    Decimal(str(v)),
+                    atualizar_slider=True,
+                    atualizar_perc=True,
+                    atualizar_rs=True,
+                )
                 break
         _atualizar_tela()
 
     def _ao_digitar_percentual(e):
+        if _syncing[0]:
+            return
         for l in linhas:
             if l["perc"] is e.control:
                 v_dec = _parse_perc_decimal(e.control.value)
-                l["pct_dec"] = v_dec
-                l["slider"].value = float(v_dec)
-                r_flt = float(renda_ref[0])
-                if r_flt > 0:
-                    l["tf_rs"].value = f"{r_flt * (float(v_dec) / 100.0):.2f}".replace(".", ",")
+                _aplicar_percentual_linha(
+                    l,
+                    v_dec,
+                    atualizar_slider=True,
+                    atualizar_perc=False,
+                    atualizar_rs=True,
+                )
                 break
         _atualizar_tela()
 
     def _ao_digitar_reais(e):
+        if _syncing[0]:
+            return
         for l in linhas:
             if l["tf_rs"] is e.control:
                 try:
@@ -608,37 +673,41 @@ def montar_aba_potes(
                     v_pct = max(0.0, min(100.0, (val_rs / r_flt) * 100.0))
                     v_dec = Decimal(str(round(v_pct, 2))).quantize(Decimal("0.01"))
                 else:
-                    v_dec = Decimal("0")
-                l["pct_dec"] = v_dec
-                l["slider"].value = float(v_dec)
-                l["perc"].value = _fmt_input_perc(v_dec)
+                    v_dec = Decimal("0.00")
+                _aplicar_percentual_linha(
+                    l,
+                    v_dec,
+                    atualizar_slider=True,
+                    atualizar_perc=True,
+                    atualizar_rs=False,
+                )
                 break
         _atualizar_tela()
 
     def _cravar_no_gasto_real(l: dict):
-        """Duplo clique na barra: crava o limite no Gasto Real (arredondando SEMPRE para cima em dízimas)."""
+        """Duplo clique / atalho: crava o limite no Gasto Real arredondando SEMPRE para cima (ROUND_CEILING) em 2 casas."""
         r_flt = float(renda_ref[0])
         gasto = round(float(ctx_ref[0]["gastos"].get(l["pote"].posicao, 0.0)), 2)
         if r_flt <= 0 or gasto <= 0:
-            v_dec = Decimal("0")
-            val_rs = 0.0
+            v_dec = Decimal("0.00")
         else:
             rec_dec = Decimal(str(round(r_flt, 2)))
             gasto_dec = Decimal(str(gasto))
             pct_bruto = (gasto_dec / rec_dec) * Decimal("100")
             if pct_bruto >= Decimal("100"):
-                v_dec = Decimal("100")
-                val_rs = r_flt
+                v_dec = Decimal("100.00")
             else:
-                # 4 casas decimais arredondando SEMPRE para cima (Limite >= Gasto Real)
-                v_dec = pct_bruto.quantize(Decimal("0.0001"), rounding=ROUND_CEILING)
-                while round(r_flt * (float(v_dec) / 100.0), 2) < gasto and v_dec < Decimal("100"):
-                    v_dec += Decimal("0.0001")
-                val_rs = round(r_flt * (float(v_dec) / 100.0), 2)
-        l["pct_dec"] = v_dec
-        l["slider"].value = float(v_dec)
-        l["perc"].value = _fmt_input_perc(v_dec)
-        l["tf_rs"].value = f"{val_rs:.2f}".replace(".", ",")
+                # 2 casas decimais arredondando SEMPRE para cima (teto): garante Limite >= Gasto Real
+                v_dec = pct_bruto.quantize(Decimal("0.01"), rounding=ROUND_CEILING)
+                while round(r_flt * (float(v_dec) / 100.0), 2) < gasto and v_dec < Decimal("100.00"):
+                    v_dec += Decimal("0.01")
+        _aplicar_percentual_linha(
+            l,
+            v_dec,
+            atualizar_slider=True,
+            atualizar_perc=True,
+            atualizar_rs=True,
+        )
         _atualizar_tela()
 
     def _ao_alterar_nome(_):
@@ -648,10 +717,11 @@ def montar_aba_potes(
     for pote in potes:
         pos = pote.posicao
         val_pct_dec = P.para_decimal(pote.percentual, Decimal("0")).quantize(Decimal("0.01"))
+        estado_pct[pos] = val_pct_dec
         slider = ft.Slider(
             min=0, max=100, value=float(val_pct_dec),
             active_color=pote.cor, inactive_color=T.SURFACE_ALT, thumb_color=pote.cor,
-            expand=True, on_change=_ao_mover_slider,
+            expand=True, on_change=_ao_mover_slider, on_change_end=_ao_finalizar_slider,
         )
         perc = ft.TextField(
             value=_fmt_input_perc(val_pct_dec), width=66, text_align=ft.TextAlign.CENTER,
@@ -720,16 +790,38 @@ def montar_aba_potes(
         m_alvo = estado_periodo["mes"]
         a_alvo = estado_periodo["ano"]
         rot_alvo = _nome_mes_ano(m_alvo, a_alvo)
+        texto_btn_orig = btn_salvar.content
+        btn_salvar.disabled = True
+        btn_salvar.content = f"Salvando {rot_alvo}..."
+        try:
+            btn_salvar.update()
+        except Exception:
+            pass
         try:
             salvos = svc.salvar_configuracao(itens, mes=m_alvo, ano=a_alvo)
         except P.ErroPotes as ex:
+            btn_salvar.disabled = False
+            btn_salvar.content = texto_btn_orig
             mostrar_feedback(page, " ".join(ex.erros), "alerta")
+            _atualizar_tela()
             return
         except Exception as ex:
+            btn_salvar.disabled = False
+            btn_salvar.content = texto_btn_orig
             mostrar_feedback(page, f"Erro ao salvar metas: {ex}", "erro")
+            _atualizar_tela()
             return
-        for l, novo in zip(linhas, salvos):
-            l["pote"] = novo
+        _syncing[0] = True
+        try:
+            for l, novo in zip(linhas, salvos):
+                l["pote"] = novo
+                v_salvo = P.para_decimal(novo.percentual, Decimal("0")).quantize(Decimal("0.01"))
+                estado_pct[novo.posicao] = v_salvo
+                l["pct_dec"] = v_salvo
+                l["slider"].value = float(v_salvo)
+                l["perc"].value = _fmt_input_perc(v_salvo)
+        finally:
+            _syncing[0] = False
         # Sincroniza a proporção do Caixa Livre (Liberdade Financeira vs Prazeres) com o Dashboard
         pct4_salvo = next((float(_percentual(l)) for l in linhas if l["pote"].posicao == 4), 0.0)
         pct6_salvo = next((float(_percentual(l)) for l in linhas if l["pote"].posicao == 6), 0.0)
@@ -737,9 +829,13 @@ def montar_aba_potes(
         if soma_cl_salvo > 0:
             pct_inv_salvo = round((pct6_salvo / soma_cl_salvo) * 100.0, 1)
             storage.salvar_percentual_sobra_investimento_sync(page, pct_inv_salvo, mes=m_alvo, ano=a_alvo)
-            svc.salvar_pct_investimento_db(m_alvo, a_alvo, pct_inv_salvo)
+            try:
+                svc.salvar_pct_investimento_db(m_alvo, a_alvo, pct_inv_salvo)
+            except Exception as ex_cl:
+                print(f"[PotesConfig] Aviso ao sincronizar proporção Caixa Livre no banco: {ex_cl}")
             pct_cache[(m_alvo, a_alvo)] = pct_inv_salvo
         estado_periodo["herdado"] = False
+        btn_salvar.disabled = False
         _atualizar_cabecalho_mes()
         mostrar_feedback(
             page,
@@ -750,21 +846,16 @@ def montar_aba_potes(
         if callable(ao_salvar):
             try:
                 ao_salvar()
-            except Exception:
-                pass
+            except Exception as ex_cb:
+                print(f"[PotesConfig] Erro no callback ao_salvar: {ex_cb}")
 
     def _resetar(_):
         padrao = {d["posicao"]: d for d in P.POTES_PADRAO}
-        r_flt = float(renda_ref[0])
         for l in linhas:
             d = padrao[l["pote"].posicao]
             l["nome"].value = d["nome"]
             v_dec = Decimal(str(int(d["percentual"])))
-            l["pct_dec"] = v_dec
-            l["slider"].value = float(v_dec)
-            l["perc"].value = str(int(v_dec))
-            if r_flt > 0:
-                l["tf_rs"].value = f"{r_flt * (float(v_dec) / 100.0):.2f}".replace(".", ",")
+            _aplicar_percentual_linha(l, v_dec, atualizar_slider=True, atualizar_perc=True, atualizar_rs=True)
         _atualizar_tela()
 
     btn_salvar.on_click = _salvar_metas
@@ -854,6 +945,14 @@ def montar_aba_potes(
 
     # ── Linha UI para cada Pote ───────────────────────────────────────────────
     def _linha_ui(l: dict) -> ft.Column:
+        btn_cravar = ft.IconButton(
+            icon=ft.Icons.GPS_FIXED_ROUNDED,
+            icon_size=15,
+            icon_color=T.TEXT_MUTED,
+            tooltip="Igualar limite ao Gasto Real (arredonda para cima)",
+            on_click=lambda _, linha=l: _cravar_no_gasto_real(linha),
+            style=ft.ButtonStyle(padding=pad(all_=4)),
+        )
         return ft.Column(
             spacing=2,
             controls=[
@@ -867,16 +966,19 @@ def montar_aba_potes(
                         l["tf_rs"],
                         l["perc"],
                         ft.Text("%", size=11, color=T.TEXT_MUTED),
+                        btn_cravar,
                     ],
                 ),
+                # Slider livre de GestureDetector para arraste 100% fluido e sem conflito de gestos
+                ft.Container(content=l["slider"]),
                 ft.GestureDetector(
                     on_double_tap=lambda _, linha=l: _cravar_no_gasto_real(linha),
                     content=ft.Container(
-                        tooltip="Duplo clique na barra para igualar o limite ao Gasto Real",
-                        content=l["slider"],
+                        padding=pad(left=18, top=2, bottom=2),
+                        tooltip="Duplo clique aqui para igualar o limite ao Gasto Real",
+                        content=l["preview"],
                     ),
                 ),
-                ft.Container(padding=pad(left=18), content=l["preview"]),
             ],
         )
 
@@ -919,7 +1021,7 @@ def montar_aba_potes(
             ft.OutlinedButton(
                 content="Resetar Padrões", on_click=_resetar,
                 style=ft.ButtonStyle(color=T.TEXT_MUTED, side=ft.BorderSide(1, T.BORDER),
-                                     shape=ft.RoundedRectangleBorder(radius=10), padding=pad(v=14)),
+                                     shape=ft.RoundedRectangleBorder(radius=10), padding=pad(h=18, v=14)),
             ),
         ]),
     )
@@ -960,9 +1062,9 @@ def montar_aba_potes(
         content=ft.Row(spacing=10, controls=[
             ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED, size=16, color=T.PRIMARY),
             ft.Text(
-                "Regra de Ouro DemBase: Custos Fixos são ajustados às despesas reais (ou piso); "
-                "os saldos de Semi Fixos, Metas e Conhecimento ficam retidos nos potes (sem inflar o Caixa Livre); "
-                "e o restante fecha 100% entre Liberdade Financeira e Prazeres via Slider.",
+                "Regra de Ouro DemBase: Todos os 6 potes respeitam 100% as porcentagens salvas por você. "
+                "Saldos não gastos de Custos Fixos, Semi Fixos, Metas e Conhecimento ficam retidos nos potes "
+                "(podendo ser liberados para o Caixa Livre sob demanda), enquanto Prazeres e Liberdade Financeira compõem o Caixa Livre.",
                 size=11, color=T.TEXT_PRIMARY, expand=True,
             ),
         ]),
@@ -976,6 +1078,8 @@ def montar_aba_potes(
         nota,
     ])
 
+    # Pré-carrega o cache de proporção do Caixa Livre antes de qualquer arraste (zero rede no drag)
+    _pct_invest_mes()
     _atualizar_cabecalho_mes()
     _atualizar_info_renda()
     _atualizar_tela(montado=False)

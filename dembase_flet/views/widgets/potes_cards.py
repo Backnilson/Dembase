@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Callable, Any
 import flet as ft
 from core import theme as T
+from core import theme_tokens as TT
 from core.theme import pad, borda
 from core.constants import formatar_moeda, MESES_NOMES
 
@@ -57,9 +58,11 @@ def card_pote(pote: dict, on_click=None, on_liberar: Callable[[int, bool], None]
     previsto = float(pote.get("previsto") or 0)
     restante = previsto - gasto
     qtd = int(pote.get("qtd_transacoes") or 0)
-    cor_pote = pote.get("cor") or T.PRIMARY
-    perc_pote = float(pote.get("percentual") or 0)
     posicao = int(pote.get("posicao") or 0)
+    nome_pote = pote.get("nome") or "Pote"
+    cor_pote = TT.cor_pote_adaptativa(posicao, nome_pote, pote.get("cor"))
+    emj_pote = TT.emoji_pote(posicao, nome_pote)
+    perc_pote = float(pote.get("percentual") or 0)
     tipo_comp = pote.get("tipo_comportamento") or ""
 
     excedido = gasto > previsto and previsto > 0
@@ -85,23 +88,12 @@ def card_pote(pote: dict, on_click=None, on_liberar: Callable[[int, bool], None]
         badge = _badge("Excedido", COR_EXCEDIDO)
         borda_card = borda(color=f"{COR_EXCEDIDO}80")
         txt_restante = ft.Text(f"{formatar_moeda(abs(restante))} acima do limite", color=COR_EXCEDIDO, size=11)
-    elif posicao == 1 or tipo_comp == "automatico_fixo":
-        # Custos Fixos: Automático / Ajustado à despesa
+    elif posicao in (1, 2, 3, 5) or tipo_comp in ("retido_intocavel", "automatico_fixo"):
+        # Custos Fixos, Custos Semi Fixos, Metas, Conhecimento: Orçamento Retido / Intocável (100% fiel à meta salva)
         pct = (gasto / previsto * 100) if previsto > 0 else 0.0
         cor_barra, cor_valor = cor_pote, T.TEXT_PRIMARY
-        piso = float(pote.get("piso_configurado") or 1150.0)
-        if gasto >= piso and previsto == gasto:
-            badge = _badge(f"{_pct_br(perc_pote)} · Ajustado", cor_pote)
-            txt_restante = ft.Text(f"Limite 100% ajustado às despesas", color=T.TEXT_MUTED, size=11)
-        else:
-            badge = _badge(f"{_pct_br(perc_pote)} · Piso {formatar_moeda(piso)}", cor_pote)
-            txt_restante = ft.Text(f"+{formatar_moeda(restante)} reservado p/ fixos", color=T.RECEITA, size=11)
-        borda_card = borda()
-    elif posicao in (2, 3, 5) or tipo_comp == "retido_intocavel":
-        # Custos Semi Fixos, Metas, Conhecimento: Orçamento Retido / Intocável
-        pct = (gasto / previsto * 100) if previsto > 0 else 0.0
-        cor_barra, cor_valor = cor_pote, T.TEXT_PRIMARY
-        badge = _badge(_pct_br(perc_pote), cor_pote, bg=f"{cor_pote}18")
+        bg_b, txt_b = TT.estilo_badge_adaptativo(cor_pote, solido=False)
+        badge = _badge(_pct_br(perc_pote), txt_b, bg=bg_b)
         borda_card = borda()
         if pote.get("liberado"):
             txt_restante = ft.Text(
@@ -115,16 +107,26 @@ def card_pote(pote: dict, on_click=None, on_liberar: Callable[[int, bool], None]
         # Prazeres (Livre sem Culpa / Caixa Livre)
         pct = (gasto / previsto * 100) if previsto > 0 else 0.0
         cor_barra, cor_valor = cor_pote, T.TEXT_PRIMARY
-        badge = _badge(f"{_pct_br(perc_pote)} · Livre s/ Culpa", cor_pote, bg=f"{cor_pote}18")
+        bg_b, txt_b = TT.estilo_badge_adaptativo(cor_pote, solido=False)
+        badge = _badge(f"{_pct_br(perc_pote)} · Livre s/ Culpa", txt_b, bg=bg_b)
         borda_card = borda(color=f"{cor_pote}40")
-        txt_restante = ft.Text(f"+{formatar_moeda(restante)} livre no caixa", color=cor_pote, size=11, weight=ft.FontWeight.W_600)
+        bonus_lib = float(pote.get("bonus_liberado") or 0)
+        sub_p4 = f"+{formatar_moeda(restante)} livre no caixa"
+        if bonus_lib > 0.005:
+            sub_p4 += f" (+{formatar_moeda(bonus_lib)} de sobra liberada)"
+        txt_restante = ft.Text(sub_p4, color=cor_pote, size=11, weight=ft.FontWeight.W_600)
     elif posicao == 6 or tipo_comp == "caixa_livre_investimento":
-        # Liberdade Financeira (Investimento / Caixa Livre)
+        # Liberdade Financeira (Investimento / Caixa Livre) — alto contraste WCAG AA no Dark e Light
         pct = (gasto / previsto * 100) if previsto > 0 else 0.0
         cor_barra, cor_valor = cor_pote, T.TEXT_PRIMARY
-        badge = _badge(f"{_pct_br(perc_pote)} · Investir", cor_pote, bg=f"{cor_pote}18")
+        bg_b, txt_b = TT.estilo_badge_adaptativo(cor_pote, solido=True)
+        badge = _badge(f"{_pct_br(perc_pote)} · Investir", txt_b, bg=bg_b)
         borda_card = borda(color=f"{cor_pote}40")
-        txt_restante = ft.Text(f"+{formatar_moeda(restante)} p/ aportar", color=cor_pote, size=11, weight=ft.FontWeight.W_600)
+        bonus_lib = float(pote.get("bonus_liberado") or 0)
+        sub_p6 = f"+{formatar_moeda(restante)} p/ aportar"
+        if bonus_lib > 0.005:
+            sub_p6 += f" (+{formatar_moeda(bonus_lib)} de sobra liberada)"
+        txt_restante = ft.Text(sub_p6, color=cor_pote, size=11, weight=ft.FontWeight.W_600)
     else:
         pct = (gasto / previsto * 100) if previsto > 0 else 0.0
         cor_barra, cor_valor = cor_pote, T.TEXT_PRIMARY
@@ -134,9 +136,9 @@ def card_pote(pote: dict, on_click=None, on_liberar: Callable[[int, bool], None]
 
     rotulo_qtd = "transação" if qtd == 1 else "transações"
 
-    # Ação rápida: liberar a sobra +Disponível dos potes manuais para o Caixa Livre
+    # Ação rápida: liberar a sobra +Disponível dos potes retidos para o Caixa Livre
     acao_liberar: list[ft.Control] = []
-    if on_liberar and posicao in (2, 3, 5):
+    if on_liberar and posicao in (1, 2, 3, 5):
         if pote.get("liberado"):
             acao_liberar.append(
                 ft.OutlinedButton(

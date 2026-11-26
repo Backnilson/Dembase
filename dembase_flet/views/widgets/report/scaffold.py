@@ -13,6 +13,7 @@ import inspect
 import flet as ft
 
 from core import theme as T
+from core import theme_tokens as TT
 from core.theme import pad, borda
 from core.constants import formatar_moeda
 
@@ -219,7 +220,8 @@ def construir_card_ranking_categorias(
     else:
         for cat in categorias[:10]:
             nome = cat.get("nome") or cat.get("categoria") or "Sem Categoria"
-            cor = cat.get("cor") or cor_base
+            cor = TT.cor_categoria_adaptativa(nome, cat.get("cor"))
+            emj = TT.emoji_categoria(nome, cat.get("icone"))
             total = float(cat.get("total") or cat.get("valor") or 0)
             perc = float(cat.get("percentual") or 0)
             qtd = int(cat.get("qtd") or 0)
@@ -244,7 +246,7 @@ def construir_card_ranking_categorias(
                                         spacing=8,
                                         expand=True,
                                         controls=[
-                                            ft.Container(width=10, height=10, bgcolor=cor, border_radius=5),
+                                            ft.Text(emj, size=15),
                                             ft.Text(nome, color=T.TEXT_PRIMARY, size=13, weight=ft.FontWeight.W_600, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
                                             ft.Text(f"({qtd})", color=T.TEXT_MUTED, size=11) if qtd > 0 else ft.Container(),
                                         ],
@@ -492,7 +494,8 @@ def construir_card_ranking_potes(
     else:
         for p in potes:
             nome = p.get("nome") or "Sem Pote"
-            cor = p.get("cor") or cor_base
+            cor = TT.cor_pote_adaptativa(p.get("posicao"), nome, p.get("cor"))
+            emj = TT.emoji_pote(p.get("posicao"), nome)
             total = float(p.get("total") or 0)
             perc = float(p.get("percentual") or 0)
             qtd = int(p.get("qtd") or 0)
@@ -503,7 +506,7 @@ def construir_card_ranking_potes(
             is_selecionado = bool(sel_id_str and pote_id_str == sel_id_str)
 
             controles_badge: list[ft.Control] = [
-                ft.Container(width=10, height=10, bgcolor=cor, border_radius=5),
+                ft.Text(emj, size=15),
                 ft.Text(
                     nome,
                     color=T.TEXT_PRIMARY,

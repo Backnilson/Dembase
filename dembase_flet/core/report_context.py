@@ -95,8 +95,12 @@ class ReportContext:
     categoria_id: str | None = None
     subcategoria_id: str | None = None
     pote_id: str | None = None
+    caixinha_id: str | None = None
+    modalidade_box: str | None = None   # 'provisao_mensal' | 'divida' | 'fatura'
+    tratamento_box: str | None = None   # 'apenas_box' | 'ocultar_neutros'
+    membro_id: str | None = None
     regra: str | None = None         # 'Essencial' | 'Estilo de Vida' | 'Investimento'
-    status: str | None = None        # 'Pago' | 'Pendente'
+    status: str | None = None        # 'Pago' | 'Pendente' | 'Agendado'
     forma: str | None = None         # 'Pix' | 'Crédito' | 'Débito' | 'Dinheiro'
     busca: str | None = None
     origem: str | None = None        # 'dashboard' | 'relatorios' | 'contas' | 'cartoes'
@@ -160,7 +164,13 @@ class ReportContext:
                 d_ini, d_fim = d_fim, d_ini
 
         status_raw = (raw_params.get("status") or "").strip().capitalize()
-        status_val = status_raw if status_raw in ("Pago", "Pendente") else None
+        status_val = status_raw if status_raw in ("Pago", "Pendente", "Agendado") else None
+
+        mod_box_raw = (raw_params.get("modalidade_box") or raw_params.get("mod_box") or "").strip().lower()
+        mod_box_val = mod_box_raw if mod_box_raw in ("provisao_mensal", "divida", "fatura") else None
+
+        trat_box_raw = (raw_params.get("tratamento_box") or raw_params.get("trat_box") or "").strip().lower()
+        trat_box_val = trat_box_raw if trat_box_raw in ("apenas_box", "ocultar_neutros") else None
 
         forma_raw = (raw_params.get("forma") or "").strip()
         forma_val = forma_raw if forma_raw else None
@@ -193,6 +203,10 @@ class ReportContext:
             categoria_id=_validar_uuid(raw_params.get("cat") or raw_params.get("categoria_id")),
             subcategoria_id=_validar_uuid(raw_params.get("sub") or raw_params.get("subcategoria_id")),
             pote_id=_validar_uuid(raw_params.get("pote") or raw_params.get("pote_id")),
+            caixinha_id=_validar_uuid(raw_params.get("box") or raw_params.get("caixinha_id")),
+            modalidade_box=mod_box_val,
+            tratamento_box=trat_box_val,
+            membro_id=_validar_uuid(raw_params.get("membro") or raw_params.get("membro_id")),
             regra=regra_val,
             status=status_val,
             forma=forma_val,
@@ -222,6 +236,14 @@ class ReportContext:
             q["sub"] = self.subcategoria_id
         if self.pote_id:
             q["pote"] = self.pote_id
+        if self.caixinha_id:
+            q["box"] = self.caixinha_id
+        if self.modalidade_box:
+            q["mod_box"] = self.modalidade_box
+        if self.tratamento_box:
+            q["trat_box"] = self.tratamento_box
+        if self.membro_id:
+            q["membro"] = self.membro_id
         if self.regra:
             q["regra"] = regra_para_slug(self.regra)
         if self.status:
@@ -271,6 +293,14 @@ class ReportContext:
             f["subcategoria_id"] = self.subcategoria_id
         if self.pote_id:
             f["pote_id"] = self.pote_id
+        if self.caixinha_id:
+            f["caixinha_id"] = self.caixinha_id
+        if self.modalidade_box:
+            f["modalidade_box"] = self.modalidade_box
+        if self.tratamento_box:
+            f["tratamento_box"] = self.tratamento_box
+        if self.membro_id:
+            f["membro_id"] = self.membro_id
         if self.regra:
             f["regra"] = self.regra
         if self.status:
@@ -292,6 +322,10 @@ class ReportContext:
                 self.categoria_id,
                 self.subcategoria_id,
                 self.pote_id,
+                self.caixinha_id,
+                self.modalidade_box,
+                self.tratamento_box,
+                self.membro_id,
                 self.regra,
                 self.status,
                 self.forma,

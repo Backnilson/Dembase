@@ -27295,45 +27295,124 @@ def retirar_saldo_caixinha(
     }
 
 
-def deduzir_saldo_caixinha(caixinha_id: str, valor: float, descricao: str = "") -> dict:
-    """Subtrai valor do saldo da caixinha (gasto/dedução). Não debita o banco novamente."""
+def deduzir_saldo_caixinha(
+    caixinha_id: str,
+    valor: float,
+    descricao: str = "",
+    data_gasto: str | None = None,
+    categoria_id: str | None = None,
+    subcategoria_id: str | None = None,
+    pote_id: str | None = None,
+    membro_id: str | None = None,
+    forma_movimentacao: str = "Pix",
+) -> dict:
+    """
+    Registra gasto/abatimento direto de um DemBox (Provisão Mensal ou Dívida):
+    - Grava lançamento completo em 'lancamentos' (tipo='Despesa', subtipo='Consumo Caixinha',
+      conta_id=None) para visibilidade garantida nos Relatórios com neutralidade no Pote/Banco.
+    - Grava movimentação vinculada em 'caixinhas_teto_movimentacoes' com lancamento_id.
+    - Recalcula o saldo do DemBox e invalida todos os caches relacionados.
+    """
+    from datetime import date as _date
+
+    v = round(float(valor or 0), 2)
+    if v <= 0:
+        raise ValueError("Informe um valor maior que zero.")
+
+    cid = str(caixinha_id)
+    c = obter_caixinha(cid)
+    if not c:
+        raise ValueError("DemBox não encontrado.")
+
+    nome_cx = c.get("nome", "DemBox")
+    eh_divida = str(c.get("modalidade") or "provisao_mensal").strip().lower() in ("divida", "quitacao")
+    desc_limpa = str(descricao or "").strip()
+    desc_final = desc_limpa or (f"Abatimento · {nome_cx}" if eh_divida else f"Gasto · {nome_cx}")
+    dt_final = str(data_gasto or _date.today().isoformat())[:10]
+    ant_saldo = round(float(c.get("saldo_atual", 0) or 0), 2)
+    novo_saldo = round(max(0.0, ant_saldo - v), 2)
+
+    user = usuario_atual()
+    uid = user.id if user else c.get("user_id")
+
+    dados_lanc = {
+        "tipo": "Despesa",
+        "subtipo": "Consumo Caixinha",
+        "forma_movimentacao": str(forma_movimentacao or "Pix"),
+        "valor": v,
+        "data": dt_final,
+        "status": "Pago",
+        "descricao": desc_final,
+        "caixinha_id": cid,
+        "conta_id": None,  # Neutro no banco (já descontado no provisionamento/aporte)
+        "pote_id": pote_id or c.get("pote_id") or None,
+        "categoria_id": categoria_id or c.get("categoria_id") or None,
+        "subcategoria_id": subcategoria_id or c.get("subcategoria_id") or None,
+        "membro_id": membro_id or c.get("membro_id") or None,
+    }
+    if uid:
+        dados_lanc["user_id"] = uid
+        dados_lanc["perfil_id"] = uid
+
+    lid = None
+    l_ins = supabase.table("lancamentos").insert(dados_lanc).execute()
+    if l_ins and l_ins.data:
+        lid = str(l_ins.data[0].get("id"))
+
+    mov_payload = {
+        "caixinha_id": cid,
+        "user_id": uid,
+        "tipo": "deducao",
+        "valor": v,
+        "saldo_anterior": ant_saldo,
+        "saldo_posterior": novo_saldo,
+        "descricao": desc_final,
+        "data": dt_final,
+        "lancamento_id": lid,
+    }
     try:
-        resp = supabase.rpc("deduzir_saldo_caixinha", {
-            "p_caixinha_id": str(caixinha_id),
-            "p_valor": float(valor),
-            "p_descricao": str(descricao or "Gasto registrado"),
-        }).execute()
-        recalcular_saldo_caixinha(caixinha_id)
-        invalidar_cache("caixinhas")
-        invalidar_cache("resumo_caixinhas")
-        invalidar_cache("dashboard")
-        return resp.data or {}
+        supabase.table("caixinhas_teto_movimentacoes").insert(mov_payload).execute()
     except Exception:
-        c = obter_caixinha(caixinha_id)
-        if c:
-            from datetime import date
-            ant = float(c.get("saldo_atual", 0) or 0)
-            novo = max(0.0, ant - float(valor))
-            atualizar_caixinha(caixinha_id, {"saldo_atual": novo})
-            try:
-                user = usuario_atual()
-                supabase.table("caixinhas_teto_movimentacoes").insert({
-                    "caixinha_id": str(caixinha_id),
-                    "user_id": user.id if user else None,
-                    "tipo": "deducao",
-                    "valor": float(valor),
-                    "saldo_anterior": ant,
-                    "saldo_posterior": novo,
-                    "descricao": descricao or "Gasto registrado",
-                    "data": str(date.today()),
-                }).execute()
-            except Exception:
-                pass
-            invalidar_cache("caixinhas")
-            invalidar_cache("resumo_caixinhas")
-            invalidar_cache("dashboard")
-            return {"sucesso": True, "saldo_anterior": ant, "saldo_atual": novo, "valor_deduzido": valor}
-        return {"erro": "Caixinha não encontrada"}
+        pass
+
+    recalcular_saldo_caixinha(cid)
+    for chave in ("caixinhas", "resumo_caixinhas", "lancamentos", "contas", "potes", "potes_resumo", "dashboard", "calendario"):
+        invalidar_cache(chave)
+
+    return {
+        "sucesso": True,
+        "caixinha_id": cid,
+        "lancamento_id": lid,
+        "saldo_anterior": ant_saldo,
+        "saldo_atual": novo_saldo,
+        "valor_deduzido": v,
+        "descricao": desc_final,
+    }
+
+
+def excluir_movimentacao_caixinha(
+    caixinha_id: str,
+    mov_id: str | None = None,
+    lancamento_id: str | None = None,
+) -> dict:
+    """Exclui uma movimentação/lançamento do histórico do Raio-X e recalcula o saldo do DemBox."""
+    cid = str(caixinha_id)
+    if lancamento_id:
+        lid = str(lancamento_id)
+        try:
+            supabase.table("caixinhas_teto_movimentacoes").delete().eq("lancamento_id", lid).execute()
+        except Exception:
+            pass
+        supabase.table("lancamentos").delete().eq("id", lid).execute()
+    elif mov_id:
+        supabase.table("caixinhas_teto_movimentacoes").delete().eq("id", str(mov_id)).execute()
+    else:
+        raise ValueError("Informe mov_id ou lancamento_id para excluir.")
+
+    recalcular_saldo_caixinha(cid)
+    for chave in ("caixinhas", "resumo_caixinhas", "lancamentos", "contas", "potes", "potes_resumo", "dashboard", "calendario"):
+        invalidar_cache(chave)
+    return {"sucesso": True, "caixinha_id": cid}
 
 
 def listar_caixinhas_opcoes() -> list[dict]:
@@ -27485,16 +27564,23 @@ def obter_resumo_caixinhas(
     return res
 
 
-def obter_extrato_caixinha(caixinha_id: str) -> dict:
+def obter_extrato_caixinha(
+    caixinha_id: str,
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+) -> dict:
     """
     Retorna o Raio-X completo de um DemBox (Provisão Mensal ou Dívida/Quitação):
     - Recalcula o saldo em tempo real.
-    - Lista todo o histórico cronológico de depósitos (+ Guardar / Provisão) e saídas (Abatimentos / Gastos).
-    - Calcula métricas exatas: total_guardado, total_abatido, saldo_atual, falta_guardar e pct_conquista.
+    - Quando data_inicio e data_fim são informados, filtra histórico e métricas para o período.
+    - Lista o histórico cronológico com lancamento_id e mov_id para edição/exclusão direta.
     """
     if not caixinha_id:
         return {}
     cid = str(caixinha_id)
+    dt_ini_f = str(data_inicio)[:10] if data_inicio else None
+    dt_fim_f = str(data_fim)[:10] if data_fim else None
+
     try:
         recalcular_saldo_caixinha(cid)
     except Exception:
@@ -27512,28 +27598,32 @@ def obter_extrato_caixinha(caixinha_id: str) -> dict:
 
     movs = []
     try:
-        m_resp = (
+        m_q = (
             supabase.table("caixinhas_teto_movimentacoes")
             .select("*")
             .eq("caixinha_id", cid)
-            .order("data", desc=True)
-            .order("criado_em", desc=True)
-            .execute()
         )
+        if dt_ini_f:
+            m_q = m_q.gte("data", dt_ini_f)
+        if dt_fim_f:
+            m_q = m_q.lte("data", dt_fim_f)
+        m_resp = m_q.order("data", desc=True).order("criado_em", desc=True).execute()
         movs = m_resp.data or []
     except Exception:
         movs = []
 
     lancs = []
     try:
-        l_resp = (
+        l_q = (
             supabase.table("lancamentos")
-            .select("id, valor, data, descricao, subtipo, status, tipo, conta_id, criado_em")
+            .select("id, valor, data, descricao, subtipo, status, tipo, conta_id, categoria_id, subcategoria_id, pote_id, membro_id, forma_movimentacao, caixinha_id, criado_em")
             .eq("caixinha_id", cid)
-            .order("data", desc=True)
-            .order("criado_em", desc=True)
-            .execute()
         )
+        if dt_ini_f:
+            l_q = l_q.gte("data", dt_ini_f)
+        if dt_fim_f:
+            l_q = l_q.lte("data", dt_fim_f)
+        l_resp = l_q.order("data", desc=True).order("criado_em", desc=True).execute()
         lancs = l_resp.data or []
     except Exception:
         lancs = []
@@ -27551,7 +27641,7 @@ def obter_extrato_caixinha(caixinha_id: str) -> dict:
             lanc_ids_vistos.add(lid)
         l_ref = mapa_lancs.get(lid) if lid else None
         tp_mov = str(m.get("tipo") or "").lower()
-        val_m = float(m.get("valor", 0) or 0)
+        val_m = float((l_ref.get("valor") if l_ref else None) or m.get("valor", 0) or 0)
         dt_m = str((l_ref.get("data") if l_ref else None) or m.get("data") or "")[:10]
         desc_m = (l_ref.get("descricao") if l_ref else None) or m.get("descricao") or ("Aporte / Guardado" if tp_mov == "injecao" else "Abatimento / Gasto")
         cta_id = (l_ref.get("conta_id") if l_ref else None) or c.get("conta_id")
@@ -27573,12 +27663,14 @@ def obter_extrato_caixinha(caixinha_id: str) -> dict:
 
         historico.append({
             "id": str(m.get("id")),
+            "mov_id": str(m.get("id")),
             "lancamento_id": lid,
+            "lancamento": l_ref,
             "data": dt_m,
             "descricao": desc_m,
             "valor": val_m,
             "natureza": natureza,
-            "status": "Pago",
+            "status": str((l_ref.get("status") if l_ref else None) or "Pago"),
             "conta_nome": cta_nome,
             "criado_em": str(m.get("criado_em") or ""),
         })
@@ -27607,7 +27699,9 @@ def obter_extrato_caixinha(caixinha_id: str) -> dict:
 
         historico.append({
             "id": lid,
+            "mov_id": None,
             "lancamento_id": lid,
+            "lancamento": l,
             "data": dt_l,
             "descricao": desc_l,
             "valor": val_l,
