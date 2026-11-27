@@ -196,7 +196,7 @@ def test_2_pote_nos_relatorios_do_cartao():
         res_cartao = db.obter_relatorio_cartao("card-itau", "2026-11-01", "2026-11-30")
         assert len(res_cartao["por_pote"]) == 1
         assert res_cartao["por_pote"][0]["nome"] == "Custos Fixos"
-        assert res_cartao["lancamentos"][0]["pote_nome"] == "Custos Fixos"
+        assert res_cartao["lancamentos"][0]["pote_nome"] == "Contas Fixas"
         assert res_cartao["lancamentos"][0]["pote_cor"] == "#007AFF"
 
     print("  [OK] Potes Financeiros preservados e exibidos com perfeição nos Relatórios do Cartão.")

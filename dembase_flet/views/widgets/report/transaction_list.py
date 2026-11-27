@@ -24,12 +24,12 @@ import services.supabase_client as db
 _DIAS_SEMANA_CURTOS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 
 POTES_PADRAO = [
-    {"id": "2df4dd2f-4353-42cc-a5c9-8983085a5301", "nome": "Custos Fixos", "cor": "#007AFF", "percentual": 35},
-    {"id": "da6e1d2b-c611-481d-b48d-065cc5d584b4", "nome": "Custos Semi Fixos", "cor": "#FF69B4", "percentual": 15},
-    {"id": "986da9e8-3042-4562-b1df-c1f5cf0138b9", "nome": "Metas", "cor": "#800080", "percentual": 15},
-    {"id": "c82b0736-fb01-419f-8155-923ebfec82b2", "nome": "Prazeres", "cor": "#FF7A00", "percentual": 10},
-    {"id": "1f1f7449-d985-4c2a-b807-0570a5526614", "nome": "Conhecimento", "cor": "#FFD60A", "percentual": 5},
-    {"id": "34a47be1-9879-46bd-96b1-4082703bf388", "nome": "Liberdade Financeira", "cor": "#6C5CE7", "percentual": 20},
+    {"id": "2df4dd2f-4353-42cc-a5c9-8983085a5301", "nome": "Contas Fixas", "cor": "#007AFF", "percentual": 35},
+    {"id": "da6e1d2b-c611-481d-b48d-065cc5d584b4", "nome": "Dia a Dia", "cor": "#FF69B4", "percentual": 15},
+    {"id": "986da9e8-3042-4562-b1df-c1f5cf0138b9", "nome": "Metas", "cor": "#800080", "percentual": 10},
+    {"id": "c82b0736-fb01-419f-8155-923ebfec82b2", "nome": "Prazeres", "cor": "#FF7A00", "percentual": 20},
+    {"id": "1f1f7449-d985-4c2a-b807-0570a5526614", "nome": "Evolução", "cor": "#FFD60A", "percentual": 5},
+    {"id": "34a47be1-9879-46bd-96b1-4082703bf388", "nome": "Liberdade", "cor": "#6C5CE7", "percentual": 15},
 ]
 
 
@@ -637,20 +637,20 @@ class TransactionList(ft.Column):
             elif bool(item.get("caixinha_id")) and str(item.get("subtipo") or "").strip().lower() != "provisionamento":
                 cx_nome = item.get("caixinha_nome") or (
                     (item.get("caixinhas_teto") or {}).get("nome") if isinstance(item.get("caixinhas_teto"), dict) else None
-                ) or "Caixinha"
+                ) or "DemBox"
                 badges.append(
                     ft.Container(
                         padding=pad(h=7, v=2),
                         bgcolor=f"{T.PRIMARY}1A",
                         border_radius=6,
                         border=borda(1, f"{T.PRIMARY}4D"),
-                        tooltip="Consumo de Provisão: descontado exclusivamente da Caixinha (neutro no Banco e nos 6 Potes)",
+                        tooltip="Pago via DemBox (já contabilizado na provisão — não desconta da conta/pote)",
                         content=ft.Row(
                             spacing=4,
                             tight=True,
                             controls=[
                                 ft.Icon(ft.Icons.INVENTORY_2_ROUNDED, size=11, color=T.PRIMARY),
-                                ft.Text(f"Caixinha · {cx_nome} (Neutro no Pote/Banco)", size=10, color=T.PRIMARY, weight=ft.FontWeight.BOLD),
+                                ft.Text(f"DemBox · {cx_nome}", size=10, color=T.PRIMARY, weight=ft.FontWeight.BOLD),
                             ],
                         ),
                     )

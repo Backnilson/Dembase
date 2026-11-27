@@ -473,18 +473,19 @@ def montar_aba_potes(
         p1 = por_pos[1]
         retido_manuais = round(sum(por_pos[k].get("disponivel_retido", 0.0) for k in (2, 3, 5)), 2)
         lib_total = round(sum(por_pos[k].get("liberado_valor", 0.0) for k in (2, 3, 5)), 2)
+        n1, n2, n3, n4, n5, n6 = (por_pos[k]["nome"] for k in range(1, 7))
         reflexo_col.controls = [
             _linha_reflexo(
                 "Receita base do mês", formatar_moeda(rec), T.PRIMARY, negrito=True,
                 sub="Receita real do Dashboard" if fonte_renda[0] == "real" and not simulando[0] else "Base de simulação",
             ),
             _linha_reflexo(
-                "Custos Fixos (automático)", formatar_moeda(p1["previsto"]),
+                f"{n1} (automático)", formatar_moeda(p1["previsto"]),
                 COR_ALERTA if p1["restante"] < -0.005 else T.TEXT_PRIMARY,
                 sub=f"{_fmt_perc(p1['percentual'])} da receita · gasto real {formatar_moeda(p1['gasto'])} · piso {formatar_moeda(piso)}",
             ),
             _linha_reflexo(
-                "Retido em Semi Fixos + Metas + Conhecimento", formatar_moeda(retido_manuais), T.RECEITA,
+                f"Retido em {n2} + {n3} + {n5}", formatar_moeda(retido_manuais), T.RECEITA,
                 sub="Reservas protegidas: não inflam o Caixa Livre"
                     + (f" · {formatar_moeda(lib_total)} liberados" if lib_total > 0 else ""),
             ),
@@ -492,7 +493,7 @@ def montar_aba_potes(
             _linha_reflexo(
                 "Caixa Livre do mês", formatar_moeda(cl["teto_orcamento"]), "#06B6D4", negrito=True,
                 sub=f"{_fmt_perc(cl['pct_orcamento'])} da receita · slider {_fmt_perc(cl['pct_slider_investimento'])} "
-                    f"Liberdade / {_fmt_perc(cl['pct_slider_livre'])} Prazeres",
+                    f"{n6} / {_fmt_perc(cl['pct_slider_livre'])} {n4}",
             ),
             _linha_reflexo(
                 f"{cl['liberdade_nome']}", formatar_moeda(cl["liberdade_teto"]), por_pos[6]["cor"],
@@ -993,7 +994,7 @@ def montar_aba_potes(
                     txt_info_renda,
                 ]),
                 ft.Column(col={"xs": 12, "md": 4}, spacing=4, controls=[
-                    ft.Text("PISO DE CUSTOS FIXOS (R$):", size=10, color=T.TEXT_MUTED, weight=ft.FontWeight.W_600),
+                    ft.Text("PISO DE CONTAS FIXAS (R$):", size=10, color=T.TEXT_MUTED, weight=ft.FontWeight.W_600),
                     tf_piso_fixos,
                     ft.Text("Garante o teto mínimo de fixos mesmo com poucos lançamentos.", size=10.5, color=T.TEXT_MUTED),
                 ]),
@@ -1063,8 +1064,8 @@ def montar_aba_potes(
             ft.Icon(ft.Icons.INFO_OUTLINE_ROUNDED, size=16, color=T.PRIMARY),
             ft.Text(
                 "Regra de Ouro DemBase: Todos os 6 potes respeitam 100% as porcentagens salvas por você. "
-                "Saldos não gastos de Custos Fixos, Semi Fixos, Metas e Conhecimento ficam retidos nos potes "
-                "(podendo ser liberados para o Caixa Livre sob demanda), enquanto Prazeres e Liberdade Financeira compõem o Caixa Livre.",
+                "Saldos não gastos de Contas Fixas, Dia a Dia, Metas e Evolução ficam retidos nos potes "
+                "(podendo ser liberados para o Caixa Livre sob demanda), enquanto Prazeres e Liberdade compõem o Caixa Livre.",
                 size=11, color=T.TEXT_PRIMARY, expand=True,
             ),
         ]),

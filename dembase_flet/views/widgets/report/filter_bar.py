@@ -328,15 +328,15 @@ class FilterBar(ft.Column):
 
         if self.ctx.modalidade_box:
             mapa_mod = {
-                "provisao_mensal": "Provisões do Mês",
-                "divida": "Dívidas & Quitações",
-                "fatura": "DemBox Fatura",
+                "provisao_mensal": "Provisão Mensal",
+                "divida": "Metas & Dívidas",
+                "fatura": "Fatura de Cartão",
             }
             lbl_mod = mapa_mod.get(self.ctx.modalidade_box, self.ctx.modalidade_box)
-            pilulas.append((f"Modalidade Box: {lbl_mod}", lambda _: self.atualizar_contexto(self.ctx.com(modalidade_box=None))))
+            pilulas.append((f"Modalidade DemBox: {lbl_mod}", lambda _: self.atualizar_contexto(self.ctx.com(modalidade_box=None))))
 
         if self.ctx.tratamento_box:
-            lbl_trat = "Apenas DemBox" if self.ctx.tratamento_box == "apenas_box" else "Sem Neutros DemBox"
+            lbl_trat = "Somente DemBox" if self.ctx.tratamento_box == "apenas_box" else "Sem gastos via DemBox"
             pilulas.append((lbl_trat, lambda _: self.atualizar_contexto(self.ctx.com(tratamento_box=None))))
 
         if self.ctx.membro_id:
@@ -453,7 +453,7 @@ class FilterBar(ft.Column):
         )
 
         dd_caixinha = ft.Dropdown(
-            label="DemBox / Envelope",
+            label="DemBox",
             value=self.ctx.caixinha_id or "",
             options=[ft.dropdown.Option(key="", text="Todos os DemBoxes")] + [
                 ft.dropdown.Option(key=str(c["id"]), text=c.get("nome", "DemBox"))
@@ -463,24 +463,24 @@ class FilterBar(ft.Column):
         )
 
         dd_modalidade_box = ft.Dropdown(
-            label="Modalidade de DemBox",
+            label="Modalidade DemBox",
             value=self.ctx.modalidade_box or "",
             options=[
                 ft.dropdown.Option(key="", text="Todas as modalidades"),
-                ft.dropdown.Option(key="provisao_mensal", text="Provisões do Mês"),
-                ft.dropdown.Option(key="divida", text="Dívidas & Quitações"),
-                ft.dropdown.Option(key="fatura", text="DemBox Fatura"),
+                ft.dropdown.Option(key="provisao_mensal", text="Provisão Mensal"),
+                ft.dropdown.Option(key="divida", text="Metas & Dívidas"),
+                ft.dropdown.Option(key="fatura", text="Fatura de Cartão"),
             ],
             **T.dropdown_estilo(),
         )
 
         dd_tratamento_box = ft.Dropdown(
-            label="Tratamento de Gastos de DemBox",
+            label="Gastos via DemBox",
             value=self.ctx.tratamento_box or "",
             options=[
                 ft.dropdown.Option(key="", text="Mostrar Todos"),
-                ft.dropdown.Option(key="apenas_box", text="Apenas lançamentos de DemBox"),
-                ft.dropdown.Option(key="ocultar_neutros", text="Ocultar gastos neutros de DemBox"),
+                ft.dropdown.Option(key="apenas_box", text="Somente DemBox"),
+                ft.dropdown.Option(key="ocultar_neutros", text="Ocultar gastos via DemBox"),
             ],
             **T.dropdown_estilo(),
         )

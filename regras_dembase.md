@@ -163,4 +163,4 @@ dembase_flet/
 - O card Minhas Caixinhas (na seção Análise Visual do Período) reage dinamicamente a qualquer alteração de período (mês, dia único ou intervalo customizado) no topo:
   - `obter_resumo_caixinhas` e `listar_caixinhas` aceitam obrigatoriamente `data_inicio` e `data_fim`.
   - Calculam em tempo real o valor provisionado do ciclo (`valor_provisionado_periodo`), o gasto consumido no período (`total_gasto`) e o saldo disponível (`saldo_atual`).
-- **Badges Canônicas dos Potes:** Cada caixinha deve exibir a badge com o nome oficial e cor do Pote Financeiro ao qual está vinculada (`Custos Fixos`, `Custos Semi Fixos`, `Metas`, `Prazeres`, `Conhecimento`, `Liberdade Financeira`). É **terminantemente proibido** exibir rótulos genéricos como `"6 Potes"` ou `"Pote Vinculado"`.
+- **Badges Canônicas dos Potes:** Cada DemBox deve exibir a badge com o nome oficial e cor do Pote Financeiro ao qual está vinculado (`Contas Fixas`, `Dia a Dia`, `Metas`, `Prazeres`, `Evolução`, `Liberdade`). É **terminantemente proibido** exibir rótulos genéricos como `"6 Potes"` ou `"Pote Vinculado"`.

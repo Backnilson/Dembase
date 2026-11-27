@@ -4893,69 +4893,21 @@ def fazer_login(email: str, password: str):
 
 
 def fazer_logout():
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    """
+    Executa logout definitivo no Supabase (tolerante a falhas de rede) e limpa
+    todos os caches em memória para evitar vazamento de dados entre contas.
+    """
     try:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         supabase.auth.sign_out()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     except Exception:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        pass
+    try:
+        invalidar_cache(None)
+    except Exception:
+        pass
+    try:
+        limpar_memoria_evolutiva_lancamentos()
+    except Exception:
         pass
 
 
@@ -5420,135 +5372,113 @@ def abrir_url_navegador(url: str) -> bool:
 
 
 
-def restaurar_sessao(access_token: str, refresh_token: str) -> bool:
+_AUTH_LISTENER_SUB = None
 
 
+def _extrair_tokens_sessao(sessao) -> Optional[dict]:
+    """Extrai tokens e metadados seguros de um objeto Session do Supabase."""
+    if not sessao:
+        return None
+    acc = getattr(sessao, "access_token", None) or ""
+    ref = getattr(sessao, "refresh_token", None) or ""
+    if not acc or not ref:
+        return None
+    user = getattr(sessao, "user", None)
+    email = getattr(user, "email", "") or "" if user else ""
+    expires_at = getattr(sessao, "expires_at", None)
+    return {
+        "access_token": acc,
+        "refresh_token": ref,
+        "email": email,
+        "expires_at": expires_at,
+    }
 
 
+def registrar_listener_sessao(callback: Callable[[str, str, str], None]) -> None:
+    """
+    Registra listener de mudança de estado de autenticação do Supabase.
+    Sempre que o token for renovado (TOKEN_REFRESHED) ou um login ocorrer (SIGNED_IN),
+    invoca callback(access_token, refresh_token, email) para persistir os tokens rotacionados.
+    """
+    global _AUTH_LISTENER_SUB
+    if _AUTH_LISTENER_SUB is not None:
+        try:
+            _AUTH_LISTENER_SUB.unsubscribe()
+        except Exception:
+            pass
+        _AUTH_LISTENER_SUB = None
 
-
-
-
-
-
-
-
-
-
-
-    """Restaura sessão ativa a partir de tokens salvos."""
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    def _on_auth_change(event, session):
+        try:
+            ev = str(event or "").upper()
+            if ev in ("TOKEN_REFRESHED", "SIGNED_IN") and session:
+                dados = _extrair_tokens_sessao(session)
+                if dados:
+                    callback(dados["access_token"], dados["refresh_token"], dados["email"])
+        except Exception:
+            pass
 
     try:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        if not access_token or not refresh_token:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            return False
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        resp = supabase.auth.set_session(access_token, refresh_token)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        return bool(resp and resp.user)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        _AUTH_LISTENER_SUB = supabase.auth.on_auth_state_change(_on_auth_change)
     except Exception:
+        _AUTH_LISTENER_SUB = None
 
 
+def restaurar_sessao(access_token: str, refresh_token: str) -> Optional[dict]:
+    """
+    Restaura e/ou renova a sessão ativa a partir dos tokens salvos.
+    Retorna dict com os tokens atualizados (pós-rotação do refresh_token) ou None se inválido.
+    """
+    if not refresh_token:
+        return None
+
+    # 1. Tenta restaurar via set_session (se access_token estiver presente)
+    if access_token:
+        try:
+            resp = supabase.auth.set_session(access_token, refresh_token)
+            sess = getattr(resp, "session", None) or supabase.auth.get_session()
+            user = getattr(resp, "user", None) or (getattr(sess, "user", None) if sess else None)
+            if sess and user:
+                dados = _extrair_tokens_sessao(sess)
+                if dados:
+                    return dados
+        except Exception:
+            pass
+
+    # 2. Fallback: força renovação usando o refresh_token (ex: access_token já expirado)
+    try:
+        resp = supabase.auth.refresh_session(refresh_token)
+        sess = getattr(resp, "session", None) or supabase.auth.get_session()
+        user = getattr(resp, "user", None) or (getattr(sess, "user", None) if sess else None)
+        if sess and user:
+            dados = _extrair_tokens_sessao(sess)
+            if dados:
+                return dados
+    except Exception:
+        pass
+
+    return None
 
 
-
-
-
-
-
-
-
-
-
-
-
-        return False
+def renovar_sessao_se_necessario(margem_segundos: int = 600) -> Optional[dict]:
+    """
+    Verifica se o JWT atual está próximo de expirar (ou já expirou) e renova silenciosamente.
+    Retorna o dict com os novos tokens se houve renovação, ou None caso não tenha sido necessário.
+    """
+    try:
+        sess = supabase.auth.get_session()
+        if not sess:
+            return None
+        expires_at = getattr(sess, "expires_at", None)
+        agora = time.time()
+        if expires_at is not None and (float(expires_at) - agora) > float(margem_segundos):
+            return None
+        ref = getattr(sess, "refresh_token", None)
+        resp = supabase.auth.refresh_session(ref) if ref else supabase.auth.refresh_session()
+        nova_sess = getattr(resp, "session", None) or supabase.auth.get_session()
+        return _extrair_tokens_sessao(nova_sess)
+    except Exception:
+        return None
 
 
 
@@ -24001,12 +23931,12 @@ def obter_relatorio_cartao(
             pass
     if not mapa_potes:
         mapa_potes = {
-            "2df4dd2f-4353-42cc-a5c9-8983085a5301": {"nome": "Custos Fixos", "cor": "#007AFF"},
-            "da6e1d2b-c611-481d-b48d-065cc5d584b4": {"nome": "Custos Semi Fixos", "cor": "#FF69B4"},
+            "2df4dd2f-4353-42cc-a5c9-8983085a5301": {"nome": "Contas Fixas", "cor": "#007AFF"},
+            "da6e1d2b-c611-481d-b48d-065cc5d584b4": {"nome": "Dia a Dia", "cor": "#FF69B4"},
             "986da9e8-3042-4562-b1df-c1f5cf0138b9": {"nome": "Metas", "cor": "#800080"},
             "c82b0736-fb01-419f-8155-923ebfec82b2": {"nome": "Prazeres", "cor": "#FF7A00"},
-            "1f1f7449-d985-4c2a-b807-0570a5526614": {"nome": "Conhecimento", "cor": "#FFD60A"},
-            "34a47be1-9879-46bd-96b1-4082703bf388": {"nome": "Liberdade Financeira", "cor": "#6C5CE7"},
+            "1f1f7449-d985-4c2a-b807-0570a5526614": {"nome": "Evolução", "cor": "#FFD60A"},
+            "34a47be1-9879-46bd-96b1-4082703bf388": {"nome": "Liberdade", "cor": "#6C5CE7"},
         }
 
     for it in lancs_cartao:
@@ -25838,12 +25768,12 @@ def listar_caixinhas(forcar_atualizacao: bool = False, data_inicio: str | None =
         mapa_potes = {}
 
     _NOMES_CANONICOS = {
-        1: ("Custos Fixos", "#007AFF"),
-        2: ("Custos Semi Fixos", "#FF69B4"),
+        1: ("Contas Fixas", "#007AFF"),
+        2: ("Dia a Dia", "#FF69B4"),
         3: ("Metas", "#800080"),
         4: ("Prazeres", "#FF7A00"),
-        5: ("Conhecimento", "#FFD60A"),
-        6: ("Liberdade Financeira", "#6C5CE7"),
+        5: ("Evolução", "#FFD60A"),
+        6: ("Liberdade", "#6C5CE7"),
     }
 
     for c in dados:
@@ -26416,7 +26346,7 @@ def criar_caixinha(dados: dict) -> dict:
                 injetar_saldo_caixinha(
                     caixinha_id=str(cid),
                     valor=aporte_inicial,
-                    descricao=f"Guardado p/ Dívida · {payload.get('nome', 'Dívida')}",
+                    descricao=f"Aporte DemBox · {payload.get('nome', 'Dívida')}",
                     conta_id=payload.get("conta_id"),
                     pote_id=payload.get("pote_id"),
                     data_aporte=str(payload.get("data_provisao") or date.today().isoformat()),
@@ -26663,7 +26593,7 @@ def _sincronizar_lancamento_provisao(caixinha_id: str, payload: dict) -> None:
 
 
 
-                "descricao": f"Provisão Caixinha · {nome_cx}",
+                "descricao": f"Provisão DemBox · {nome_cx}",
 
 
 
@@ -27041,7 +26971,7 @@ def pagar_provisao_caixinha(
                 return injetar_saldo_caixinha(
                     caixinha_id=cid,
                     valor=val_final,
-                    descricao=f"Provisão Caixinha · {c.get('nome', 'Caixinha')}",
+                    descricao=f"Provisão DemBox · {c.get('nome', 'DemBox')}",
                     conta_id=cta,
                     pote_id=pot,
                     data_aporte=dt_pag,
@@ -27142,7 +27072,7 @@ def injetar_saldo_caixinha(
                 "valor": v,
                 "data": dt_final,
                 "status": status_lanc,
-                "descricao": str(descricao or f"Provisão Caixinha · {nome_caixinha}"),
+                "descricao": str(descricao or f"Provisão DemBox · {nome_caixinha}"),
                 "caixinha_id": cid,
                 "conta_id": str(conta_id_alvo) if conta_id_alvo else None,
                 "pote_id": str(pote_id_alvo) if pote_id_alvo else None,

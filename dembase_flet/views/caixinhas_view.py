@@ -71,21 +71,21 @@ ICONES_OPCOES = [
 MAPA_ICONES = {item["nome"]: item["icone"] for item in ICONES_OPCOES}
 
 SUGESTOES_PROVISAO = [
-    {"nome": "Moto",              "icone": "two_wheeler",       "cor": "#10B981", "pote_hint": "Custos Semi Fixos"},
-    {"nome": "Aluguel",           "icone": "home",              "cor": "#3B82F6", "pote_hint": "Custos Fixos"},
-    {"nome": "Mercado",           "icone": "shopping_cart",     "cor": "#F59E0B", "pote_hint": "Custos Semi Fixos"},
-    {"nome": "Combustível",       "icone": "local_gas_station", "cor": "#06B6D4", "pote_hint": "Custos Semi Fixos"},
-    {"nome": "Lazer do Mês",      "icone": "celebration",       "cor": "#EC4899", "pote_hint": "Prazeres"},
-    {"nome": "Farmácia & Saúde",  "icone": "local_pharmacy",    "cor": "#14B8A6", "pote_hint": "Custos Semi Fixos"},
+    {"nome": "Moto",              "icone": "two_wheeler",       "cor": "#10B981", "pote_pos": 2},
+    {"nome": "Aluguel",           "icone": "home",              "cor": "#3B82F6", "pote_pos": 1},
+    {"nome": "Mercado",           "icone": "shopping_cart",     "cor": "#F59E0B", "pote_pos": 1},
+    {"nome": "Combustível",       "icone": "local_gas_station", "cor": "#06B6D4", "pote_pos": 2},
+    {"nome": "Lazer do Mês",      "icone": "celebration",       "cor": "#EC4899", "pote_pos": 4},
+    {"nome": "Farmácia & Saúde",  "icone": "local_pharmacy",    "cor": "#14B8A6", "pote_pos": 1},
 ]
 
 SUGESTOES_DIVIDA = [
-    {"nome": "Dívida com a Chefe",   "icone": "person",         "cor": "#F59E0B", "pote_hint": "Metas"},
-    {"nome": "Acordo / Empréstimo",  "icone": "handshake",      "cor": "#8B5CF6", "pote_hint": "Metas"},
-    {"nome": "Quitar Cartão",        "icone": "credit_card",    "cor": "#EC4899", "pote_hint": "Liberdade Financeira"},
-    {"nome": "Empréstimo Familiar",  "icone": "person",         "cor": "#06B6D4", "pote_hint": "Metas"},
-    {"nome": "Quitar Financiamento", "icone": "directions_car", "cor": "#3B82F6", "pote_hint": "Custos Fixos"},
-    {"nome": "Objetivo / Conquista", "icone": "flag",           "cor": "#10B981", "pote_hint": "Metas"},
+    {"nome": "Dívida com a Chefe",   "icone": "person",         "cor": "#F59E0B", "pote_pos": 3},
+    {"nome": "Acordo / Empréstimo",  "icone": "handshake",      "cor": "#8B5CF6", "pote_pos": 3},
+    {"nome": "Quitar Cartão",        "icone": "credit_card",    "cor": "#EC4899", "pote_pos": 6},
+    {"nome": "Empréstimo Familiar",  "icone": "person",         "cor": "#06B6D4", "pote_pos": 3},
+    {"nome": "Quitar Financiamento", "icone": "directions_car", "cor": "#3B82F6", "pote_pos": 1},
+    {"nome": "Objetivo / Conquista", "icone": "flag",           "cor": "#10B981", "pote_pos": 3},
 ]
 
 
@@ -219,8 +219,8 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         opcoes_abas = [
             ("todos",           f"Todos ({total_geral})",                   ft.Icons.APPS_ROUNDED,          T.PRIMARY),
             ("fatura",          f"Faturas ({fat_qtd})",                     ft.Icons.CREDIT_CARD_ROUNDED,   "#8B5CF6"),
-            ("provisao_mensal", f"Provisões do Mês ({len(provisoes)})",     ft.Icons.INVENTORY_2_ROUNDED,   "#10B981"),
-            ("divida",          f"Dívidas & Quitações ({len(dividas)})",    ft.Icons.TRACK_CHANGES_ROUNDED, "#F59E0B"),
+            ("provisao_mensal", f"Provisão Mensal ({len(provisoes)})",     ft.Icons.INVENTORY_2_ROUNDED,   "#10B981"),
+            ("divida",          f"Metas & Dívidas ({len(dividas)})",    ft.Icons.TRACK_CHANGES_ROUNDED, "#F59E0B"),
         ]
         for chave_aba, rotulo_aba, icone_aba, cor_aba in opcoes_abas:
             ativo = (aba == chave_aba)
@@ -433,7 +433,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         pote_sel, row_potes = _criar_seletor_pilulas_potes(potes, pote_id_padrao)
 
         txt_valor_pag = ft.TextField(
-            label="Valor a Abastecer (R$) *",
+            label="Valor a Guardar (R$) *",
             keyboard_type=ft.KeyboardType.NUMBER,
             prefix="R$ ",
             value=f"{meta:.2f}".replace(".", ","),
@@ -529,7 +529,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             actions=[
                 ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(page, modal_conf)),
                 ft.FilledButton(
-                    "Confirmar e Encher",
+                    "Confirmar e Guardar",
                     on_click=executar_pagamento,
                     style=ft.ButtonStyle(
                         bgcolor=T.PRIMARY,
@@ -555,7 +555,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         valor_sugerido = falta_meta if (not eh_divida and falta_meta > 0) else (falta_meta if (eh_divida and falta_meta <= 500 and falta_meta > 0) else 0.0)
 
         txt_valor = ft.TextField(
-            label="Quanto você quer guardar agora? (R$) *" if eh_divida else "Valor a Abastecer (R$) *",
+            label="Quanto você quer guardar agora? (R$) *" if eh_divida else "Valor a Guardar (R$) *",
             hint_text="Ex: 200,00",
             keyboard_type=ft.KeyboardType.NUMBER,
             prefix="R$ ",
@@ -787,7 +787,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             actions=[
                 ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(page, modal)),
                 ft.FilledButton(
-                    "Guardar Dinheiro" if eh_divida else "Confirmar Abastecimento",
+                    "Confirmar e Guardar",
                     on_click=confirmar_provisao,
                     style=ft.ButtonStyle(
                         bgcolor=T.PRIMARY,
@@ -1331,7 +1331,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                     ft.FilledButton(
                         content=ft.Row([
                             ft.Icon(ft.Icons.ADD_ROUNDED, size=16, color=T.ON_NEON),
-                            ft.Text("Guardar Dinheiro" if eh_divida else "Abastecer / Aportar", size=12, weight=ft.FontWeight.BOLD, color=T.ON_NEON),
+                            ft.Text("Guardar", size=12, weight=ft.FontWeight.BOLD, color=T.ON_NEON),
                         ], spacing=5, tight=True),
                         on_click=_acao_guardar_rx,
                         style=ft.ButtonStyle(bgcolor=T.PRIMARY, shape=ft.RoundedRectangleBorder(radius=8), padding=pad(h=12, v=8)),
@@ -1668,7 +1668,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
 
         # Campos de texto no topo com foco imediato
         txt_nome = ft.TextField(
-            label="Nome da Dívida / Credor *" if modo_sel[0] == "divida" else "Nome da Provisão do Mês *",
+            label="Nome da Meta / Dívida *" if modo_sel[0] == "divida" else "Nome da Provisão Mensal *",
             hint_text="Ex: Dívida com a Chefe, Acordo..." if modo_sel[0] == "divida" else "Ex: Moto, Aluguel, Mercado...",
             value=caixinha_edicao.get("nome", "") if eh_edicao else "",
             **T.campo_estilo(),
@@ -1728,19 +1728,21 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         row_pilulas_cores = ft.Row(spacing=8, run_spacing=8, wrap=True)
         secao_condicional_modo = ft.Column(spacing=8)
 
-        def _selecionar_pote_por_nome(nome_hint: str):
-            nh = nome_hint.strip().lower()
+        def _selecionar_pote_por_posicao(pos_alvo: int):
             for p in potes:
-                if nh in str(p.get("nome") or "").strip().lower():
-                    pote_sel[0] = str(p.get("id"))
-                    break
+                try:
+                    if int(p.get("posicao") or 0) == int(pos_alvo):
+                        pote_sel[0] = str(p.get("id"))
+                        return
+                except Exception:
+                    pass
 
         def _aplicar_sugestao(sug: dict):
             txt_nome.value = sug["nome"]
             icone_sel[0] = sug["icone"]
             cor_sel[0] = sug["cor"]
-            if sug.get("pote_hint"):
-                _selecionar_pote_por_nome(sug["pote_hint"])
+            if sug.get("pote_pos"):
+                _selecionar_pote_por_posicao(sug["pote_pos"])
             _render_sugestoes()
             _render_potes()
             _render_icones()
@@ -1753,19 +1755,19 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         def _alternar_proposito(novo_modo: str):
             modo_sel[0] = novo_modo
             eh_div = (novo_modo == "divida")
-            txt_nome.label = "Nome da Dívida / Credor *" if eh_div else "Nome da Provisão do Mês *"
+            txt_nome.label = "Nome da Meta / Dívida *" if eh_div else "Nome da Provisão Mensal *"
             txt_nome.hint_text = "Ex: Dívida com a Chefe, Acordo..." if eh_div else "Ex: Moto, Aluguel, Mercado..."
-            txt_meta.label = "Valor Total da Dívida (R$) *" if eh_div else "Teto / Meta do Mês (R$) *"
+            txt_meta.label = "Valor Total da Meta / Dívida (R$) *" if eh_div else "Teto / Meta do Mês (R$) *"
             txt_meta.hint_text = "Ex: 1.200,00" if eh_div else "Ex: 400,00"
             if not eh_edicao:
                 if eh_div:
                     icone_sel[0] = "person"
                     cor_sel[0] = "#F59E0B"
-                    _selecionar_pote_por_nome("Metas")
+                    _selecionar_pote_por_posicao(3)
                 else:
                     icone_sel[0] = "two_wheeler"
                     cor_sel[0] = "#10B981"
-                    _selecionar_pote_por_nome("Custos Semi Fixos")
+                    _selecionar_pote_por_posicao(2)
             _render_proposito()
             _render_sugestoes()
             _render_potes()
@@ -1783,13 +1785,13 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
             opcoes_prop = [
                 (
                     "provisao_mensal",
-                    "📦 Provisão do Mês",
+                    "📦 Provisão Mensal",
                     "Ex: Moto, Aluguel, Mercado (Ciclo Mensal)",
                     "#10B981",
                 ),
                 (
                     "divida",
-                    "🎯 Quitar Dívida / Juntar",
+                    "🎯 Metas & Dívidas",
                     "Ex: Chefe, Acordo (Acumulativo até 100%)",
                     "#F59E0B",
                 ),
@@ -2752,7 +2754,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                     botoes_acao_card = ft.FilledButton(
                         content=ft.Row([
                             ft.Icon(ft.Icons.SAVINGS_ROUNDED, size=16, color=T.ON_NEON),
-                            ft.Text("Pagar Provisão e Encher DemBox", size=12.5, weight=ft.FontWeight.BOLD, color=T.ON_NEON),
+                            ft.Text("Pagar Provisão", size=12.5, weight=ft.FontWeight.BOLD, color=T.ON_NEON),
                         ], spacing=6, alignment=ft.MainAxisAlignment.CENTER),
                         on_click=lambda _, it=c: confirmar_pagamento_provisao(it),
                         style=ft.ButtonStyle(
@@ -2868,7 +2870,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                                                     content=ft.Row([
                                                         ft.Icon(ft.Icons.SAVINGS_ROUNDED, size=15, color=T.PRIMARY),
                                                         ft.Text(
-                                                            "Guardar Dinheiro" if eh_divida else ("Pagar e Encher" if saldo <= 0 else "Aportar Mais"),
+                                                            "Guardar" if eh_divida else ("Pagar Provisão" if saldo <= 0 else "Guardar"),
                                                             size=13,
                                                             color=T.PRIMARY,
                                                         ),
@@ -2965,7 +2967,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 on_click=lambda _: _selecionar_aba("todos"),
             ),
             kpi_clicavel(
-                titulo="DemBox Faturas (Cartões)",
+                titulo="Fatura de Cartão",
                 valor_control=txt_kpi_fatura,
                 subtitulo=txt_sub_fatura,
                 icone=ft.Icons.CREDIT_CARD_ROUNDED,
@@ -2976,7 +2978,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 on_click=lambda _: _selecionar_aba("fatura"),
             ),
             kpi_clicavel(
-                titulo="Provisões do Mês",
+                titulo="Provisão Mensal",
                 valor_control=txt_kpi_provisao,
                 subtitulo=txt_sub_provisao,
                 icone=ft.Icons.INVENTORY_2_ROUNDED,
@@ -2987,7 +2989,7 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 on_click=lambda _: _selecionar_aba("provisao_mensal"),
             ),
             kpi_clicavel(
-                titulo="Dívidas & Quitações",
+                titulo="Metas & Dívidas",
                 valor_control=txt_kpi_divida,
                 subtitulo=txt_sub_divida,
                 icone=ft.Icons.TRACK_CHANGES_ROUNDED,

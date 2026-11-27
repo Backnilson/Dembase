@@ -348,7 +348,7 @@ def criar_view_investimentos(page: ft.Page, match=None) -> ft.View:
                                         ft.Icons.HELP_OUTLINE_ROUNDED,
                                         size=13,
                                         color=T.TEXT_MUTED,
-                                        tooltip="Meses que sua reserva atual cobre apenas seus custos vs os custos da casa inteira (Custos Fixos + Semi Fixos)",
+                                        tooltip="Meses que sua reserva atual cobre apenas seus custos vs os custos da casa inteira (Contas Fixas + Dia a Dia)",
                                     ),
                                 ],
                             ),

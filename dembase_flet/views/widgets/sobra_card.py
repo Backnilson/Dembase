@@ -89,7 +89,7 @@ def calcular_rateio_sobra(
             "teto_livre_culpa": cl["prazeres_teto"],
             "gasto_investimento": cl["liberdade_gasto"],
             "gasto_livre_culpa": cl["prazeres_gasto"],
-            "nome_investimento": cl.get("liberdade_nome", "Liberdade Financeira"),
+            "nome_investimento": cl.get("liberdade_nome", "Liberdade"),
             "nome_livre_culpa": cl.get("prazeres_nome", "Prazeres"),
             "retido_outros_potes": resultado_unif["retido_outros_potes"],
             "menor_saldo_futuro": b["menor_saldo_futuro"],
@@ -175,7 +175,7 @@ def calcular_rateio_sobra(
         "teto_livre_culpa": val_livre_proj,
         "gasto_investimento": 0.0,
         "gasto_livre_culpa": 0.0,
-        "nome_investimento": "Liberdade Financeira",
+        "nome_investimento": "Liberdade",
         "nome_livre_culpa": "Prazeres",
         "retido_outros_potes": 0.0,
         "menor_saldo_futuro": menor_saldo_futuro,
@@ -324,7 +324,7 @@ class PainelGestaoSobra:
 
         # ── Controles de ajuste de percentual (Slider + Input + Chips) ────────
         self.txt_titulo_slider = ft.Text(
-            "Divisão do Caixa Livre: Liberdade Financeira x Prazeres",
+            "Divisão do Caixa Livre: Liberdade x Prazeres",
             size=12.5 if self.mobile else 13,
             weight=ft.FontWeight.W_600,
             color=T.TEXT_PRIMARY,
@@ -359,7 +359,7 @@ class PainelGestaoSobra:
             active_color=COR_INVESTIMENTO,
             inactive_color=f"{COR_LIVRE_CULPA}45",
             thumb_color=COR_INVESTIMENTO,
-            label="{value}% Liberdade Financeira",
+            label="{value}% Liberdade",
             on_change=self._on_slider_change,
         )
 
@@ -388,9 +388,9 @@ class PainelGestaoSobra:
             controls=[self.barra_split_inv, self.barra_split_livre],
         )
 
-        # ── Card 1: Liberdade Financeira (Mini-Pote 1 / Pote 6) ───────────────
+        # ── Card 1: Liberdade (Mini-Pote 1 / Pote 6) ──────────────────────────
         self.txt_inv_titulo = ft.Text(
-            "Liberdade Financeira",
+            "Liberdade",
             size=13 if self.mobile else 14,
             weight=ft.FontWeight.BOLD,
             color=T.TEXT_PRIMARY,
@@ -435,7 +435,7 @@ class PainelGestaoSobra:
             border=borda(1, f"{COR_INVESTIMENTO}55"),
             ink=True,
             on_click=self._acao_lancar_investimento,
-            tooltip="Registrar aporte para Liberdade Financeira",
+            tooltip="Registrar aporte para Liberdade",
             content=ft.Row(
                 spacing=6,
                 tight=True,
@@ -1107,7 +1107,7 @@ class PainelGestaoSobra:
         teto_caixa = dados.get("teto_caixa_livre", sobra)
 
         # Nomes padrão ou editados dos dois cards
-        nm_inv = dados.get("nome_investimento") or "Liberdade Financeira"
+        nm_inv = dados.get("nome_investimento") or "Liberdade"
         nm_livre = dados.get("nome_livre_culpa") or "Prazeres"
         self.txt_inv_titulo.value = nm_inv
         self.txt_livre_titulo.value = nm_livre

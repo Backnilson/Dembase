@@ -306,7 +306,7 @@ class LancamentoFormState:
 
         if self.eh_caixinha:
             if not self.caixinha_id:
-                return False, "Selecione uma caixinha."
+                return False, "Selecione um DemBox."
             if not self.categoria_id:
                 return False, "Selecione uma categoria."
             if not (self.pote_id or self.regra):

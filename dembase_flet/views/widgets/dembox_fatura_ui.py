@@ -60,7 +60,7 @@ def montar_secao_fatura(page: ft.Page, ao_mudar: Callable[[], None] | None = Non
         spacing=8,
         controls=[
             ft.Icon(ft.Icons.CREDIT_CARD_ROUNDED, color="#8B5CF6", size=18),
-            ft.Text("DemBox Faturas", size=14, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+            ft.Text("Fatura de Cartão", size=14, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
             ft.Text("separe o dinheiro das faturas do cartão", size=11, color=T.TEXT_MUTED),
         ],
     )
@@ -148,7 +148,7 @@ def montar_secao_fatura(page: ft.Page, ao_mudar: Callable[[], None] | None = Non
                       lambda: (db.aportar_box_fatura(box["id"], v),
                                f"{formatar_moeda(v)} guardados em '{box['nome']}'.")[1], modal)
 
-        _dialogo(f"Aportar · {box['nome']}", ft.Icons.SAVINGS_ROUNDED, T.PRIMARY, [
+        _dialogo(f"Guardar · {box['nome']}", ft.Icons.SAVINGS_ROUNDED, T.PRIMARY, [
             _info(f"Guardado: {formatar_moeda(sit.guardado)} · Fatura: {formatar_moeda(sit.fatura)} · "
                   f"Falta: {formatar_moeda(sit.falta)}"),
             campo,
@@ -295,7 +295,7 @@ def montar_secao_fatura(page: ft.Page, ao_mudar: Callable[[], None] | None = Non
             size=11.5, color=T.TEXT_MUTED)
 
         acoes = ft.Row(spacing=6, run_spacing=6, wrap=True, controls=[
-            _botao("Aportar", ft.Icons.ADD_ROUNDED, lambda b=box: abrir_aportar(b), T.PRIMARY, True),
+            _botao("Guardar", ft.Icons.ADD_ROUNDED, lambda b=box: abrir_aportar(b), T.PRIMARY, True),
             _botao("Retirar", ft.Icons.OUTPUT_ROUNDED, lambda b=box: abrir_retirar(b), T.WARNING),
             _botao("Mover p/ outro Box", ft.Icons.SWAP_HORIZ_ROUNDED, lambda b=box: abrir_mover(b), T.INFO),
             _botao("Pagar Fatura", ft.Icons.PAYMENTS_ROUNDED, lambda b=box: abrir_pagar(b), "#8B5CF6"),

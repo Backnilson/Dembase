@@ -38,6 +38,7 @@ from core.constants import (
 from core.lancamento_state import LancamentoFormState, is_caixinha_str, is_credito_str
 from core.recorrencia import resumo_parcelas
 from core.potes import obter_regra_pote, POTES_PADRAO
+from core.theme_tokens import emoji_pote, dica_pote, cor_pote_adaptativa
 import core.theme as T
 from core.theme import pad, borda, mostrar_feedback
 from views.widgets.custom_date_picker import (
@@ -680,9 +681,9 @@ class LancamentoForm(ft.Column):
             visible=self.state.eh_transferencia,
         )
 
-        # Caixinha (Visível imediatamente abaixo de Forma quando [Caixinha] é clicado)
+        # DemBox (Visível imediatamente abaixo de Forma quando [DemBox] é clicado)
         self.dd_caixinha = ft.Dropdown(
-            label="Caixinha *",
+            label="DemBox *",
             value=self.state.caixinha_id,
             options=[],
             expand=True,
@@ -700,7 +701,7 @@ class LancamentoForm(ft.Column):
                 controls=[
                     ft.Icon(ft.Icons.SHIELD_ROUNDED, color=T.PRIMARY, size=14),
                     ft.Text(
-                        "Consumo de Provisão (Neutro no Banco e nos 6 Potes): desconta exclusivamente do saldo desta Caixinha.",
+                        "Pago via DemBox (já contabilizado na provisão): desconta apenas do saldo deste DemBox.",
                         size=10.5,
                         color=T.TEXT_PRIMARY,
                         weight=ft.FontWeight.W_500,
@@ -1000,6 +1001,12 @@ class LancamentoForm(ft.Column):
             weight=ft.FontWeight.W_600,
             color=T.PRIMARY,
         )
+        self.lbl_dica_pote = ft.Text(
+            "",
+            size=10.5,
+            italic=True,
+            color=T.TEXT_MUTED,
+        )
         self.wrap_chips_potes = ft.Row(spacing=6, run_spacing=6, wrap=True)
         self.sec_potes = ft.Column(
             spacing=5,
@@ -1015,6 +1022,7 @@ class LancamentoForm(ft.Column):
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 self.wrap_chips_potes,
+                self.lbl_dica_pote,
             ],
         )
         self._construir_chips_potes()
@@ -1660,7 +1668,7 @@ class LancamentoForm(ft.Column):
                 if str(reg.get("categoria_id") or "") == str(cat_id) and pid in ids_potes_validos:
                     return pid
 
-        # 2. Heurística semântica pelo nome da Subcategoria e Categoria
+        # 2. Heurística semântica exata para as 9 macro-categorias e 34 subcategorias
         nome_cat = ""
         for c in self.categorias:
             if str(c.get("id")) == str(cat_id):
@@ -1674,19 +1682,45 @@ class LancamentoForm(ft.Column):
                 break
 
         texto_ref = f"{nome_sub} {nome_cat}".strip()
-        pos_alvo = 2  # Default: Custos Semi Fixos
-        if any(k in texto_ref for k in ("cafe", "bar", "bebida", "lazer", "prazer", "restaurante", "ifood", "festa", "cinema", "viagem", "jogo", "streaming")):
-            pos_alvo = 4  # Prazeres
-        elif any(k in texto_ref for k in ("morad", "aluguel", "condominio", "luz", "agua", "internet", "fixo", "plano", "seguro")):
-            pos_alvo = 1  # Custos Fixos
-        elif any(k in texto_ref for k in ("educ", "conhec", "curso", "livro", "faculdade", "escola")):
-            pos_alvo = 5  # Conhecimento
-        elif any(k in texto_ref for k in ("invest", "liberdad", "poupanc", "reserva", "aporte", " Tesouro", "cdb", "acao")):
-            pos_alvo = 6  # Liberdade Financeira
-        elif any(k in texto_ref for k in ("meta", "dj", "equipamento", "sonho", "objetivo")):
-            pos_alvo = 3  # Metas
-        elif any(k in texto_ref for k in ("aliment", "mercado", "supermercado", "transp", "gasolina", "combustivel", "saud", "farmacia")):
-            pos_alvo = 2  # Custos Semi Fixos
+        pos_alvo = 2  # Default: Dia a Dia
+
+        # 2.1 Regras específicas por Subcategoria (prioridade máxima)
+        if nome_sub:
+            if any(k in nome_sub for k in ("supermercado", "aluguel", "contas", "internet", "telefonia", "farmacia", "emprestimo", "divida", "juros", "tarifa", "transferencia", "fatura")):
+                pos_alvo = 1  # Contas Fixas
+            elif any(k in nome_sub for k in ("carro", "moto", "apps", "onibus", "academia", "beleza", "barbearia", "consulta", "assinatura", "streaming", "casa & manutencao", "manutencao", "pets", "filhos", "diversos", "ajustes de saldo", "ajuste")):
+                pos_alvo = 2  # Dia a Dia
+            elif any(k in nome_sub for k in ("dj", "projetos", "eletronico", "tecnologia", "viagem", "viagens")):
+                pos_alvo = 3  # Metas
+            elif any(k in nome_sub for k in ("cafe", "lanche", "restaurante", "delivery", "bar", "bebida", "passeio", "evento", "presente", "vestuario")):
+                pos_alvo = 4  # Prazeres
+            elif any(k in nome_sub for k in ("curso", "estudo", "ia", "software", "livro")):
+                pos_alvo = 5  # Evolução
+            elif any(k in nome_sub for k in ("investimento", "reserva", "tesouro", "cdb", "acao")):
+                pos_alvo = 6  # Liberdade
+            else:
+                pos_alvo = 0  # Cai para a regra da categoria
+        else:
+            pos_alvo = 0
+
+        # 2.2 Regras por Categoria (quando sem subcategoria ou subcategoria customizada)
+        if pos_alvo == 0:
+            if any(k in texto_ref for k in ("morad", "aluguel", "condominio", "luz", "agua", "internet", "fixo", "plano", "seguro")):
+                pos_alvo = 1  # Contas Fixas
+            elif any(k in texto_ref for k in ("transp", "carro", "moto", "gasolina", "combustivel", "uber", "onibus", "saud", "academia", "beleza", "pessoal", "familia")):
+                pos_alvo = 2  # Dia a Dia
+            elif any(k in texto_ref for k in ("meta", "dj", "equipamento", "eletronico", "viagem", "sonho", "objetivo")):
+                pos_alvo = 3  # Metas
+            elif any(k in texto_ref for k in ("cafe", "bar", "bebida", "lazer", "prazer", "restaurante", "ifood", "delivery", "festa", "cinema", "jogo", "presente")):
+                pos_alvo = 4  # Prazeres
+            elif any(k in texto_ref for k in ("educ", "carreira", "evoluc", "conhec", "curso", "livro", "faculdade", "escola", "software")):
+                pos_alvo = 5  # Evolução
+            elif any(k in texto_ref for k in ("invest", "financas", "liberdad", "poupanc", "reserva", "aporte", "tesouro", "cdb", "acao")):
+                pos_alvo = 6  # Liberdade
+            elif any(k in texto_ref for k in ("aliment", "mercado", "supermercado", "farmacia")):
+                pos_alvo = 1  # Contas Fixas
+            else:
+                pos_alvo = 2  # Dia a Dia
 
         return self._obter_pote_id_por_posicao(pos_alvo) or (next(iter(ids_potes_validos)) if ids_potes_validos else None)
 
@@ -2063,7 +2097,7 @@ class LancamentoForm(ft.Column):
                                 color=T.ON_PRIMARY if ativo else T.PRIMARY,
                             ),
                             ft.Text(
-                                op,
+                                "DemBox" if op_norm == "caixinha" else op,
                                 size=12,
                                 weight=ft.FontWeight.BOLD if ativo else ft.FontWeight.W_600,
                                 color=T.ON_PRIMARY if ativo else T.TEXT_PRIMARY,
@@ -2096,16 +2130,8 @@ class LancamentoForm(ft.Column):
         potes_lista = self._potes_cache if self._potes_cache else POTES_PADRAO
         pote_sel = str(self.state.pote_id or self.state.regra or "")
 
-        icones_pos = {
-            1: ft.Icons.LOCK_CLOCK_ROUNDED,      # Custos Fixos
-            2: ft.Icons.SHOPPING_BAG_ROUNDED,    # Custos Semi Fixos
-            3: ft.Icons.FLAG_ROUNDED,            # Metas
-            4: ft.Icons.CELEBRATION_ROUNDED,     # Prazeres
-            5: ft.Icons.SCHOOL_ROUNDED,          # Conhecimento
-            6: ft.Icons.TRENDING_UP_ROUNDED,     # Liberdade Financeira
-        }
-
         chips: list[ft.Control] = []
+        dica_ativa = ""
         for idx, p in enumerate(potes_lista, start=1):
             pid = str(getattr(p, "id", None) or (p.get("id") if isinstance(p, dict) else "") or f"pote-{idx}")
             pos = int(getattr(p, "posicao", None) or (p.get("posicao") if isinstance(p, dict) else idx) or idx)
@@ -2116,10 +2142,12 @@ class LancamentoForm(ft.Column):
             except Exception:
                 pperc = 0.0
 
-            # Ajusta cores muito escuras (como #800080 no tema escuro) para leitura vibrante
-            cor_vis = "#A855F7" if pcor.upper() == "#800080" else pcor
+            cor_vis = cor_pote_adaptativa(pos, pnome, pcor)
             ativo = (pid == pote_sel or pnome.lower() == pote_sel.lower())
-            icone = icones_pos.get(pos, ft.Icons.PIE_CHART_ROUNDED)
+            emj = emoji_pote(pos, pnome)
+            dica_txt = dica_pote(pos, pnome)
+            if ativo and dica_txt:
+                dica_ativa = f"{emj} {pnome}: {dica_txt}"
 
             chips.append(
                 ft.Container(
@@ -2129,10 +2157,10 @@ class LancamentoForm(ft.Column):
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         controls=[
                             ft.Icon(
-                                ft.Icons.CHECK_CIRCLE_ROUNDED if ativo else icone,
+                                ft.Icons.CHECK_CIRCLE_ROUNDED,
                                 size=14,
                                 color=cor_vis,
-                            ),
+                            ) if ativo else ft.Text(emj, size=12.5),
                             ft.Text(
                                 f"{pnome}",
                                 size=11.5,
@@ -2151,6 +2179,7 @@ class LancamentoForm(ft.Column):
                     bgcolor=f"{cor_vis}28" if ativo else T.SURFACE_ALT,
                     border_radius=10,
                     border=borda(1.8 if ativo else 1, cor_vis if ativo else f"{cor_vis}40"),
+                    tooltip=dica_txt or pnome,
                     ink=True,
                     on_click=lambda _, chave_p=pid: self._selecionar_pote_chip(chave_p, manual=True),
                 )
@@ -2159,6 +2188,9 @@ class LancamentoForm(ft.Column):
         self.wrap_chips_potes.controls = chips
         if hasattr(self, "lbl_macro_regra_pote"):
             self.lbl_macro_regra_pote.value = f"Pilar 50/30/20: {self.state.regra or 'Essencial'}"
+        if hasattr(self, "lbl_dica_pote"):
+            self.lbl_dica_pote.value = dica_ativa
+            self.lbl_dica_pote.visible = bool(dica_ativa)
 
     def _selecionar_pote_chip(self, pote_id: str, manual: bool = True):
         if manual:

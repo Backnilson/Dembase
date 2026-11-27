@@ -203,10 +203,10 @@ def montar_texto_tooltip_raio_x(raio_x: dict) -> str:
                 f"💳 Vencimento {vf.get('cartao_nome')}: {formatar_moeda(float(vf.get('valor_total', 0) or 0))} ({st_f})"
             )
     for cx_l in caixinhas:
-        cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "Caixinha"
+        cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "DemBox"
         cx_v = float(cx_l.get("valor", 0) or 0)
         cx_st = str(cx_l.get("status") or "Pendente").upper()
-        linhas.append(f"📦 Caixinha {cx_n}: {formatar_moeda(cx_v)} ({cx_st})")
+        linhas.append(f"📦 DemBox · {cx_n}: {formatar_moeda(cx_v)} ({cx_st})")
     if qtd_d > 0 or vencimentos_dia:
         linhas.append("👉 Clique para abrir os detalhes desta data")
     return "\n".join(linhas)
@@ -829,7 +829,7 @@ def abrir_modal_raio_x_dia(
             eh_caixinha = bool(l_it.get("caixinha_id")) or str(l_it.get("subtipo") or "").lower() == "provisionamento"
             if eh_caixinha:
                 cx_nome = l_it.get("caixinha_nome")
-                origem_str += f" • 📦 Caixinha {cx_nome or ''}".strip()
+                origem_str += f" • 📦 DemBox · {cx_nome or ''}".strip()
             cat_full = f"{cat_n} › {sub_n}" if sub_n else cat_n
 
             # Identificação de Membro da Família (Multi-Perfis)

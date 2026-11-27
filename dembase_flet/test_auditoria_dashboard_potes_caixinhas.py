@@ -72,7 +72,10 @@ class TestAuditoriaDashboardPotesCaixinhas(unittest.TestCase):
             p_nome = p_info.get("nome") if isinstance(p_info, dict) else ""
             print(f"  Caixinha: {c.get('nome')} | Badge Pote: '{p_nome}'")
             self.assertNotEqual(p_nome, "6 Potes", f"Badge não pode ser o texto genérico '6 Potes' para {c.get('nome')}!")
-            self.assertIn(p_nome, ["Custos Fixos", "Custos Semi Fixos", "Metas", "Prazeres", "Conhecimento", "Liberdade Financeira"])
+            self.assertIn(p_nome, [
+                "Contas Fixas", "Dia a Dia", "Metas", "Prazeres", "Evolução", "Liberdade",
+                "Custos Fixos", "Custos Semi Fixos", "Conhecimento", "Liberdade Financeira",
+            ])
 
 if __name__ == "__main__":
     unittest.main()

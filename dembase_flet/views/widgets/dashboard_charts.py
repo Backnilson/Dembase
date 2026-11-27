@@ -315,7 +315,7 @@ def _abrir_modal_abastecer_rapido(page: ft.Page, caixinha: dict, pacote: dict):
     )
 
     txt_valor_pag = ft.TextField(
-        label="Valor a Abastecer (R$) *",
+        label="Valor a Guardar (R$) *",
         keyboard_type=ft.KeyboardType.NUMBER,
         prefix="R$ ",
         value=f"{valor_sugerido:.2f}".replace(".", ","),
@@ -359,22 +359,22 @@ def _abrir_modal_abastecer_rapido(page: ft.Page, caixinha: dict, pacote: dict):
                 db.injetar_saldo_caixinha(
                     caixinha_id=cid,
                     valor=val_num,
-                    descricao=f"Provisão Caixinha · {nome}",
+                    descricao=f"Provisão DemBox · {nome}",
                     conta_id=conta_escolhida,
                     pote_id=pote_escolhido,
                     data_aporte=date.today().isoformat(),
                     gerar_despesa=True,
                 )
-            mostrar_feedback(page, f"Caixinha '{nome}' abastecida com {formatar_moeda(val_num)}!", "sucesso")
+            mostrar_feedback(page, f"DemBox '{nome}' abastecido com {formatar_moeda(val_num)}!", "sucesso")
             _notificar_refresh_dashboard(page, pacote)
         except Exception as ex:
-            mostrar_feedback(page, f"Erro ao abastecer caixinha: {ex}", "erro")
+            mostrar_feedback(page, f"Erro ao guardar no DemBox: {ex}", "erro")
 
     modal_ab = ft.AlertDialog(
         modal=True,
         title=ft.Row([
             ft.Icon(ft.Icons.SAVINGS_ROUNDED, color=T.PRIMARY, size=22),
-            ft.Text(f"{'Encher Caixinha' if eh_pendente else 'Abastecer Caixinha'} · {nome}", size=16, weight=ft.FontWeight.BOLD),
+            ft.Text(f"{'Pagar Provisão' if eh_pendente else 'Guardar'} · {nome}", size=16, weight=ft.FontWeight.BOLD),
         ], spacing=8),
         content=ft.Container(
             width=400,
@@ -393,7 +393,7 @@ def _abrir_modal_abastecer_rapido(page: ft.Page, caixinha: dict, pacote: dict):
                         content=ft.Row([
                             ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=T.PRIMARY, size=16),
                             ft.Text(
-                                "O valor diminui o saldo da Conta Bancária de origem, aumenta o saldo disponível da Caixinha e é contabilizado no Pote selecionado.",
+                                "O valor diminui o saldo da Conta Bancária de origem, aumenta o saldo disponível do DemBox e é contabilizado no Pote selecionado.",
                                 size=11,
                                 color=T.TEXT_PRIMARY,
                                 expand=True,
@@ -406,7 +406,7 @@ def _abrir_modal_abastecer_rapido(page: ft.Page, caixinha: dict, pacote: dict):
         actions=[
             ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(page, modal_ab)),
             ft.FilledButton(
-                "Confirmar e Abastecer",
+                "Confirmar e Guardar",
                 on_click=_confirmar,
                 style=ft.ButtonStyle(bgcolor=T.PRIMARY, shape=ft.RoundedRectangleBorder(radius=8)),
             ),
@@ -557,12 +557,12 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
 
         # Resolucao canonica do Pote Vinculado (NUNCA exibe rotulo generico "6 Potes")
         _MAPA_POTES_PADRAO = {
-            1: ("Custos Fixos", "#007AFF"),
-            2: ("Custos Semi Fixos", "#FF69B4"),
+            1: ("Contas Fixas", "#007AFF"),
+            2: ("Dia a Dia", "#FF69B4"),
             3: ("Metas", "#800080"),
             4: ("Prazeres", "#FF7A00"),
-            5: ("Conhecimento", "#FFD60A"),
-            6: ("Liberdade Financeira", "#6C5CE7"),
+            5: ("Evolução", "#FFD60A"),
+            6: ("Liberdade", "#6C5CE7"),
         }
         pote_nome = ""
         pote_cor = cor_c
@@ -653,14 +653,14 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
                 border_radius=8,
                 border=borda(1, T.PRIMARY),
                 ink=True,
-                tooltip="Guardar dinheiro neste DemBox" if eh_divida else "Abastecer / Pagar Provisão deste DemBox",
+                tooltip="Guardar valor neste DemBox" if not eh_pendente else "Pagar provisão agendada deste DemBox",
                 on_click=lambda _, cx=c: _abrir_modal_abastecer_rapido(page, cx, pacote),
                 content=ft.Row(
                     spacing=3,
                     tight=True,
                     controls=[
                         ft.Icon(ft.Icons.ADD_ROUNDED, color=T.PRIMARY, size=13),
-                        ft.Text("Guardar" if eh_divida else ("Encher" if eh_pendente else "Abastecer"), color=T.PRIMARY, size=10.5, weight=ft.FontWeight.BOLD),
+                        ft.Text("Guardar" if (eh_divida or not eh_pendente) else "Pagar Provisão", color=T.PRIMARY, size=10.5, weight=ft.FontWeight.BOLD),
                     ],
                 ),
             )

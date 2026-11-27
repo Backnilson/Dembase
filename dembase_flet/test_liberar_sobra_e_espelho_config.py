@@ -42,14 +42,14 @@ def mock_page():
 
 def test_calculo_liberar_sobra():
     rec = 5641.36
-    potes = _potes({2: 300.0})  # Semi Fixos: limite 20% = 1128,27 | gasto 300
+    potes = _potes({2: 300.0})  # Dia a Dia: limite 15% = 846,20 | gasto 300
     base = P.calcular_arquitetura_unificada_potes(rec, potes, 1150.0, 50.0, None, False)
     lib = P.calcular_arquitetura_unificada_potes(rec, potes, 1150.0, 50.0, None, False, potes_liberados={2})
     p2b = base["potes"][1]
     p2l = lib["potes"][1]
     assert p2b["liberavel"] and not p2b["liberado"]
     assert p2l["previsto"] == 300.0 and p2l["restante"] == 0.0, p2l
-    assert p2l["liberado"] and abs(p2l["liberado_valor"] - round(rec * 0.20 - 300.0, 2)) < 0.01
+    assert p2l["liberado"] and abs(p2l["liberado_valor"] - round(rec * 0.15 - 300.0, 2)) < 0.01
     folga = lib["caixa_livre"]["teto_orcamento"] - base["caixa_livre"]["teto_orcamento"]
     assert abs(folga - p2l["liberado_valor"]) < 0.30, folga  # base legada arredonda pct a 2 casas
     # Divisão pelo slider 50/50

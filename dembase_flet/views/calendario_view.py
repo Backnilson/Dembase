@@ -420,7 +420,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
             )
         for cx_l in (dia_info.get("lancamentos") or []):
             if cx_l.get("caixinha_id") or str(cx_l.get("subtipo") or "").lower() == "provisionamento":
-                cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "Caixinha"
+                cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "DemBox"
                 cx_v = float(cx_l.get("valor", 0) or 0)
                 cx_st = str(cx_l.get("status") or "Pendente")
                 chips.append(
@@ -651,7 +651,7 @@ def criar_view_calendario(page: ft.Page) -> ft.View:
                     padding=pad(h=3, v=1),
                     border_radius=5,
                     bgcolor=f"{cor_ic_cx}20",
-                    tooltip="Provisão de Caixinha agendada",
+                    tooltip="Provisão DemBox agendada",
                     content=ft.Icon(
                         ft.Icons.SAVINGS_ROUNDED,
                         size=9.5 if mobile else 11,

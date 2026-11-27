@@ -357,7 +357,7 @@ def secao_calendario_dashboard(
         ]
         for cx_l in (dia_info.get("lancamentos") or []):
             if cx_l.get("caixinha_id") or str(cx_l.get("subtipo") or "").lower() == "provisionamento":
-                cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "Caixinha"
+                cx_n = cx_l.get("caixinha_nome") or cx_l.get("descricao") or "DemBox"
                 cx_v = float(cx_l.get("valor", 0) or 0)
                 cx_st = str(cx_l.get("status") or "Pendente")
                 row_hover_chips.controls.append(

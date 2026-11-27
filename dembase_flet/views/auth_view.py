@@ -63,9 +63,9 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         password=True
     )
 
-    # Checkbox estilizado "Lembrar de mim"
+    # Checkbox estilizado "Manter conectado" (marcado por padrão)
     chk_lembrar = ft.Checkbox(
-        label="Lembrar de mim",
+        label="Manter conectado",
         value=True,
         check_color=T.ON_NEON,
         active_color=T.NEON,
@@ -76,13 +76,12 @@ def criar_view_auth(page: ft.Page) -> ft.View:
         ),
     )
 
-    # Carrega credenciais salvas de forma assíncrona
+    # Carrega último e-mail usado de forma assíncrona (sem preencher senha)
     async def carregar_dados_iniciais():
         try:
-            email_salvo, _, _, ativo = await storage.carregar_lembrar(page)
+            email_salvo = await storage.carregar_ultimo_email(page)
             if email_salvo:
                 txt_email_login.value = email_salvo
-                chk_lembrar.value = ativo
                 page.update()
         except Exception:
             pass
@@ -356,13 +355,10 @@ def criar_view_auth(page: ft.Page) -> ft.View:
             if sess:
                 acc = getattr(sess, "access_token", "") or ""
                 ref = getattr(sess, "refresh_token", "") or ""
-                # Mantém tokens apenas na sessão volátil em memória da página atual
-                storage.salvar_sessao_temporaria(page, acc, ref)
-                await storage.salvar_sessao_autenticada(page, acc, ref, email)
-                if chk_lembrar.value:
-                    await storage.salvar_lembrar(page, email=email)
-                else:
-                    await storage.limpar_lembrar(page)
+                manter = bool(chk_lembrar.value)
+                # Salva último e-mail e persiste tokens apenas se "Manter conectado" estiver marcado
+                await storage.salvar_ultimo_email(page, email)
+                await storage.salvar_sessao_autenticada(page, acc, ref, email=email, persistir=manter)
 
             await ajustar_janela_principal(page)
             db.aquecer_cache()

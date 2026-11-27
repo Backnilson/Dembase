@@ -77,7 +77,7 @@ RELATORIOS_CATALOGO: list[dict] = [
     {
         "id": "potes_financeiros",
         "titulo": "6 Potes Financeiros",
-        "subtitulo": "Gasto vs Previsto nos 6 potes: Custos Fixos, Conforto, Metas, Prazeres, Conhecimento e Liberdade",
+        "subtitulo": "Gasto vs Previsto nos 6 potes: Contas Fixas, Dia a Dia, Metas, Prazeres, Evolução e Liberdade",
         "icone": ft.Icons.ALL_INBOX_ROUNDED,
         "cor": "#6C5CE7",
         "col": {"xs": 12, "sm": 6, "md": 4},

@@ -28,42 +28,42 @@ NOME_MAX = 40
 PISO_CUSTOS_FIXOS_PADRAO = Decimal("1150.00")
 
 POTES_PADRAO = [
-    {"posicao": 1, "nome": "Custos Fixos",         "percentual": Decimal("30"), "cor": "#007AFF"},
-    {"posicao": 2, "nome": "Custos Semi Fixos",    "percentual": Decimal("20"), "cor": "#FF69B4"},
-    {"posicao": 3, "nome": "Metas",                "percentual": Decimal("15"), "cor": "#800080"},
-    {"posicao": 4, "nome": "Prazeres",             "percentual": Decimal("10"), "cor": "#FF7A00"},
-    {"posicao": 5, "nome": "Conhecimento",         "percentual": Decimal("5"),  "cor": "#FFD60A"},
-    {"posicao": 6, "nome": "Liberdade Financeira", "percentual": Decimal("20"), "cor": "#6C5CE7"},
+    {"posicao": 1, "nome": "Contas Fixas", "percentual": Decimal("35"), "cor": "#007AFF"},
+    {"posicao": 2, "nome": "Dia a Dia",    "percentual": Decimal("15"), "cor": "#FF69B4"},
+    {"posicao": 3, "nome": "Metas",        "percentual": Decimal("10"), "cor": "#800080"},
+    {"posicao": 4, "nome": "Prazeres",     "percentual": Decimal("20"), "cor": "#FF7A00"},
+    {"posicao": 5, "nome": "Evolução",     "percentual": Decimal("5"),  "cor": "#FFD60A"},
+    {"posicao": 6, "nome": "Liberdade",    "percentual": Decimal("15"), "cor": "#6C5CE7"},
 ]
 
 REGRAS_VALIDAS = {"Essencial", "Estilo de Vida", "Investimento"}
 
 REGRA_POR_POSICAO = {
-    1: "Essencial",       # Custos Fixos
-    2: "Essencial",       # Custos Semi Fixos
+    1: "Essencial",       # Contas Fixas
+    2: "Essencial",       # Dia a Dia
     3: "Investimento",    # Metas
     4: "Estilo de Vida",  # Prazeres
-    5: "Investimento",    # Conhecimento
-    6: "Investimento",    # Liberdade Financeira
+    5: "Investimento",    # Evolução
+    6: "Investimento",    # Liberdade
 }
 
 REGRA_POR_ID = {
-    "2df4dd2f-4353-42cc-a5c9-8983085a5301": "Essencial",       # Custos Fixos
-    "da6e1d2b-c611-481d-b48d-065cc5d584b4": "Essencial",       # Custos Semi Fixos
+    "2df4dd2f-4353-42cc-a5c9-8983085a5301": "Essencial",       # Contas Fixas
+    "da6e1d2b-c611-481d-b48d-065cc5d584b4": "Essencial",       # Dia a Dia
     "986da9e8-3042-4562-b1df-c1f5cf0138b9": "Investimento",    # Metas
     "c82b0736-fb01-419f-8155-923ebfec82b2": "Estilo de Vida",  # Prazeres
-    "1f1f7449-d985-4c2a-b807-0570a5526614": "Investimento",    # Conhecimento
-    "34a47be1-9879-46bd-96b1-4082703bf388": "Investimento",    # Liberdade Financeira
+    "1f1f7449-d985-4c2a-b807-0570a5526614": "Investimento",    # Evolução
+    "34a47be1-9879-46bd-96b1-4082703bf388": "Investimento",    # Liberdade
 }
 
 
 def _regra_por_nome(nome: str) -> str:
     n = (nome or "").lower().strip()
-    if any(k in n for k in ("fix", "confort", "semi", "essenc", "morad", "aliment", "saud", "transp")):
+    if any(k in n for k in ("fix", "dia a dia", "confort", "semi", "essenc", "morad", "aliment", "saud", "transp")):
         return "Essencial"
-    if any(k in n for k in ("prazer", "estilo", "lazer", "vida", "desejo", "restaur", "divers")):
+    if any(k in n for k in ("prazer", "estilo", "lazer", "vida", "desejo", "restaur", "divers", "livre")):
         return "Estilo de Vida"
-    if any(k in n for k in ("meta", "conhec", "liberdad", "invest", "poupanc", "futuro", "reserva", "educac")):
+    if any(k in n for k in ("meta", "evolu", "conhec", "estud", "liberdad", "invest", "poupanc", "futuro", "reserva", "educac")):
         return "Investimento"
     return "Essencial"
 

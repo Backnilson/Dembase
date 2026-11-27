@@ -61,15 +61,33 @@ _CORES_GENERICAS = {
 }
 
 # =============================================================================
-# 2. 6 POTES FINANCEIROS (Emoji + Cores Calibradas Dark/Light)
+# 2. 6 POTES FINANCEIROS (Emoji + Cores Calibradas Dark/Light + Micro-Dicas)
 # =============================================================================
 MAPA_POTES_VISUAL: dict[int, dict[str, str]] = {
-    1: {"nome": "Custos Fixos",         "emoji": "🏠", "dark": "#3B82F6", "light": "#2563EB"},
-    2: {"nome": "Custos Semi Fixos",    "emoji": "⚡", "dark": "#EC4899", "light": "#DB2777"},
-    3: {"nome": "Metas",                "emoji": "🎯", "dark": "#A855F7", "light": "#7C3AED"},
-    4: {"nome": "Prazeres",             "emoji": "🎉", "dark": "#F97316", "light": "#EA580C"},
-    5: {"nome": "Conhecimento",         "emoji": "📚", "dark": "#FACC15", "light": "#B45309"},
-    6: {"nome": "Liberdade Financeira", "emoji": "🚀", "dark": "#818CF8", "light": "#4F46E5"},
+    1: {
+        "nome": "Contas Fixas", "emoji": "🏠", "dark": "#3B82F6", "light": "#2563EB",
+        "dica": "Obrigações mensais e base da casa (aluguel, contas, mercado, dívidas).",
+    },
+    2: {
+        "nome": "Dia a Dia", "emoji": "⚡", "dark": "#EC4899", "light": "#DB2777",
+        "dica": "Gastos variáveis da rotina (transporte, academia, beleza, assinaturas, diversos).",
+    },
+    3: {
+        "nome": "Metas", "emoji": "🎯", "dark": "#A855F7", "light": "#7C3AED",
+        "dica": "Projetos, equipamentos (DJ/tech), viagens planejadas e quitações.",
+    },
+    4: {
+        "nome": "Prazeres", "emoji": "🎉", "dark": "#F97316", "light": "#EA580C",
+        "dica": "Gastar sem culpa: cafés, delivery, bares, passeios e mimos.",
+    },
+    5: {
+        "nome": "Evolução", "emoji": "📚", "dark": "#FACC15", "light": "#B45309",
+        "dica": "Cursos, livros, IA, softwares e crescimento pessoal ou profissional.",
+    },
+    6: {
+        "nome": "Liberdade", "emoji": "🚀", "dark": "#818CF8", "light": "#4F46E5",
+        "dica": "Aportes, reserva de emergência e construção de patrimônio.",
+    },
 }
 
 
@@ -79,15 +97,15 @@ def _resolver_pos_pote(posicao: int | None, nome: str | None = None) -> int | No
     n = _norm(nome)
     if not n:
         return None
-    if "semi" in n:
+    if "dia a dia" in n or "semi" in n or "confort" in n:
         return 2
-    if "fixo" in n:
+    if "fixo" in n or "fixa" in n:
         return 1
     if "meta" in n:
         return 3
-    if "prazer" in n:
+    if "prazer" in n or "livre" in n:
         return 4
-    if "conhec" in n:
+    if "evoluc" in n or "conhec" in n or "estudo" in n:
         return 5
     if "liberdade" in n or "invest" in n:
         return 6
@@ -99,6 +117,19 @@ def emoji_pote(posicao: int | None = None, nome: str | None = None) -> str:
     if pos in MAPA_POTES_VISUAL:
         return MAPA_POTES_VISUAL[pos]["emoji"]
     return "🏺"
+
+
+def dica_pote(posicao: int | None = None, nome: str | None = None) -> str:
+    pos = _resolver_pos_pote(posicao, nome)
+    if pos in MAPA_POTES_VISUAL:
+        return MAPA_POTES_VISUAL[pos]["dica"]
+    return ""
+
+
+def nome_pote_padrao(posicao: int) -> str:
+    if posicao in MAPA_POTES_VISUAL:
+        return MAPA_POTES_VISUAL[posicao]["nome"]
+    return f"Pote {posicao}"
 
 
 def cor_pote_adaptativa(
@@ -115,34 +146,26 @@ def cor_pote_adaptativa(
 
 
 # =============================================================================
-# 3. CATEGORIAS (Mapa Semântico + Fallback Determinístico)
+# 3. CATEGORIAS (Mapa Semântico das 9 Macro-Categorias + Fallback Determinístico)
 # =============================================================================
 _REGRAS_CATEGORIAS: list[tuple[tuple[str, ...], str, str]] = [
-    (("sem categoria",),                                        "❓", "gray"),
-    (("casa", "moradia", "aluguel", "condom"),                  "🏡", "sky"),
-    (("invest", "acao", "acoes", "renda fixa", "cdb", "tesouro"), "📈", "teal"),
-    (("denilson", "erika", "brayan", "lais", "pessoal", "familia"), "👤", "violet"),
-    (("lazer", "entretenimento", "cinema", "show", "festa", "bebida"), "🍻", "orange"),
-    (("auto", "moto", "carro", "combust", "transporte", "uber", "gasolina"), "🏍️", "rose"),
-    (("presente", "mimo", "aniversario"),                       "🎁", "fuchsia"),
-    (("viagem", "ferias", "hotel", "passagem", "voo"),          "✈️", "cyan"),
-    (("internet", "assinatura", "streaming", "celular", "telefone"), "🌐", "blue"),
+    (("sem categoria",),                                                      "❓", "gray"),
+    (("renda", "salario", "freela", "bonus"),                                 "💰", "mint"),
+    (("moradia", "casa", "aluguel", "condom"),                                "🏡", "sky"),
     (("aliment", "mercado", "supermercado", "restaurante", "ifood", "lanche"), "🍔", "amber"),
-    (("saude", "drogaria", "farmacia", "medico", "dentista", "academia"), "💊", "mint"),
-    (("educac", "curso", "livro", "faculdade", "escola"),       "📚", "indigo"),
-    (("cachorro", "pet", "pipoca", "gato", "veterin"),          "🐶", "amber"),
-    (("cartao", "fatura", "divida", "emprestimo", "juros"),     "💳", "rose"),
-    (("salario", "renda", "freela", "pix", "bonus"),            "💰", "mint"),
-    (("eletronico", "tecnologia", "notebook", "celular"),       "💻", "blue"),
-    (("evento", "dj", "som", "musica"),                         "🎧", "violet"),
-    (("roupa", "vestuario", "calcado", "beleza"),               "🛍️", "pink"),
+    (("transporte", "auto", "moto", "carro", "combust", "uber", "gasolina"),  "🚗", "rose"),
+    (("saude", "bem-estar", "drogaria", "farmacia", "medico", "dentista", "academia"), "💊", "teal"),
+    (("lazer", "viagem", "viagens", "entretenimento", "cinema", "show", "festa", "bebida"), "🍻", "orange"),
+    (("educac", "carreira", "curso", "livro", "faculdade", "escola", "dj"),   "🎓", "indigo"),
+    (("pessoal", "familia", "denilson", "erika", "brayan", "lais", "pet", "presente", "vestuario"), "👨‍👩‍👦", "violet"),
+    (("financas", "invest", "acao", "acoes", "renda fixa", "cdb", "tesouro", "divida", "emprestimo", "juros", "fatura"), "📈", "blue"),
 ]
 
 EMOJIS_CURADOS: list[str] = [
-    "🏡", "📈", "👤", "🍻", "🏍️", "🎁", "✈️", "🌐",
-    "🍔", "💊", "📚", "🐶", "💳", "💰", "💻", "🎧",
-    "🛍️", "⚡", "🎯", "🎉", "🚀", "🚗", "🛒", "☕",
-    "🏋️", "🎬", "📱", "🔧", "🏦", "🧾", "🏷️", "❓",
+    "💰", "🏡", "🍔", "🚗", "💊", "🍻", "🎓", "👨‍👩‍👦", "📈",
+    "🏠", "⚡", "🎯", "🎉", "📚", "🚀", "🏍️", "🎁", "✈️",
+    "🌐", "🐶", "💳", "💻", "🎧", "🛍️", "🛒", "☕", "🏋️",
+    "🎬", "📱", "🔧", "🏦", "🧾", "🏷️", "❓",
 ]
 
 

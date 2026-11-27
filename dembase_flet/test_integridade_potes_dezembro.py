@@ -195,7 +195,7 @@ def test_3_badge_caixinhas_sem_rotulo_generico():
     assert "Pote Vinculado" not in textos_encontrados, "O rótulo 'Pote Vinculado' NÃO deve aparecer!"
     assert any("Custos Fixos" in t for t in textos_encontrados), "Deveria exibir 'Custos Fixos' para a caixinha Aluguel"
     assert any("Custos Semi Fixos" in t for t in textos_encontrados), "Deveria exibir 'Custos Semi Fixos' para a caixinha Moto"
-    assert any("Liberdade Financeira" in t for t in textos_encontrados), "Deveria inferir 'Liberdade Financeira' para Reserva de Emergência"
+    assert any("Liberdade" in t for t in textos_encontrados), "Deveria inferir 'Liberdade' para Reserva de Emergência"
 
     print("[OK] Teste 3 passou: Badges exibem os nomes reais dos potes com 100% de precisão.")
 
