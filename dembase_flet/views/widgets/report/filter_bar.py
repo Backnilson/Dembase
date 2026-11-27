@@ -39,6 +39,9 @@ class FilterBar(ft.Column):
         fixar_categoria: bool = False,
         fixar_regra: bool = False,
         fixar_pote: bool = False,
+        mostrar_seletor_faturas: bool = False,
+        modo_faturas: str = "agrupar_faturas",
+        on_change_modo_faturas: Callable[[str], None] | None = None,
     ):
         self._page = page
         self.ctx = ctx
@@ -49,6 +52,9 @@ class FilterBar(ft.Column):
         self.fixar_categoria = fixar_categoria
         self.fixar_regra = fixar_regra
         self.fixar_pote = fixar_pote
+        self.mostrar_seletor_faturas = mostrar_seletor_faturas
+        self.modo_faturas = "itens_separados" if modo_faturas == "itens_separados" else "agrupar_faturas"
+        self.on_change_modo_faturas = on_change_modo_faturas
         self.mobile = is_mobile(page)
 
         self.contas_cache: list[dict] = []
@@ -293,6 +299,91 @@ class FilterBar(ft.Column):
                 icone=ft.Icons.FILTER_LIST_ROUNDED,
             )
         )
+
+        # Seletor limpo de visualização de Cartão (Agrupar Faturas vs Itens Separados)
+        if self.mostrar_seletor_faturas and self.ctx.tipo != "Receita":
+            eh_agrupado = self.modo_faturas == "agrupar_faturas"
+            seletor_faturas = ft.Container(
+                padding=pad(h=3, v=3),
+                bgcolor=T.SURFACE_ALT,
+                border_radius=20,
+                border=borda(1, T.BORDER),
+                content=ft.Row(
+                    spacing=2,
+                    tight=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Container(
+                            padding=pad(h=10, v=5),
+                            bgcolor=T.PRIMARY if eh_agrupado else ft.Colors.TRANSPARENT,
+                            border_radius=16,
+                            ink=True,
+                            tooltip="Agrupa gastos do cartão em 1 card resumo expansível por fatura",
+                            on_click=lambda _: self.set_modo_faturas("agrupar_faturas"),
+                            content=ft.Row(
+                                spacing=4,
+                                tight=True,
+                                controls=[
+                                    ft.Icon(
+                                        ft.Icons.CREDIT_CARD_ROUNDED,
+                                        size=13,
+                                        color=ft.Colors.WHITE if eh_agrupado else T.TEXT_MUTED,
+                                    ),
+                                    ft.Text(
+                                        "Agrupar Faturas",
+                                        size=11.5,
+                                        weight=ft.FontWeight.BOLD if eh_agrupado else ft.FontWeight.W_500,
+                                        color=ft.Colors.WHITE if eh_agrupado else T.TEXT_PRIMARY,
+                                    ),
+                                ],
+                            ),
+                        ),
+                        ft.Container(
+                            padding=pad(h=10, v=5),
+                            bgcolor=T.INFO if not eh_agrupado else ft.Colors.TRANSPARENT,
+                            border_radius=16,
+                            ink=True,
+                            tooltip="Mostra cada compra de cartão individualmente com tag da fatura e datas",
+                            on_click=lambda _: self.set_modo_faturas("itens_separados"),
+                            content=ft.Row(
+                                spacing=4,
+                                tight=True,
+                                controls=[
+                                    ft.Icon(
+                                        ft.Icons.RECEIPT_LONG_ROUNDED,
+                                        size=13,
+                                        color=ft.Colors.WHITE if not eh_agrupado else T.TEXT_MUTED,
+                                    ),
+                                    ft.Text(
+                                        "Itens Separados",
+                                        size=11.5,
+                                        weight=ft.FontWeight.BOLD if not eh_agrupado else ft.FontWeight.W_500,
+                                        color=ft.Colors.WHITE if not eh_agrupado else T.TEXT_PRIMARY,
+                                    ),
+                                ],
+                            ),
+                        ),
+                    ],
+                ),
+            )
+            self.row_chips.controls.append(seletor_faturas)
+
+    def set_modo_faturas(self, novo_modo: str, emitir: bool = True):
+        modo_norm = "itens_separados" if novo_modo == "itens_separados" else "agrupar_faturas"
+        if modo_norm == self.modo_faturas and emitir:
+            return
+        self.modo_faturas = modo_norm
+        self._popular_chips()
+        try:
+            self.update()
+        except Exception:
+            pass
+        try:
+            self._page.update()
+        except Exception:
+            pass
+        if emitir and callable(self.on_change_modo_faturas):
+            self.on_change_modo_faturas(self.modo_faturas)
 
     def _nome_por_id(self, lista: list[dict], item_id: str | None, padrao: str) -> str:
         if not item_id:

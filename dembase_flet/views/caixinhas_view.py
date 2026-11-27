@@ -26,6 +26,7 @@ import flet as ft
 
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
+from core.theme_tokens import cor_pote_adaptativa, estilo_badge_adaptativo
 from core.constants import formatar_moeda
 from core.periodo import obter_estado_periodo_atual
 from core.responsive import is_mobile
@@ -799,6 +800,248 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
         )
         abrir_dialogo(page, modal)
 
+    # ── Modal de Ajustar / Zerar Saldo (Reconciliação com ou sem impacto bancário) ──
+    def abrir_modal_ajustar_saldo(caixinha: dict, ao_concluir=None):
+        cid = str(caixinha.get("id"))
+        nome = caixinha.get("nome", "DemBox")
+        saldo_atual = round(float(caixinha.get("saldo_atual", 0) or 0), 2)
+        conta_padrao = str(caixinha.get("conta_id") or "")
+
+        try:
+            contas = db.listar_contas() or []
+        except Exception:
+            contas = []
+
+        txt_novo_saldo = ft.TextField(
+            label="Novo Saldo Real (R$) *",
+            value=f"{saldo_atual:.2f}".replace(".", ","),
+            prefix_text="R$ ",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            autofocus=True,
+            **T.campo_estilo(),
+        )
+        txt_motivo = ft.TextField(
+            label="Motivo / Observação (opcional)",
+            hint_text="Ex: Valor já gasto fora do box, alinhando saldo real",
+            **T.campo_estilo(),
+        )
+
+        # 'reconciliar' (não altera banco) | 'banco' (transfere diferença p/ conta)
+        modo_ajuste = ["reconciliar"]
+        sel_conta, row_contas = _criar_seletor_pilulas_contas(contas, conta_padrao)
+
+        lbl_preview_dif = ft.Text("", size=11.5, weight=ft.FontWeight.BOLD, color=T.TEXT_MUTED)
+        bloco_conta = ft.Column(
+            spacing=6,
+            visible=False,
+            controls=[
+                ft.Text("Conta Bancária (origem/destino da diferença) *", size=11.5, weight=ft.FontWeight.BOLD, color=T.TEXT_MUTED),
+                row_contas,
+            ],
+        )
+
+        def _parse_val() -> float | None:
+            try:
+                raw = (txt_novo_saldo.value or "").strip().replace(".", "").replace(",", ".")
+                if not raw:
+                    return 0.0
+                v = float(raw)
+                return round(v, 2) if v >= 0 else None
+            except Exception:
+                return None
+
+        def _atualizar_preview(_=None):
+            v = _parse_val()
+            if v is None:
+                lbl_preview_dif.value = "Informe um valor válido (maior ou igual a zero)."
+                lbl_preview_dif.color = T.DESPESA
+            else:
+                dif = round(v - saldo_atual, 2)
+                if abs(dif) < 0.005:
+                    lbl_preview_dif.value = "Sem diferença em relação ao saldo atual."
+                    lbl_preview_dif.color = T.TEXT_MUTED
+                elif dif < 0:
+                    suf = "sem alterar contas bancárias" if modo_ajuste[0] == "reconciliar" else "creditando na conta escolhida"
+                    lbl_preview_dif.value = f"Redução de {formatar_moeda(abs(dif))} ({suf})."
+                    lbl_preview_dif.color = T.WARNING
+                else:
+                    suf = "sem alterar contas bancárias" if modo_ajuste[0] == "reconciliar" else "debitando da conta escolhida"
+                    lbl_preview_dif.value = f"Acréscimo de {formatar_moeda(dif)} ({suf})."
+                    lbl_preview_dif.color = T.PRIMARY
+            try:
+                lbl_preview_dif.update()
+            except Exception:
+                pass
+
+        txt_novo_saldo.on_change = _atualizar_preview
+
+        def _zerar_atalho(_):
+            txt_novo_saldo.value = "0,00"
+            try:
+                txt_novo_saldo.update()
+            except Exception:
+                pass
+            _atualizar_preview()
+
+        card_op_reconciliar = ft.Container(padding=pad(h=10, v=9), border_radius=10, ink=True)
+        card_op_banco = ft.Container(padding=pad(h=10, v=9), border_radius=10, ink=True)
+
+        def _render_modos():
+            eh_rec = (modo_ajuste[0] == "reconciliar")
+            card_op_reconciliar.bgcolor = f"{T.PRIMARY}1A" if eh_rec else T.SURFACE_ALT
+            card_op_reconciliar.border = borda(1.5 if eh_rec else 1, T.PRIMARY if eh_rec else T.BORDER)
+            card_op_reconciliar.content = ft.Row(
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Icon(
+                        ft.Icons.RADIO_BUTTON_CHECKED_ROUNDED if eh_rec else ft.Icons.RADIO_BUTTON_UNCHECKED_ROUNDED,
+                        size=18,
+                        color=T.PRIMARY if eh_rec else T.TEXT_MUTED,
+                    ),
+                    ft.Column(
+                        spacing=1,
+                        expand=True,
+                        controls=[
+                            ft.Text("Apenas reconciliar DemBox (não alterar saldo bancário)", size=12, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                            ft.Text("Ideal quando o dinheiro já foi gasto/movimentado fora do box.", size=10.5, color=T.TEXT_MUTED),
+                        ],
+                    ),
+                ],
+            )
+
+            eh_bco = not eh_rec
+            card_op_banco.bgcolor = f"{T.WARNING}1A" if eh_bco else T.SURFACE_ALT
+            card_op_banco.border = borda(1.5 if eh_bco else 1, T.WARNING if eh_bco else T.BORDER)
+            card_op_banco.content = ft.Row(
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Icon(
+                        ft.Icons.RADIO_BUTTON_CHECKED_ROUNDED if eh_bco else ft.Icons.RADIO_BUTTON_UNCHECKED_ROUNDED,
+                        size=18,
+                        color=T.WARNING if eh_bco else T.TEXT_MUTED,
+                    ),
+                    ft.Column(
+                        spacing=1,
+                        expand=True,
+                        controls=[
+                            ft.Text("Transferir diferença para conta bancária", size=12, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                            ft.Text("Use quando o dinheiro realmente voltou ou saiu do banco.", size=10.5, color=T.TEXT_MUTED),
+                        ],
+                    ),
+                ],
+            )
+            bloco_conta.visible = eh_bco
+
+        def _selecionar_modo(novo_m: str):
+            modo_ajuste[0] = novo_m
+            _render_modos()
+            _atualizar_preview()
+            for ctrl in (card_op_reconciliar, card_op_banco, bloco_conta):
+                try:
+                    ctrl.update()
+                except Exception:
+                    pass
+
+        card_op_reconciliar.on_click = lambda _: _selecionar_modo("reconciliar")
+        card_op_banco.on_click = lambda _: _selecionar_modo("banco")
+        _render_modos()
+        _atualizar_preview()
+
+        def _salvar_ajuste(_):
+            val_novo = _parse_val()
+            if val_novo is None:
+                mostrar_feedback(page, "Informe um saldo válido (>= 0).", "erro")
+                return
+            alterar_bco = (modo_ajuste[0] == "banco")
+            if alterar_bco and not sel_conta[0]:
+                mostrar_feedback(page, "Selecione uma Conta Bancária.", "alerta")
+                return
+            try:
+                res = db.ajustar_saldo_caixinha(
+                    caixinha_id=cid,
+                    novo_saldo=val_novo,
+                    alterar_banco=alterar_bco,
+                    conta_id=sel_conta[0] if alterar_bco else None,
+                    descricao=(txt_motivo.value or "").strip(),
+                )
+                fechar_dialogo(page, modal_aj)
+                if abs(float(res.get("diferenca", 0) or 0)) < 0.005:
+                    mostrar_feedback(page, f"Saldo de '{nome}' já está em {formatar_moeda(val_novo)}.", "info")
+                elif alterar_bco:
+                    mostrar_feedback(page, f"Saldo de '{nome}' ajustado para {formatar_moeda(val_novo)} com movimentação bancária!", "sucesso")
+                else:
+                    mostrar_feedback(page, f"DemBox '{nome}' reconciliado para {formatar_moeda(val_novo)} (contas bancárias intactas)!", "sucesso")
+                carregar_dados(forcar=True)
+                if callable(ao_concluir):
+                    ao_concluir()
+            except Exception as ex:
+                mostrar_feedback(page, f"Erro ao ajustar saldo: {ex}", "erro")
+
+        modal_aj = ft.AlertDialog(
+            modal=True,
+            title=ft.Row([
+                ft.Icon(ft.Icons.TUNE_ROUNDED, color=T.PRIMARY, size=22),
+                ft.Text(f"Ajustar / Zerar Saldo · {nome}", size=16, weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+            ], spacing=8),
+            content=ft.Container(
+                width=450 if not mobile else 330,
+                content=ft.Column(
+                    tight=True,
+                    spacing=12,
+                    scroll=ft.ScrollMode.AUTO,
+                    controls=[
+                        ft.Container(
+                            bgcolor=T.SURFACE_ALT,
+                            border_radius=10,
+                            padding=pad(h=12, v=10),
+                            border=borda(1, T.BORDER),
+                            content=ft.Row(
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    ft.Column([
+                                        ft.Text("Saldo atual no DemBox:", size=11, color=T.TEXT_MUTED),
+                                        ft.Text(formatar_moeda(saldo_atual), size=16, weight=ft.FontWeight.BOLD, color=T.TEXT_PRIMARY),
+                                    ], spacing=1),
+                                    ft.OutlinedButton(
+                                        content=ft.Row([
+                                            ft.Icon(ft.Icons.RESTART_ALT_ROUNDED, size=15, color=T.DESPESA),
+                                            ft.Text("Zerar (R$ 0,00)", size=11.5, weight=ft.FontWeight.BOLD, color=T.DESPESA),
+                                        ], spacing=4, tight=True),
+                                        on_click=_zerar_atalho,
+                                        style=ft.ButtonStyle(
+                                            side=ft.BorderSide(1, T.DESPESA),
+                                            shape=ft.RoundedRectangleBorder(radius=8),
+                                            padding=pad(h=10, v=6),
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        ),
+                        txt_novo_saldo,
+                        lbl_preview_dif,
+                        ft.Text("Como deseja aplicar este ajuste?", size=11.5, weight=ft.FontWeight.BOLD, color=T.TEXT_MUTED),
+                        card_op_reconciliar,
+                        card_op_banco,
+                        bloco_conta,
+                        txt_motivo,
+                    ],
+                ),
+            ),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: fechar_dialogo(page, modal_aj)),
+                ft.FilledButton(
+                    content=ft.Text("Confirmar Ajuste", color=T.ON_NEON, weight=ft.FontWeight.BOLD),
+                    on_click=_salvar_ajuste,
+                    style=ft.ButtonStyle(bgcolor=T.PRIMARY, shape=ft.RoundedRectangleBorder(radius=10)),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        abrir_dialogo(page, modal_aj)
+
     # ── Modal de Retirar / Resgatar Dinheiro (Dívidas & Quitações) ────────────
     def abrir_modal_retirar(caixinha: dict, ao_concluir=None):
         cid = str(caixinha.get("id"))
@@ -1320,6 +1563,10 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 fechar_dialogo(page, modal_rx)
                 abrir_modal_retirar(cx)
 
+            def _acao_ajustar_rx(_):
+                fechar_dialogo(page, modal_rx)
+                abrir_modal_ajustar_saldo(cx)
+
             def _acao_editar_rx(_):
                 fechar_dialogo(page, modal_rx)
                 abrir_modal_caixinha(cx)
@@ -1358,6 +1605,14 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                         ], spacing=5, tight=True),
                         on_click=_acao_abater_rx,
                         style=ft.ButtonStyle(bgcolor=T.INFO if eh_divida else T.DESPESA, shape=ft.RoundedRectangleBorder(radius=8), padding=pad(h=12, v=8)),
+                    ),
+                    ft.OutlinedButton(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.TUNE_ROUNDED, size=15, color=T.PRIMARY),
+                            ft.Text("Ajustar / Zerar Saldo", size=12, weight=ft.FontWeight.W_600, color=T.PRIMARY),
+                        ], spacing=4, tight=True),
+                        on_click=_acao_ajustar_rx,
+                        style=ft.ButtonStyle(side=ft.BorderSide(1, T.PRIMARY), shape=ft.RoundedRectangleBorder(radius=8), padding=pad(h=10, v=8)),
                     ),
                     ft.OutlinedButton(
                         content=ft.Row([
@@ -2462,16 +2717,18 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                 )
 
             if pote_nome:
+                pote_cor_ad = cor_pote_adaptativa(nome=pote_nome, cor_salva=pote_cor)
+                pote_bg_ad, pote_txt_ad = estilo_badge_adaptativo(pote_cor_ad)
                 row_badges_vinculo.controls.append(
                     ft.Container(
                         content=ft.Row([
-                            ft.Icon(ft.Icons.PIE_CHART_OUTLINE_ROUNDED, size=11, color=pote_cor),
-                            ft.Text(pote_nome, size=10, weight=ft.FontWeight.W_600, color=pote_cor),
+                            ft.Icon(ft.Icons.PIE_CHART_OUTLINE_ROUNDED, size=11, color=pote_txt_ad),
+                            ft.Text(pote_nome, size=10, weight=ft.FontWeight.W_600, color=pote_txt_ad),
                         ], spacing=3, tight=True),
                         padding=pad(h=6, v=2),
-                        bgcolor=T.SURFACE_ALT,
+                        bgcolor=pote_bg_ad,
                         border_radius=6,
-                        border=borda(1, pote_cor),
+                        border=borda(1, f"{pote_txt_ad}50"),
                     )
                 )
 
@@ -2901,6 +3158,13 @@ def montar_aba_caixinhas(page: ft.Page, match=None) -> ft.Control:
                                                         ft.Text("Pagar / Abater Dívida" if eh_divida else "Gastar / Deduzir", size=13, color=T.INFO if eh_divida else T.DESPESA),
                                                     ], spacing=8),
                                                     on_click=lambda _, it=c: abrir_modal_deduzir(it),
+                                                ),
+                                                ft.PopupMenuItem(
+                                                    content=ft.Row([
+                                                        ft.Icon(ft.Icons.TUNE_ROUNDED, size=15, color=T.PRIMARY),
+                                                        ft.Text("Ajustar / Zerar Saldo", size=13, color=T.PRIMARY),
+                                                    ], spacing=8),
+                                                    on_click=lambda _, it=c: abrir_modal_ajustar_saldo(it),
                                                 ),
                                                 ft.PopupMenuItem(
                                                     content=ft.Row([

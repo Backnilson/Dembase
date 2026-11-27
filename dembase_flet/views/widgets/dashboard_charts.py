@@ -13,6 +13,7 @@ from datetime import date
 import flet as ft
 from core import theme as T
 from core.theme import pad, borda
+from core.theme_tokens import cor_pote_adaptativa, estilo_badge_adaptativo
 from core.constants import formatar_moeda
 from core.periodo import obter_estado_periodo_atual
 from core.report_context import ReportContext
@@ -557,19 +558,21 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
 
         # Resolucao canonica do Pote Vinculado (NUNCA exibe rotulo generico "6 Potes")
         _MAPA_POTES_PADRAO = {
-            1: ("Contas Fixas", "#007AFF"),
-            2: ("Dia a Dia", "#FF69B4"),
-            3: ("Metas", "#800080"),
-            4: ("Prazeres", "#FF7A00"),
-            5: ("Evolução", "#FFD60A"),
-            6: ("Liberdade", "#6C5CE7"),
+            1: ("Contas Fixas", "#3B82F6"),
+            2: ("Dia a Dia", "#EC4899"),
+            3: ("Metas", "#A855F7"),
+            4: ("Prazeres", "#F97316"),
+            5: ("Evolução", "#FACC15"),
+            6: ("Liberdade", "#818CF8"),
         }
         pote_nome = ""
         pote_cor = cor_c
+        pote_pos = None
         pote_info = c.get("potes")
         if isinstance(pote_info, dict) and pote_info.get("nome") and str(pote_info.get("nome")).strip() not in ("6 Potes", "Pote Vinculado", ""):
             pote_nome = str(pote_info.get("nome")).strip()
             pote_cor = pote_info.get("cor") or cor_c
+            pote_pos = pote_info.get("posicao")
         if not pote_nome and c.get("pote_id"):
             pid_str = str(c.get("pote_id"))
             try:
@@ -578,24 +581,35 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
                 if p_item and p_item.get("nome") and str(p_item.get("nome")).strip() not in ("6 Potes", "Pote Vinculado", ""):
                     pote_nome = str(p_item.get("nome")).strip()
                     pote_cor = (p_item.get("cor") if p_item else None) or cor_c
+                    pote_pos = p_item.get("posicao")
                 elif p_item and p_item.get("posicao") in _MAPA_POTES_PADRAO:
+                    pote_pos = p_item["posicao"]
                     pote_nome, pote_cor = _MAPA_POTES_PADRAO[p_item["posicao"]]
             except Exception:
                 pass
         if not pote_nome:
             n_lower = nome.lower()
             if any(k in n_lower for k in ("aluguel", "condom", "luz", "energia", "agua", "água", "internet", "seguro")):
+                pote_pos = 1
                 pote_nome, pote_cor = _MAPA_POTES_PADRAO[1]
             elif any(k in n_lower for k in ("moto", "carro", "combust", "mercado", "aliment", "feira", "ipva", "manuten")):
+                pote_pos = 2
                 pote_nome, pote_cor = _MAPA_POTES_PADRAO[2]
             elif any(k in n_lower for k in ("reserva", "emerg", "invest", "futuro")):
+                pote_pos = 6
                 pote_nome, pote_cor = _MAPA_POTES_PADRAO[6]
             elif any(k in n_lower for k in ("curso", "livro", "faculdade", "estudo")):
+                pote_pos = 5
                 pote_nome, pote_cor = _MAPA_POTES_PADRAO[5]
-            elif any(k in n_lower for k in ("viagem", "reforma", "meta")):
+            elif any(k in n_lower for k in ("viagem", "reforma", "meta", "divida", "dívida")):
+                pote_pos = 3
                 pote_nome, pote_cor = _MAPA_POTES_PADRAO[3]
             else:
+                pote_pos = 4
                 pote_nome, pote_cor = _MAPA_POTES_PADRAO[4]
+
+        pote_cor_adapt = cor_pote_adaptativa(posicao=pote_pos, nome=pote_nome, cor_salva=pote_cor)
+        pote_bg_adapt, pote_txt_adapt = estilo_badge_adaptativo(pote_cor_adapt)
 
         ic_nome = c.get("icone", "inventory_2")
         icone_c = _MAPA_ICONES_CAIXINHAS.get(ic_nome, ft.Icons.INVENTORY_2_ROUNDED)
@@ -730,15 +744,15 @@ def _render_minhas_caixinhas(page: ft.Page, pacote: dict, meta: dict) -> ft.Cont
                                                         ),
                                                         ft.Container(
                                                             padding=pad(h=6, v=1.5),
-                                                            bgcolor=f"{pote_cor}18",
+                                                            bgcolor=pote_bg_adapt,
                                                             border_radius=6,
-                                                            border=borda(1, f"{pote_cor}35"),
+                                                            border=borda(1, f"{pote_txt_adapt}50"),
                                                             content=ft.Row(
                                                                 spacing=3,
                                                                 tight=True,
                                                                 controls=[
-                                                                    ft.Icon(ft.Icons.PIE_CHART_OUTLINE_ROUNDED, size=10, color=pote_cor),
-                                                                    ft.Text(pote_nome, color=pote_cor, size=9.5, weight=ft.FontWeight.W_600),
+                                                                    ft.Icon(ft.Icons.PIE_CHART_OUTLINE_ROUNDED, size=10, color=pote_txt_adapt),
+                                                                    ft.Text(pote_nome, color=pote_txt_adapt, size=9.5, weight=ft.FontWeight.W_600),
                                                                 ],
                                                             ),
                                                         ),

@@ -787,6 +787,32 @@ def salvar_modo_saldo_calendario_sync(page: ft.Page, modo: str) -> None:
     _salvar_local_json(dados)
 
 
+def obter_modo_faturas_relatorio(page: ft.Page, padrao: str = "agrupar_faturas") -> str:
+    """
+    Retorna a preferência de exibição de compras no cartão nos Relatórios:
+    - 'agrupar_faturas': Consolida compras de cartão por fatura em cards expansíveis (accordion)
+    - 'itens_separados': Exibe cada compra individualmente com tag da fatura e datas
+    """
+    val_sess = session_get(page, "relatorio_modo_faturas")
+    if val_sess in ("agrupar_faturas", "itens_separados"):
+        return str(val_sess)
+    local = _ler_local_json()
+    val_local = local.get("relatorio_modo_faturas")
+    if val_local in ("agrupar_faturas", "itens_separados"):
+        session_set(page, "relatorio_modo_faturas", val_local)
+        return str(val_local)
+    return padrao if padrao in ("agrupar_faturas", "itens_separados") else "agrupar_faturas"
+
+
+def salvar_modo_faturas_relatorio_sync(page: ft.Page, modo: str) -> None:
+    """Persiste a preferência de visualização de faturas nos Relatórios."""
+    m = "itens_separados" if modo == "itens_separados" else "agrupar_faturas"
+    session_set(page, "relatorio_modo_faturas", m)
+    dados = _ler_local_json()
+    dados["relatorio_modo_faturas"] = m
+    _salvar_local_json(dados)
+
+
 
 # =============================================================================
 # ORDEM PERSONALIZÁVEL DAS SEÇÕES E KPIS DO DASHBOARD

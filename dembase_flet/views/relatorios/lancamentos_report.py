@@ -14,6 +14,7 @@ import flet as ft
 from core import theme as T
 from core.theme import mostrar_feedback
 from core.constants import formatar_moeda, formatar_data_br
+from core.storage import obter_modo_faturas_relatorio, salvar_modo_faturas_relatorio_sync
 from core.responsive import is_mobile
 from core.report_context import ReportContext
 from core.router import RouteMatch
@@ -34,7 +35,7 @@ from views.widgets.report.scaffold import (
 )
 import services.supabase_client as db
 
-LIMITE_PAGINA = 50
+LIMITE_PAGINA = 100
 
 
 def criar_view_relatorio_lancamentos(
@@ -45,6 +46,7 @@ def criar_view_relatorio_lancamentos(
     mobile = is_mobile(page)
     ctx_atual = [ctx_inicial]
     limite_atual = [LIMITE_PAGINA]
+    modo_faturas_atual = [obter_modo_faturas_relatorio(page, padrao="agrupar_faturas")]
 
     spinner = ft.ProgressRing(color=T.PRIMARY, width=18, height=18, stroke_width=2, visible=False)
     tam_kpi = 17 if mobile else 20
@@ -213,6 +215,7 @@ def criar_view_relatorio_lancamentos(
             lista_tx.renderizar(
                 lancamentos=pacote.get("lancamentos") or [],
                 total_registros=qtd_reg,
+                modo_faturas=modo_faturas_atual[0],
             )
 
         except Exception as ex:
@@ -254,11 +257,19 @@ def criar_view_relatorio_lancamentos(
             on_saved=lambda: carregar(inicial=False),
         )
 
+    def _ao_mudar_modo_faturas(novo_modo: str):
+        modo_faturas_atual[0] = novo_modo
+        salvar_modo_faturas_relatorio_sync(page, novo_modo)
+        lista_tx.set_modo_faturas(novo_modo)
+
     filter_bar = FilterBar(
         page=page,
         ctx=ctx_atual[0],
         on_change=_ao_mudar_filtro,
         mostrar_chips_tipo=True,
+        mostrar_seletor_faturas=True,
+        modo_faturas=modo_faturas_atual[0],
+        on_change_modo_faturas=_ao_mudar_modo_faturas,
     )
 
     lista_tx = TransactionList(
@@ -266,6 +277,7 @@ def criar_view_relatorio_lancamentos(
         on_refresh=lambda: carregar(inicial=False),
         on_carregar_mais=_carregar_mais,
         on_novo_lancamento=_abrir_novo,
+        modo_faturas=modo_faturas_atual[0],
     )
 
     tit_ini, cor_ini, ic_ini = _titulo_por_tipo(ctx_atual[0].tipo)

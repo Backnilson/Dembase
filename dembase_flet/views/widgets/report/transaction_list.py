@@ -15,7 +15,13 @@ import flet as ft
 
 from core import theme as T
 from core.theme import pad, borda, mostrar_feedback, abrir_dialogo, fechar_dialogo
-from core.constants import formatar_moeda, formatar_data_br, formatar_rastreio_datas
+from core.constants import (
+    MESES_NOMES,
+    formatar_moeda,
+    formatar_data_br,
+    formatar_data_curta_br,
+    formatar_rastreio_datas,
+)
 from core.responsive import is_mobile
 from views.widgets.lancamento_sheet import abrir_lancamento, abrir_lancamento_async
 from views.widgets.report.empty_state import criar_empty_state
@@ -87,11 +93,16 @@ class TransactionList(ft.Column):
         on_refresh: Callable[[], None],
         on_carregar_mais: Callable[[], None] | None = None,
         on_novo_lancamento: Callable | None = None,
+        modo_faturas: str = "itens_separados",
     ):
         self._page = page
         self.on_refresh = on_refresh
         self.on_carregar_mais = on_carregar_mais
         self.on_novo_lancamento = on_novo_lancamento
+        self.modo_faturas = "agrupar_faturas" if modo_faturas == "agrupar_faturas" else "itens_separados"
+        self._ultimos_lancamentos: list[dict] = []
+        self._ultimo_total: int | None = None
+        self._faturas_expandidas: set[str] = set()
         self.mobile = is_mobile(page)
 
         self.lbl_contador = ft.Text(
@@ -143,13 +154,216 @@ class TransactionList(ft.Column):
         if hasattr(self, "_dirty"):
             self._dirty.clear()
 
-    def renderizar(self, lancamentos: list[dict], total_registros: int | None = None):
+    def set_modo_faturas(self, modo: str):
+        self.modo_faturas = "agrupar_faturas" if modo == "agrupar_faturas" else "itens_separados"
+        self.renderizar(self._ultimos_lancamentos, self._ultimo_total, modo_faturas=self.modo_faturas)
+
+    def _toggle_fatura(self, chave_fatura: str):
+        if chave_fatura in self._faturas_expandidas:
+            self._faturas_expandidas.discard(chave_fatura)
+        else:
+            self._faturas_expandidas.add(chave_fatura)
+        self.renderizar(self._ultimos_lancamentos, self._ultimo_total, modo_faturas=self.modo_faturas)
+
+    @staticmethod
+    def _eh_item_cartao_fatura(item: dict) -> bool:
+        tipo = str(item.get("tipo") or "Despesa").strip().lower()
+        return ("desp" in tipo) and (bool(item.get("fatura_id")) or bool(item.get("cartao_id")))
+
+    @staticmethod
+    def _data_competencia(item: dict) -> str:
+        fatura_rel = item.get("faturas") if isinstance(item.get("faturas"), dict) else {}
+        return str(
+            item.get("data_vencimento")
+            or item.get("fatura_data_vencimento")
+            or fatura_rel.get("data_vencimento")
+            or item.get("data")
+            or ""
+        )[:10]
+
+    def _criar_card_fatura_agrupada(self, grupo: dict) -> ft.Container:
+        chave = grupo["chave"]
+        itens: list[dict] = grupo["itens"]
+        expandido = chave in self._faturas_expandidas
+        cartao_nome = grupo["cartao_nome"]
+        cartao_cor = grupo["cartao_cor"] or T.WARNING
+        f_mes = grupo.get("fatura_mes")
+        f_ano = grupo.get("fatura_ano")
+        dt_venc = grupo.get("data_vencimento") or ""
+        total_fat = float(grupo.get("total", 0.0) or 0.0)
+        qtd = len(itens)
+        lbl_qtd = "1 item" if qtd == 1 else f"{qtd} itens"
+
+        # Status consolidado da fatura
+        todos_pagos = all(str(it.get("status") or "").strip().lower() == "pago" for it in itens)
+        algum_pago = any(str(it.get("status") or "").strip().lower() == "pago" for it in itens)
+        if todos_pagos:
+            status_lbl = "Pago"
+            cor_st = T.RECEITA
+            ic_st = ft.Icons.CHECK_CIRCLE_ROUNDED
+        elif algum_pago:
+            status_lbl = "Parcial"
+            cor_st = T.INFO
+            ic_st = ft.Icons.TIMELAPSE_ROUNDED
+        else:
+            status_lbl = "Pendente"
+            cor_st = T.WARNING
+            ic_st = ft.Icons.SCHEDULE_ROUNDED
+
+        mes_ano_lbl = ""
+        if f_mes and f_ano:
+            try:
+                m_idx = int(f_mes)
+                if 1 <= m_idx <= 12:
+                    mes_ano_lbl = f"{MESES_NOMES[m_idx - 1][:3]}/{int(f_ano)}"
+            except Exception:
+                mes_ano_lbl = ""
+
+        titulo_fat = f"Fatura {cartao_nome}" + (f" · {mes_ano_lbl}" if mes_ano_lbl else "")
+        venc_curto = formatar_data_curta_br(dt_venc) if dt_venc else ""
+
+        badges_fat: list[ft.Control] = [
+            ft.Container(
+                padding=pad(h=7, v=2),
+                bgcolor=f"{cartao_cor}1F",
+                border_radius=6,
+                border=borda(1, f"{cartao_cor}4D"),
+                content=ft.Text(lbl_qtd, size=10.5, color=cartao_cor, weight=ft.FontWeight.BOLD),
+            ),
+        ]
+        if venc_curto:
+            badges_fat.append(
+                ft.Container(
+                    padding=pad(h=7, v=2),
+                    bgcolor=T.SURFACE_ALT,
+                    border_radius=6,
+                    content=ft.Text(f"Venc. {venc_curto}", size=10.5, color=T.TEXT_MUTED, weight=ft.FontWeight.W_600),
+                )
+            )
+        badges_fat.append(
+            ft.Container(
+                padding=pad(h=7, v=2),
+                bgcolor=f"{cor_st}1A",
+                border_radius=6,
+                border=borda(1, f"{cor_st}45"),
+                content=ft.Row(
+                    spacing=3,
+                    tight=True,
+                    controls=[
+                        ft.Icon(ic_st, size=11, color=cor_st),
+                        ft.Text(status_lbl, size=10.5, color=cor_st, weight=ft.FontWeight.BOLD),
+                    ],
+                ),
+            )
+        )
+
+        sinal = "+" if total_fat < 0 else "-"
+        cor_val = T.RECEITA if total_fat < 0 else T.DESPESA
+        is_mob = getattr(self, "mobile", False) or is_mobile(self._page)
+
+        cabecalho = ft.Container(
+            padding=pad(h=14 if not is_mob else 12, v=11),
+            ink=True,
+            on_click=lambda _, ch=chave: self._toggle_fatura(ch),
+            tooltip="Clique para recolher os itens da fatura" if expandido else "Clique para expandir os itens desta fatura",
+            content=ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=10,
+                controls=[
+                    ft.Row(
+                        spacing=10,
+                        expand=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Container(
+                                content=ft.Icon(ft.Icons.CREDIT_CARD_ROUNDED, color=cartao_cor, size=18),
+                                bgcolor=f"{cartao_cor}1F",
+                                border_radius=10,
+                                padding=pad(all_=9),
+                            ),
+                            ft.Column(
+                                spacing=4,
+                                expand=True,
+                                controls=[
+                                    ft.Text(
+                                        titulo_fat,
+                                        color=T.TEXT_PRIMARY,
+                                        size=13.5 if not is_mob else 13,
+                                        weight=ft.FontWeight.BOLD,
+                                        max_lines=1,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                    ),
+                                    ft.Row(spacing=5, run_spacing=4, wrap=True, controls=badges_fat),
+                                ],
+                            ),
+                        ],
+                    ),
+                    ft.Row(
+                        spacing=6,
+                        tight=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Text(
+                                f"{sinal} {formatar_moeda(abs(total_fat))}",
+                                color=cor_val,
+                                size=15 if not is_mob else 14,
+                                weight=ft.FontWeight.BOLD,
+                            ),
+                            ft.Icon(
+                                ft.Icons.EXPAND_LESS_ROUNDED if expandido else ft.Icons.EXPAND_MORE_ROUNDED,
+                                color=T.PRIMARY if expandido else T.TEXT_MUTED,
+                                size=20,
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        )
+
+        controles_card: list[ft.Control] = [cabecalho]
+        if expandido:
+            itens_ordenados = sorted(
+                itens,
+                key=lambda x: (str(x.get("data") or ""), str(x.get("descricao") or "")),
+                reverse=True,
+            )
+            controles_card.append(ft.Divider(height=1, color=T.BORDER))
+            controles_card.append(
+                ft.Container(
+                    padding=pad(h=10 if not is_mob else 8, v=8),
+                    bgcolor=f"{T.SURFACE_ALT}80",
+                    content=ft.Column(
+                        spacing=6,
+                        controls=[self._criar_card_lancamento(sub_it) for sub_it in itens_ordenados],
+                    ),
+                )
+            )
+
+        return ft.Container(
+            bgcolor=T.SURFACE,
+            border_radius=12,
+            border=borda(1.5, cartao_cor if expandido else T.BORDER),
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            content=ft.Column(spacing=0, tight=True, controls=controles_card),
+        )
+
+    def renderizar(
+        self,
+        lancamentos: list[dict],
+        total_registros: int | None = None,
+        modo_faturas: str | None = None,
+    ):
+        if modo_faturas is not None:
+            self.modo_faturas = "agrupar_faturas" if modo_faturas == "agrupar_faturas" else "itens_separados"
+        self._ultimos_lancamentos = list(lancamentos or [])
+        self._ultimo_total = total_registros
         self.mobile = is_mobile(self._page)
-        total = total_registros if total_registros is not None else len(lancamentos)
-        self.lbl_contador.value = f"Exibindo {len(lancamentos)} de {total} registro(s)"
+        total = total_registros if total_registros is not None else len(self._ultimos_lancamentos)
         self.col_itens.controls.clear()
 
-        if not lancamentos:
+        if not self._ultimos_lancamentos:
+            self.lbl_contador.value = "Exibindo 0 de 0 registro(s)"
             self.col_itens.controls.append(
                 criar_empty_state(on_novo_lancamento=self.on_novo_lancamento)
             )
@@ -157,31 +371,111 @@ class TransactionList(ft.Column):
             self._atualizar_ui()
             return
 
-        # Agrupa por data mantendo a ordem decrescente
-        grupos: dict[str, list[dict]] = {}
-        for item in lancamentos:
-            dt_key = str(item.get("data") or "")[:10]
-            grupos.setdefault(dt_key, []).append(item)
+        if self.modo_faturas == "agrupar_faturas":
+            # Consolida despesas de cartão por fatura e posiciona no dia de vencimento
+            faturas_map: dict[str, dict] = {}
+            outros_itens: list[dict] = []
 
-        for dt_key, itens_dia in grupos.items():
-            saldo_dia = 0.0
-            for it in itens_dia:
-                val = float(it.get("valor", 0) or 0)
-                direcao = it.get("direcao_conta")
-                tipo = (it.get("tipo") or "Despesa").lower()
-                eh_consumo_cx_neutro = bool(it.get("caixinha_id")) and str(it.get("subtipo") or "").strip().lower() != "provisionamento"
-                if eh_consumo_cx_neutro:
-                    continue
-                if direcao == "Entrada" or (not direcao and "rec" in tipo):
-                    saldo_dia += val
-                elif direcao == "Saida" or (not direcao and "desp" in tipo):
-                    saldo_dia -= val
+            for item in self._ultimos_lancamentos:
+                if self._eh_item_cartao_fatura(item):
+                    dt_comp = self._data_competencia(item)
+                    f_id = item.get("fatura_id")
+                    c_id = item.get("cartao_id")
+                    f_mes = item.get("fatura_mes")
+                    f_ano = item.get("fatura_ano")
+                    chave = str(f_id) if f_id else f"{c_id}_{f_ano}_{f_mes}_{dt_comp}"
+                    if chave not in faturas_map:
+                        cartao_nome = item.get("cartao_nome") or (
+                            (item.get("cartoes") or {}).get("nome") if isinstance(item.get("cartoes"), dict) else None
+                        ) or "Cartão"
+                        cartao_cor = item.get("cartao_cor") or (
+                            (item.get("cartoes") or {}).get("cor") if isinstance(item.get("cartoes"), dict) else None
+                        ) or T.WARNING
+                        faturas_map[chave] = {
+                            "chave": chave,
+                            "cartao_nome": cartao_nome,
+                            "cartao_cor": cartao_cor,
+                            "fatura_mes": f_mes,
+                            "fatura_ano": f_ano,
+                            "data_vencimento": dt_comp,
+                            "total": 0.0,
+                            "itens": [],
+                        }
+                    faturas_map[chave]["itens"].append(item)
+                    faturas_map[chave]["total"] += float(item.get("valor", 0) or 0)
+                else:
+                    outros_itens.append(item)
 
-            self.col_itens.controls.append(_cabecalho_dia(dt_key, saldo_dia))
-            for it in itens_dia:
-                self.col_itens.controls.append(self._criar_card_lancamento(it))
+            qtd_fats = len(faturas_map)
+            qtd_outros = len(outros_itens)
+            if qtd_fats > 0:
+                self.lbl_contador.value = (
+                    f"{qtd_fats} fatura(s) + {qtd_outros} lançamento(s) · {len(self._ultimos_lancamentos)} de {total} registro(s)"
+                )
+            else:
+                self.lbl_contador.value = f"Exibindo {len(self._ultimos_lancamentos)} de {total} registro(s)"
 
-        self.btn_mais.visible = len(lancamentos) < total and callable(self.on_carregar_mais)
+            # Monta blocos por dia de competência (data_vencimento)
+            dias_blocos: dict[str, list[tuple[str, dict]]] = {}
+            for grp in faturas_map.values():
+                dt_key = str(grp.get("data_vencimento") or "")[:10]
+                dias_blocos.setdefault(dt_key, []).append(("fatura", grp))
+            for it in outros_itens:
+                dt_key = self._data_competencia(it)
+                dias_blocos.setdefault(dt_key, []).append(("item", it))
+
+            for dt_key in sorted(dias_blocos.keys(), reverse=True):
+                blocos_dia = dias_blocos[dt_key]
+                saldo_dia = 0.0
+                for tipo_b, payload in blocos_dia:
+                    if tipo_b == "fatura":
+                        saldo_dia -= float(payload.get("total", 0) or 0)
+                    else:
+                        val = float(payload.get("valor", 0) or 0)
+                        direcao = payload.get("direcao_conta")
+                        tipo = (payload.get("tipo") or "Despesa").lower()
+                        eh_consumo_cx_neutro = bool(payload.get("caixinha_id")) and str(payload.get("subtipo") or "").strip().lower() != "provisionamento"
+                        if eh_consumo_cx_neutro:
+                            continue
+                        if direcao == "Entrada" or (not direcao and "rec" in tipo):
+                            saldo_dia += val
+                        elif direcao == "Saida" or (not direcao and "desp" in tipo):
+                            saldo_dia -= val
+
+                self.col_itens.controls.append(_cabecalho_dia(dt_key, saldo_dia))
+                # Faturas primeiro no dia (mais limpo), depois lançamentos avulsos
+                for tipo_b, payload in sorted(blocos_dia, key=lambda x: 0 if x[0] == "fatura" else 1):
+                    if tipo_b == "fatura":
+                        self.col_itens.controls.append(self._criar_card_fatura_agrupada(payload))
+                    else:
+                        self.col_itens.controls.append(self._criar_card_lancamento(payload))
+        else:
+            self.lbl_contador.value = f"Exibindo {len(self._ultimos_lancamentos)} de {total} registro(s)"
+            # Agrupa por data de competência (data_vencimento) mantendo ordem decrescente
+            grupos: dict[str, list[dict]] = {}
+            for item in self._ultimos_lancamentos:
+                dt_key = self._data_competencia(item)
+                grupos.setdefault(dt_key, []).append(item)
+
+            for dt_key, itens_dia in grupos.items():
+                saldo_dia = 0.0
+                for it in itens_dia:
+                    val = float(it.get("valor", 0) or 0)
+                    direcao = it.get("direcao_conta")
+                    tipo = (it.get("tipo") or "Despesa").lower()
+                    eh_consumo_cx_neutro = bool(it.get("caixinha_id")) and str(it.get("subtipo") or "").strip().lower() != "provisionamento"
+                    if eh_consumo_cx_neutro:
+                        continue
+                    if direcao == "Entrada" or (not direcao and "rec" in tipo):
+                        saldo_dia += val
+                    elif direcao == "Saida" or (not direcao and "desp" in tipo):
+                        saldo_dia -= val
+
+                self.col_itens.controls.append(_cabecalho_dia(dt_key, saldo_dia))
+                for it in itens_dia:
+                    self.col_itens.controls.append(self._criar_card_lancamento(it))
+
+        self.btn_mais.visible = len(self._ultimos_lancamentos) < total and callable(self.on_carregar_mais)
         self._atualizar_ui()
 
     def _atualizar_ui(self):

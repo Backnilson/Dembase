@@ -25950,24 +25950,39 @@ def listar_caixinhas(forcar_atualizacao: bool = False, data_inicio: str | None =
 
 
 
-                # Busca movimentações acumuladas históricas (essencial para o modo Dívida / Quitação e Raio-X)
+                # Busca movimentações acumuladas históricas (essencial para o modo Dívida / Quitação, Raio-X e reconciliações)
                 injecoes_acum: dict[str, float] = {}
                 deducoes_acum: dict[str, float] = {}
+                ajustes_periodo: dict[str, float] = {}
+                deducoes_avulsas_periodo: dict[str, float] = {}
                 try:
                     mov_all = (
                         supabase.table("caixinhas_teto_movimentacoes")
-                        .select("caixinha_id, tipo, valor")
+                        .select("caixinha_id, tipo, valor, data, lancamento_id")
                         .in_("caixinha_id", cids)
                         .execute()
                     )
+                    di_str = str(data_inicio)[:10] if data_inicio else None
+                    df_str = str(data_fim)[:10] if data_fim else None
                     for m_it in (mov_all.data or []):
                         m_cid = str(m_it.get("caixinha_id"))
                         m_val = float(m_it.get("valor", 0) or 0)
                         m_tp = str(m_it.get("tipo") or "").lower()
+                        m_dt = str(m_it.get("data") or "")[:10]
+                        m_lid = m_it.get("lancamento_id")
+                        no_periodo = True
+                        if di_str and m_dt and m_dt < di_str:
+                            no_periodo = False
+                        if df_str and m_dt and m_dt > df_str:
+                            no_periodo = False
                         if m_tp in ("injecao", "ajuste"):
                             injecoes_acum[m_cid] = injecoes_acum.get(m_cid, 0.0) + m_val
+                            if m_tp == "ajuste" and no_periodo:
+                                ajustes_periodo[m_cid] = ajustes_periodo.get(m_cid, 0.0) + m_val
                         elif m_tp == "deducao":
                             deducoes_acum[m_cid] = deducoes_acum.get(m_cid, 0.0) + m_val
+                            if not m_lid and no_periodo:
+                                deducoes_avulsas_periodo[m_cid] = deducoes_avulsas_periodo.get(m_cid, 0.0) + m_val
                 except Exception:
                     pass
 
@@ -25975,7 +25990,7 @@ def listar_caixinhas(forcar_atualizacao: bool = False, data_inicio: str | None =
                     cid_c = str(c.get("id"))
                     meta_val = float(c.get("valor_meta", 0) or 0)
                     saldo_banco = float(c.get("saldo_atual", 0) if c.get("saldo_atual") is not None else 0.0)
-                    gasto_vinculado = despesas_por_caixinha.get(cid_c, 0.0)
+                    gasto_vinculado = despesas_por_caixinha.get(cid_c, 0.0) + deducoes_avulsas_periodo.get(cid_c, 0.0)
                     c["total_despesas_vinculadas"] = gasto_vinculado
 
                     mod_raw = str(c.get("modalidade") or "provisao_mensal").strip().lower()
@@ -25988,7 +26003,7 @@ def listar_caixinhas(forcar_atualizacao: bool = False, data_inicio: str | None =
                     if eh_divida:
                         # Modo Dívida / Acumulação: saldo cumulativo contínuo (NÃO zera na virada do mês)
                         abatido_acum = max(ded_tot, gasto_vinculado)
-                        guardado_acum = max(inj_tot, saldo_banco + abatido_acum)
+                        guardado_acum = max(0.0, max(inj_tot, saldo_banco + abatido_acum))
                         c["saldo_atual"] = saldo_banco
                         c["valor_provisionado_periodo"] = meta_val
                         c["total_guardado"] = guardado_acum
@@ -26003,7 +26018,8 @@ def listar_caixinhas(forcar_atualizacao: bool = False, data_inicio: str | None =
                             p_pago = sum(float(p.get("valor", 0) or 0) for p in provisoes_c if p.get("status") == "Pago")
                             p_pendente = sum(float(p.get("valor", 0) or 0) for p in provisoes_c if p.get("status") == "Pendente")
                             prov_tot = (p_pago + p_pendente) if (p_pago + p_pendente) > 0 else meta_val
-                            saldo_calc = max(0.0, p_pago - gasto_vinculado) if p_pago > 0 else 0.0
+                            aj_per = ajustes_periodo.get(cid_c, 0.0)
+                            saldo_calc = max(0.0, p_pago + aj_per - gasto_vinculado) if (p_pago > 0 or aj_per > 0) else 0.0
                             c["saldo_atual"] = saldo_calc
                             c["valor_provisionado_periodo"] = prov_tot
                         else:
@@ -27222,6 +27238,115 @@ def retirar_saldo_caixinha(
         "saldo_anterior": ant_saldo,
         "saldo_atual": novo_saldo,
         "valor_retirado": v,
+    }
+
+
+def ajustar_saldo_caixinha(
+    caixinha_id: str,
+    novo_saldo: float,
+    alterar_banco: bool = False,
+    conta_id: str | None = None,
+    descricao: str = "",
+    data_ajuste: str | None = None,
+) -> dict:
+    """
+    Ajusta ou zera o saldo real de um DemBox com duas modalidades seguras:
+    - alterar_banco=False (padrão): Reconciliação puramente contábil no DemBox.
+      Registra movimentação 'ajuste' com lancamento_id=None em caixinhas_teto_movimentacoes
+      e recalcula o saldo do box SEM alterar nenhuma conta bancária nem os 6 Potes.
+    - alterar_banco=True: Transfere a diferença entre o DemBox e a conta bancária escolhida.
+    """
+    from datetime import date as _date
+
+    alvo = round(max(0.0, float(novo_saldo or 0.0)), 2)
+    cid = str(caixinha_id)
+    c = obter_caixinha(cid)
+    if not c:
+        raise ValueError("DemBox não encontrado.")
+
+    ant_saldo = round(float(c.get("saldo_atual", 0) or 0), 2)
+    diferenca = round(alvo - ant_saldo, 2)
+    nome_cx = c.get("nome", "DemBox")
+    dt_final = str(data_ajuste or _date.today().isoformat())[:10]
+
+    if abs(diferenca) < 0.005:
+        return {
+            "sucesso": True,
+            "caixinha_id": cid,
+            "saldo_anterior": ant_saldo,
+            "saldo_atual": ant_saldo,
+            "diferenca": 0.0,
+            "alterou_banco": False,
+        }
+
+    desc_base = str(descricao or "").strip()
+
+    if alterar_banco:
+        if not conta_id:
+            raise ValueError("Selecione a Conta Bancária para movimentar a diferença.")
+        if diferenca < 0:
+            desc_final = desc_base or f"Ajuste/Resgate DemBox · {nome_cx}"
+            res = retirar_saldo_caixinha(
+                caixinha_id=cid,
+                valor=abs(diferenca),
+                conta_id=str(conta_id),
+                descricao=desc_final,
+                data_resgate=dt_final,
+            )
+            res["diferenca"] = diferenca
+            res["alterou_banco"] = True
+            return res
+        desc_final = desc_base or f"Ajuste/Aporte DemBox · {nome_cx}"
+        res = injetar_saldo_caixinha(
+            caixinha_id=cid,
+            valor=diferenca,
+            descricao=desc_final,
+            conta_id=str(conta_id),
+            data_injecao=dt_final,
+        )
+        return {
+            "sucesso": True,
+            "caixinha_id": cid,
+            "saldo_anterior": ant_saldo,
+            "saldo_atual": alvo,
+            "diferenca": diferenca,
+            "alterou_banco": True,
+            "detalhe": res,
+        }
+
+    # Reconciliação neutra (SEM alterar saldo bancário)
+    if alvo == 0.0:
+        desc_padrao = f"Reconciliação de saldo · {nome_cx} (zerado sem impacto bancário)"
+    else:
+        desc_padrao = f"Reconciliação de saldo · {nome_cx} (sem impacto bancário)"
+    desc_final = desc_base or desc_padrao
+
+    user = usuario_atual()
+    mov_payload = {
+        "caixinha_id": cid,
+        "user_id": user.id if user else c.get("user_id"),
+        "tipo": "ajuste",
+        "valor": diferenca,
+        "saldo_anterior": ant_saldo,
+        "saldo_posterior": alvo,
+        "descricao": desc_final,
+        "data": dt_final,
+        "lancamento_id": None,
+    }
+    supabase.table("caixinhas_teto_movimentacoes").insert(mov_payload).execute()
+
+    recalcular_saldo_caixinha(cid)
+    for chave in ("caixinhas", "resumo_caixinhas", "dashboard"):
+        invalidar_cache(chave)
+
+    return {
+        "sucesso": True,
+        "caixinha_id": cid,
+        "saldo_anterior": ant_saldo,
+        "saldo_atual": alvo,
+        "diferenca": diferenca,
+        "alterou_banco": False,
+        "descricao": desc_final,
     }
 
 

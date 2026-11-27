@@ -122,13 +122,29 @@ def formatar_rastreio_datas(item: dict | None) -> str | None:
     ) or bool(item.get("cartao_id")) or bool(item.get("fatura_id"))
 
     if eh_credito:
+        f_mes = item.get("fatura_mes") or fatura_rel.get("mes")
+        f_ano = item.get("fatura_ano") or fatura_rel.get("ano")
+        tag_fatura = None
+        if f_mes and f_ano:
+            try:
+                m_idx = int(f_mes)
+                a_num = int(f_ano)
+                if 1 <= m_idx <= 12:
+                    tag_fatura = f"Fatura {MESES_NOMES[m_idx - 1][:3]}/{str(a_num)[-2:]}"
+            except Exception:
+                tag_fatura = None
+
+        partes: list[str] = []
         if dt_compra and dt_venc and dt_compra != dt_venc:
-            base_txt = f"Compra {formatar_data_curta_br(dt_compra)} · Venc. {formatar_data_curta_br(dt_venc)}"
-            if eh_pago and dt_pag:
-                return f"{base_txt} · Pago em {formatar_data_curta_br(dt_pag)}"
-            return base_txt
-        if eh_pago and dt_pag and dt_venc and dt_pag != dt_venc:
-            return f"Pago em {formatar_data_curta_br(dt_pag)} · Venc. {formatar_data_curta_br(dt_venc)}"
+            partes.append(f"Compra {formatar_data_curta_br(dt_compra)}")
+        if tag_fatura:
+            partes.append(tag_fatura)
+        if dt_venc and (tag_fatura or (dt_compra and dt_compra != dt_venc) or (eh_pago and dt_pag and dt_pag != dt_venc)):
+            partes.append(f"Venc. {formatar_data_curta_br(dt_venc)}")
+        if eh_pago and dt_pag and (partes or (dt_venc and dt_pag != dt_venc)):
+            partes.append(f"Pago em {formatar_data_curta_br(dt_pag)}")
+        if partes:
+            return " · ".join(partes)
         return None
 
     if eh_pago and dt_pag and dt_venc and dt_pag != dt_venc:
